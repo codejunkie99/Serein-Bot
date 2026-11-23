@@ -181,6 +181,8 @@ import SereinCore
       if SereinConnect.shared.inline { SereinConnect.shared.dismiss() }
       next.restart(in: relay.threadID, needsComputer: needsComputer)
     } else { next.begin(in: relay.threadID, needsComputer: needsComputer) }
+    // Setup saved at the old computer step, from a build that waited on Serein's Mac, moves on.
+    next.computerReady(in: relay.threadID)
     if next != state { guard save(next, relay: relay) else { return } }
     if state.phase == .computer {
       presentQuestion(relay)
@@ -221,7 +223,9 @@ import SereinCore
       if state.phase == .computer { computerChanged(relay) }
     }
   }
-  private var needsComputer: Bool { ComputerHost.shared.initialMacSetupComputer() != nil }
+  /// Serein's own Mac is set up when the person opens Serein's computer, never as a setup step,
+  /// so the chat never waits on it.
+  private var needsComputer: Bool { false }
 
   /// A host state change, never a model's claim that installation finished.
   private func computerChanged(_ relay: RelayOrchestrator) {

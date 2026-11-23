@@ -196,8 +196,6 @@ import SereinCore
   private var runWatch: AnyCancellable?
   private var taskWatch: AnyCancellable?
   private var clock: Task<Void, Never>?
-  private var setupObservers = Set<AnyCancellable>()
-  private var initialMacAttempted = false
   private struct Saved: Codable {
     /// Keep step pictures for this machine, per assistant; absent before step pictures.
     var stepPictures: [String: Bool]?
@@ -251,46 +249,13 @@ import SereinCore
     }
     // The engine is probed only while the switch is on; Settings › Serein's computer probes too.
     if ComputerPolicy.isEnabled() { Task { await refreshBackend() } }
-    // First-run preparation belongs to setup, before the assistant needs a computer. Wait for
-    // an actual unmetered path; the monitor's initial defaults must not start a large download.
-    let network = NetworkMonitor.shared
-    Publishers.CombineLatest3(network.$known, network.$online, network.$metered)
-      .sink { [weak self] _ in Task { @MainActor in await self?.prepareInitialMac() } }
-      .store(in: &setupObservers)
-    NotificationCenter.default.publisher(for: GateSettings.changed)
-      .sink { [weak self] _ in Task { @MainActor in await self?.prepareInitialMac() } }
-      .store(in: &setupObservers)
-  }
-
-  func prepareInitialMac() async {
-    let network = NetworkMonitor.shared
-    guard !initialMacAttempted, ComputerPolicy.isEnabled(), ComputerPolicy.setsItselfUp(),
-      VirtualMachineComputer.supported, VirtualMachineComputer.entitled,
-      network.known, network.online, !network.metered, let root
-    else { return }
-    let computer = computer(for: RelayTeam.mainID)
-    guard computer.place == .macOS, computer.state != .running, computer.starting == nil,
-      computer.holder == nil, !computer.busy
-    else { return }
-    initialMacAttempted = true
-    // Quietly, in the background: no window, and no folder picker when the disk is too full.
-    guard MacRestoreImage.shared.chooseStorage(defaultFolder: root.appendingPathComponent("macOS", isDirectory: true), asks: false) else {
-      GateSettings.shared.set(false, forKey: ComputerPolicy.autoSetUpKey)
-      ComputerWindow.closeInitialSetup(computer)
-      return
-    }
-    guard ComputerPolicy.isEnabled(), computer.place == .macOS else { return }
-    await resumeInitialSetup(computer)
   }
 
   /// Showing setup is not permission to start a large restore download on a metered path.
   func resumeInitialSetup(_ computer: Computer) async {
     guard ComputerPolicy.isEnabled(), ComputerPolicy.setsItselfUp(), computer.place == .macOS else { return }
     let network = NetworkMonitor.shared
-    guard ready(computer) || (network.known && network.online && !network.metered) else {
-      initialMacAttempted = false
-      return
-    }
+    guard ready(computer) || (network.known && network.online && !network.metered) else { return }
     await resume(computer)
   }
 

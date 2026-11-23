@@ -130,7 +130,6 @@ import SwiftUI
     SereinRouter.bringWindowForward = { [weak self] in self?.showWindow() }
     if preview == nil, !RunMode.stress, !e2eCheck { ExternalSessionStore.shared.start() }
     if preview == nil, !RunMode.stress { OutsideAgents.start(root: root, browser: browser) }
-    Task { await ComputerHost.shared.prepareInitialMac() }
     // Every preview, release builds included: Serein's column with no shortcuts and no menu bar
     // item. `--ui-relay` adds a synthetic chat, run, steps and approval.
     if preview != nil {
