@@ -173,6 +173,7 @@ private struct SidebarSizeHandle: View {
   let preview: (CGFloat?) -> Void
   let settle: (SidebarWidth.Move?) -> Void
   @State private var startWidth: CGFloat?
+  @State private var lastWidth: CGFloat?
   @GestureState private var dragging = false
   @State private var hovered = false
   @Environment(\.palette) var p
@@ -187,6 +188,7 @@ private struct SidebarSizeHandle: View {
       .onDisappear {
         if hovered || dragging { NSCursor.pop() }
         startWidth = nil
+        lastWidth = nil
         preview(nil)
       }
       .onTapGesture(count: 2) { settle(nil) }
@@ -196,24 +198,29 @@ private struct SidebarSizeHandle: View {
           .onChanged { value in
             let start = startWidth ?? width
             startWidth = start
-            preview(start + value.translation.width)
+            lastWidth = start + value.translation.width
+            preview(lastWidth)
           }
           .onEnded { value in
-            guard let startWidth else { return }
-            self.startWidth = nil
-            settle(.width(startWidth + value.translation.width))
+            if let startWidth { lastWidth = startWidth + value.translation.width }
+            release()
           }
       )
+      // A drag SwiftUI cancels never reaches onEnded; it still settles where the edge was.
       .onChange(of: dragging) { _, active in
-        if !active, startWidth != nil {
-          startWidth = nil
-          preview(nil)
-        }
+        if !active { release() }
       }
       .help("Sidebar width · double-click for the usual size")
       .accessibilityElement().accessibilityLabel("Sidebar width")
       .accessibilityValue(rail ? "Faces only" : "\(Int(width)) points")
       .accessibilityAdjustableAction { settle(.step(up: $0 == .increment)) }
+  }
+
+  private func release() {
+    guard let last = lastWidth else { return }
+    startWidth = nil
+    lastWidth = nil
+    settle(.width(last))
   }
 }
 
