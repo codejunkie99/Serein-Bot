@@ -339,3 +339,31 @@ struct SettingsChoicePill: View {
     .contentShape(Capsule())
   }
 }
+
+/// Serein's own text field, in place of the system's rounded border: the choice pill's `track` fill and
+/// `line` hairline at 28 high, 13-point `ink` text, and the `focus` colour as the ring while typing.
+/// `.textFieldStyle(.serein)`; it styles secure fields the same way.
+struct SereinFieldStyle: TextFieldStyle {
+  func _body(configuration: TextField<Self._Label>) -> some View { Field(content: configuration) }
+  private struct Field<Content: View>: View {
+    let content: Content
+    @FocusState private var focused: Bool
+    @Environment(\.palette) private var p
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+      let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+      content.textFieldStyle(.plain).font(UIStyle.font(13)).foregroundStyle(p.ink)
+        .focused($focused)
+        .padding(.horizontal, 10).padding(.vertical, 5).frame(minHeight: 28)
+        .background(p.track, in: shape)
+        .overlay(shape.strokeBorder(focused ? p.focus : p.line, lineWidth: focused ? 1.5 : UIStyle.hairline))
+        .contentShape(shape)
+        .opacity(enabled ? 1 : 0.5)
+        .animation(.easeOut(duration: 0.12), value: focused)
+    }
+  }
+}
+
+extension TextFieldStyle where Self == SereinFieldStyle {
+  static var serein: SereinFieldStyle { SereinFieldStyle() }
+}

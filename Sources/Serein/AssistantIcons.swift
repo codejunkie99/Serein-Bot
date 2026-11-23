@@ -135,7 +135,7 @@ struct AssistantIconPicker: View {
         Text("The petal in \(name)'s colour.").role(.meta)
       case .emoji:
         HStack(spacing: 8) {
-          TextField("One emoji", text: $emoji).textFieldStyle(.roundedBorder).frame(width: 96)
+          TextField("One emoji", text: $emoji).textFieldStyle(.serein).frame(width: 96)
             .accessibilityLabel("Emoji")
             .onChange(of: emoji) { _, value in
               guard !value.isEmpty else { error = nil; return }

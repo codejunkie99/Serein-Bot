@@ -181,7 +181,7 @@ struct PageToolSettings: View {
       }
       HStack(spacing: 8) {
         TextField("Add a site, such as example.com", text: $draft)
-          .textFieldStyle(.roundedBorder)
+          .textFieldStyle(.serein)
           .onSubmit { add() }
           .accessibilityLabel("Site to allow page tools on")
         Button("Add") { add() }.buttonStyle(QuietButton()).disabled(TaskPass.host(draft).isEmpty)

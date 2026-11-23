@@ -431,7 +431,7 @@ private struct ConnectOwnSheet: View {
         choices: [SettingsChoice(value: "", label: "Type an alias or user@host")] + aliases.map { SettingsChoice(value: $0, label: $0) },
         menuWidth: 260)
       if alias.isEmpty {
-        TextField("an alias, user@host or user@host:2222", text: $typed).textFieldStyle(.roundedBorder)
+        TextField("an alias, user@host or user@host:2222", text: $typed).textFieldStyle(.serein)
           .accessibilityLabel("The machine as an SSH alias or user@host")
         if !typed.isEmpty && target == nil {
           Text("Not an alias or user@host. Use letters, digits, dots, dashes and underscores, and an optional :port.")
@@ -532,7 +532,7 @@ private struct SiteListEditor: View {
         }
       }
       HStack(spacing: 6) {
-        TextField("example.com or *.example.com", text: $site).textFieldStyle(.roundedBorder).onSubmit(submit)
+        TextField("example.com or *.example.com", text: $site).textFieldStyle(.serein).onSubmit(submit)
           .accessibilityLabel("A site \(owner)'s computer may reach")
         Button("Add") { submit() }.disabled(problem(site) != nil)
           .accessibilityLabel("Allow this site")
@@ -829,7 +829,7 @@ private struct HostedKeyFields: View {
 
   var body: some View {
     HStack(spacing: 6) {
-      SecureField(account.hasKey ? "Saved in Keychain" : "Paste your \(account.provider) key", text: $key).textFieldStyle(.roundedBorder)
+      SecureField(account.hasKey ? "Saved in Keychain" : "Paste your \(account.provider) key", text: $key).textFieldStyle(.serein)
         .accessibilityLabel("\(account.provider) key")
       Button("Save Key") { if account.save(key) { key = "" } }.disabled(key.isEmpty)
         .accessibilityLabel("Save the \(account.provider) key in Keychain")
@@ -870,7 +870,7 @@ private struct E2BPlace: View {
       HStack {
         Text("Template")
         Spacer()
-        TextField(E2BWire.defaultTemplate, text: $template).textFieldStyle(.roundedBorder).frame(width: 200)
+        TextField(E2BWire.defaultTemplate, text: $template).textFieldStyle(.serein).frame(width: 200)
           .accessibilityLabel("E2B template Serein's computers are made from")
       }
       HStack {
@@ -911,7 +911,7 @@ private struct DaytonaPlace: View {
       HStack {
         Text("Snapshot")
         Spacer()
-        TextField(DaytonaWire.defaultSnapshot, text: $snapshot).textFieldStyle(.roundedBorder).frame(width: 200)
+        TextField(DaytonaWire.defaultSnapshot, text: $snapshot).textFieldStyle(.serein).frame(width: 200)
           .accessibilityLabel("Daytona snapshot Serein's computers are made from")
       }
       HStack {

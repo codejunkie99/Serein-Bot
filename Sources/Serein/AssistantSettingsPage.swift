@@ -571,10 +571,10 @@ struct SereinPersonaSettings: View {
     SettingsBlock("Personality") {
       TextField("Name (what you call it)", text: Binding(
         get: { nameDraft ?? relay.persona.name }, set: { nameDraft = $0 }))
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.serein)
       TextField("About you and how it should talk (one line)", text: Binding(
         get: { aboutDraft ?? relay.persona.about }, set: { aboutDraft = $0 }))
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.serein)
       HStack {
         Button("Revert") {
           nameDraft = nil
@@ -598,7 +598,7 @@ struct SereinPersonaSettings: View {
     SettingsBlock("Standing instructions", info: "Serein follows up to \(RelayPersona.rulesLimit) of these every turn. They are preferences: they cannot let Serein skip asking before it acts. Serein can only suggest a change, which you allow or decline on a card. Every change is listed below and can be undone.") {
       TextField("One instruction per line, such as “never book before asking”", text: Binding(
         get: { instructionsDraft ?? relay.persona.rules }, set: { instructionsDraft = $0 }), axis: .vertical)
-        .textFieldStyle(.roundedBorder).lineLimit(3...6)
+        .textFieldStyle(.serein).lineLimit(3...6)
         .accessibilityLabel("Standing instructions, one per line")
       HStack {
         Button("Revert") { instructionsDraft = nil }.controlSize(.small)
@@ -780,7 +780,7 @@ struct AssistantMemorySettings: View {
   /// Return saves, Escape puts the words back; a refusal says why under the field.
   private func editor(_ record: MemoryRecord) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      TextField("Note", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...6)
+      TextField("Note", text: $draft, axis: .vertical).textFieldStyle(.serein).lineLimit(1...6)
         .focused($editorFocused)
         .onSubmit { save(record) }
         .onExitCommand { cancelEditing() }

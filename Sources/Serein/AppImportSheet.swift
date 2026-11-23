@@ -183,7 +183,7 @@ import SwiftUI
         Text(verbatim: name).font(UIStyle.monoMeta)
         Spacer()
         SecureField("Not set", text: Binding(get: { typed[name] ?? "" }, set: { typed[name] = $0 }))
-          .textFieldStyle(.roundedBorder).frame(width: 240)
+          .textFieldStyle(.serein).frame(width: 240)
           .accessibilityLabel("\(name) for \(server.name)")
       }
     }
@@ -204,7 +204,7 @@ import SwiftUI
           Text("Token").role(.meta)
           Spacer()
           SecureField("Paste the token you use in \(server.source.name)", text: $token)
-            .textFieldStyle(.roundedBorder).frame(width: 300)
+            .textFieldStyle(.serein).frame(width: 300)
             .accessibilityLabel("Token for \(server.name)")
         }
       case .token, .none:

@@ -345,7 +345,7 @@ struct ColumnsEditor: View {
           TextField("Column name", text: Binding(
             get: { index < columns.count ? columns[index] : "" },
             set: { if index < columns.count { columns[index] = $0 } }))
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.serein)
             .accessibilityLabel("Column \(index + 1)")
           Button {
             if index < columns.count { columns.remove(at: index) }

@@ -178,10 +178,10 @@ private struct HarnessCard: View {
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             labeled("Display name") {
-              TextField(instance.driver.displayName, text: $name).textFieldStyle(.roundedBorder)
+              TextField(instance.driver.displayName, text: $name).textFieldStyle(.serein)
             }
             labeled("App file") {
-              TextField("Found on this Mac", text: $path).textFieldStyle(.roundedBorder)
+              TextField("Found on this Mac", text: $path).textFieldStyle(.serein)
                 .font(UIStyle.monoMeta)
             }
             labeled("Extra settings") {
@@ -222,10 +222,10 @@ private struct HarnessCard: View {
     labeled("API key") {
       VStack(alignment: .leading, spacing: 6) {
         HStack(spacing: 6) {
-          TextField(Self.keyPlaceholder(instance.driver), text: $keyName).textFieldStyle(.roundedBorder)
+          TextField(Self.keyPlaceholder(instance.driver), text: $keyName).textFieldStyle(.serein)
             .font(UIStyle.monoMeta).frame(maxWidth: 190)
             .accessibilityLabel("Name the \(instance.name) API key is given as")
-          SecureField(saved ? "Saved in Keychain" : "Key", text: $key).textFieldStyle(.roundedBorder)
+          SecureField(saved ? "Saved in Keychain" : "Key", text: $key).textFieldStyle(.serein)
             .accessibilityLabel("\(instance.name) API key")
         }
         HStack(spacing: 8) {

@@ -31,11 +31,11 @@ import SwiftUI
       Text("A skill is a note for the assistant. It doesn't give any new access.")
         .role(.meta).fixedSize(horizontal: false, vertical: true)
       field("Name") {
-        TextField("weekly-expenses", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Name")
+        TextField("weekly-expenses", text: $name).textFieldStyle(.serein).accessibilityLabel("Name")
       }
       field("When to use it") {
         TextField("When the person asks for…", text: $whenToUse, axis: .vertical).lineLimit(2...4)
-          .textFieldStyle(.roundedBorder).accessibilityLabel("When to use it")
+          .textFieldStyle(.serein).accessibilityLabel("When to use it")
       }
       field("Steps") {
         TextEditor(text: $steps).font(UIStyle.mono(12)).scrollContentBackground(.hidden)

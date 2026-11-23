@@ -362,7 +362,7 @@ private struct BlankTeam: View {
     }) {
       VStack(alignment: .leading, spacing: 4) {
         Text("Name").font(UIStyle.meta).foregroundStyle(p.secondary)
-        TextField("Trip planner", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Team name")
+        TextField("Trip planner", text: $name).textFieldStyle(.serein).accessibilityLabel("Team name")
           .onChange(of: name) { _, value in if value.count > AssistantGroup.nameLimit { name = String(value.prefix(AssistantGroup.nameLimit)) } }
         if nameTaken {
           Text("Another team is called \(name.trimmingCharacters(in: .whitespacesAndNewlines)).").font(UIStyle.micro).foregroundStyle(p.danger)
@@ -448,13 +448,13 @@ private struct BlankTeam: View {
         VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 8) {
             AssistantMark(tint: tints.indices.contains(index) ? tints[index] : nil, size: 14, icon: row.member.icon)
-            TextField("Name", text: $row.member.name).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+            TextField("Name", text: $row.member.name).textFieldStyle(.serein).frame(maxWidth: 220)
               .accessibilityLabel("Member name")
             Spacer(minLength: 0)
             Button("Remove") { remove(row.id) }.buttonStyle(QuietButton()).font(UIStyle.meta)
               .accessibilityLabel("Remove \(row.member.name)")
           }
-          TextField("What it does (one line)", text: $row.member.persona).textFieldStyle(.roundedBorder)
+          TextField("What it does (one line)", text: $row.member.persona).textFieldStyle(.serein)
             .accessibilityLabel("What \(row.member.name) does")
           HStack(spacing: 10) {
             ForEach(AssistantPlace.allCases, id: \.self) { place in
@@ -466,7 +466,7 @@ private struct BlankTeam: View {
                 .help(allowed ? "\(row.member.name) can use \(place.label)" : "Off for Serein. Turn it on in \(TeamSheets.settingsPage(place).name).")
             }
           }
-          TextField("Instructions", text: $row.member.instructions, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(2...8)
+          TextField("Instructions", text: $row.member.instructions, axis: .vertical).textFieldStyle(.serein).lineLimit(2...8)
             .accessibilityLabel("\(row.member.name)'s instructions")
         }.padding(10).background(p.card, in: RoundedRectangle(cornerRadius: UIStyle.panelRadius))
       }
@@ -567,7 +567,7 @@ private struct DuplicateTeam: View {
         Text("Copies are named “Scout copy” and can do the same, never more.").role(.meta)
         VStack(alignment: .leading, spacing: 4) {
           Text("Name").font(UIStyle.meta).foregroundStyle(p.secondary)
-          TextField("Trip planner copy", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("The copy's name")
+          TextField("Trip planner copy", text: $name).textFieldStyle(.serein).accessibilityLabel("The copy's name")
         }
         if let overflow {
           Text("This would make \(overflow) assistants. \(AssistantBoard.rosterLimit) is the most.").font(UIStyle.meta).foregroundStyle(p.danger)

@@ -195,7 +195,7 @@ private struct MCPConnectionRow: View {
           Text("Token").role(.meta)
           Spacer()
           SecureField(PluginHost.secret(plugin: manifest.id, name: MCPServerConnection.tokenName) == nil ? "Not set" : "Saved", text: $token)
-            .textFieldStyle(.roundedBorder).frame(width: 220)
+            .textFieldStyle(.serein).frame(width: 220)
             .accessibilityLabel("Token for \(manifest.name)")
             .onSubmit { saveToken(manifest) }
           Button("Save Token") { saveToken(manifest) }.disabled(token.isEmpty)
@@ -297,7 +297,7 @@ private struct MCPConnectSheet: View {
       Text("Add an app by address").font(UIStyle.body)
       Text("Paste the app’s MCP address, or pick an official one. Serein lists its tools for you to review before anything is on.")
         .role(.meta).fixedSize(horizontal: false, vertical: true)
-      TextField("https://mcp.example.com/mcp", text: $address).textFieldStyle(.roundedBorder)
+      TextField("https://mcp.example.com/mcp", text: $address).textFieldStyle(.serein)
         .onSubmit(findServer).accessibilityLabel("MCP address")
       Text("Official addresses").role(.micro)
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), alignment: .leading)], alignment: .leading, spacing: 6) {
@@ -334,7 +334,7 @@ private struct MCPConnectSheet: View {
           .role(.meta).fixedSize(horizontal: false, vertical: true)
       }
       HStack {
-        SecureField("Token", text: $token).textFieldStyle(.roundedBorder).onSubmit { useToken(draft) }
+        SecureField("Token", text: $token).textFieldStyle(.serein).onSubmit { useToken(draft) }
           .accessibilityLabel("Token for \(draft.name)")
         Button("Use token") { useToken(draft) }.buttonStyle(QuietButton())
           .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || working != nil)

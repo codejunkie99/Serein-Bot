@@ -294,8 +294,8 @@ struct AuthSheet: View {
             ?? "This site asks for a name and password.")
             + (prompt.retry ? " The last attempt was not accepted." : "")
         ).role(.meta).fixedSize(horizontal: false, vertical: true)
-        TextField("Name", text: $user).textFieldStyle(.roundedBorder)
-        SecureField("Password", text: $password).textFieldStyle(.roundedBorder).onSubmit(submit)
+        TextField("Name", text: $user).textFieldStyle(.serein)
+        SecureField("Password", text: $password).textFieldStyle(.serein).onSubmit(submit)
         HStack {
           Spacer()
           Button("Cancel") { prompt.cancel() }.buttonStyle(QuietButton()).keyboardShortcut(
