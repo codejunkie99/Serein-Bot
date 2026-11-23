@@ -23,7 +23,17 @@ import Virtualization
   private(set) var isReady = false
   private(set) var setupPhase = MacSetupPhase.preparing
   private var setupAgreementApproved = false
+  #if arch(arm64)
   private var installer: VZMacOSInstaller?
+  #endif
+  /// True while macOS is installing. The installer type exists only on Apple silicon.
+  private var isInstalling: Bool {
+    #if arch(arm64)
+    installer != nil
+    #else
+    false
+    #endif
+  }
   private var readiness: Task<Void, Never>?
   /// The guest's helper answered at least once since the last wait began (any build).
   private var heardFromGuest = false
@@ -149,7 +159,11 @@ import Virtualization
     guard let record else { throw SereinError.invalid("The virtual Mac's configuration is missing.") }
     let online = record.prepared == true && internet()
     let config = try configuration(record, online: online)
+    #if arch(arm64)
     canSave = (try? config.validateSaveRestoreSupport()) != nil
+    #else
+    canSave = false
+    #endif
     let vm = VZVirtualMachine(configuration: config)
     vm.delegate = self
     machine = vm
@@ -169,9 +183,13 @@ import Virtualization
     do {
       restoredFromSave = fm.fileExists(atPath: file("resume.vzvmsave").path)
       if restoredFromSave {
+        #if arch(arm64)
         try await vm.restoreMachineStateFrom(url: file("resume.vzvmsave"))
         try await vm.resume()
         try fm.removeItem(at: file("resume.vzvmsave"))
+        #else
+        throw SereinError.invalid("The virtual Mac needs an Apple silicon Mac and a signed Serein build.")
+        #endif
       } else {
         var booted = record
         if record.needsAccountProvisioning, let options = try MacGuestProvisioning.startOptions(storage: folder) {
@@ -243,6 +261,7 @@ import Virtualization
   }
 
   private func install() async throws {
+    #if arch(arm64)
     let imageURL = try await MacRestoreImage.shared.image(progress: progress)
     try Task.checkCancellation()
     let image = try await VZMacOSRestoreImage.image(from: imageURL)
@@ -285,12 +304,16 @@ import Virtualization
     installed.installed = true
     installed.osMajor = image.operatingSystemVersion.majorVersion
     try write(JSONEncoder().encode(installed), to: file("machine.json"))
+    #else
+    throw SereinError.invalid("The virtual Mac needs an Apple silicon Mac and a signed Serein build.")
+    #endif
   }
 
   /// What `resume.build` holds: saved memory restores only into the same helper build and the same
   /// network devices. An offline tag is the bare build, as older Serein builds wrote it.
   nonisolated static func resumeTag(build: String, online: Bool) -> String { online ? build + " network" : build }
   private func configuration(_ record: Record, online: Bool) throws -> VZVirtualMachineConfiguration {
+    #if arch(arm64)
     let config = VZVirtualMachineConfiguration()
     config.bootLoader = VZMacOSBootLoader()
     config.cpuCount = record.cpu
@@ -328,6 +351,9 @@ import Virtualization
     config.directorySharingDevices = [filesystem]
     try config.validate()
     return config
+    #else
+    throw SereinError.invalid("The virtual Mac needs an Apple silicon Mac and a signed Serein build.")
+    #endif
   }
 
   private func write(_ data: Data, to url: URL) throws {
@@ -338,7 +364,9 @@ import Virtualization
     setupPhase.message ?? MacComputerPolicy.setupLine
   }
   func cancelSetup() {
+    #if arch(arm64)
     installer?.progress.cancel()
+    #endif
     readiness?.cancel()
     isReady = false
   }
@@ -364,7 +392,11 @@ import Virtualization
     try await vm.pause()
     do {
       if fm.fileExists(atPath: file("resume.part.vzvmsave").path) { try fm.removeItem(at: file("resume.part.vzvmsave")) }
+      #if arch(arm64)
       try await vm.saveMachineStateTo(url: file("resume.part.vzvmsave"))
+      #else
+      throw SereinError.invalid("The virtual Mac needs an Apple silicon Mac and a signed Serein build.")
+      #endif
       try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file("resume.part.vzvmsave").path)
       if fm.fileExists(atPath: file("resume.vzvmsave").path) { try fm.removeItem(at: file("resume.vzvmsave")) }
       try fm.moveItem(at: file("resume.part.vzvmsave"), to: file("resume.vzvmsave"))
@@ -383,7 +415,7 @@ import Virtualization
   /// would. Its disk and files are kept; only what was unsaved in its apps is lost.
   func restart() async throws { try await restart(force: false) }
   func restart(force: Bool) async throws {
-    guard installer == nil else { throw SereinError.invalid("Wait for macOS installation to finish before restarting the virtual Mac.") }
+    guard !isInstalling else { throw SereinError.invalid("Wait for macOS installation to finish before restarting the virtual Mac.") }
     if machine == nil, fm.fileExists(atPath: file("resume.vzvmsave").path) { _ = try await start() }
     readiness?.cancel()
     if let vm = machine {
@@ -421,13 +453,15 @@ import Virtualization
   static let guestShutDown = "osascript -e 'tell application \"loginwindow\" to «event aevtshut»'"
   static let guestShutDownWait: TimeInterval = 60
   func delete() async throws {
-    guard installer == nil else { throw SereinError.invalid("Cancel the macOS installation before removing this computer.") }
+    guard !isInstalling else { throw SereinError.invalid("Cancel the macOS installation before removing this computer.") }
     try await restart()
     if fm.fileExists(atPath: folder.path) { try fm.trashItem(at: folder, resultingItemURL: nil) }
   }
   func stopForQuit(paused: Bool) {
     readiness?.cancel()
+    #if arch(arm64)
     if let installer { installer.progress.cancel(); return }
+    #endif
     guard let vm = machine, vm.canStop else { return }
     vm.stop { _ in }
     machine = nil
@@ -566,7 +600,7 @@ import Virtualization
   var verificationDisplay: String { display?.verificationState ?? "no renderer" }
   func verificationPowerOff() async throws {
     guard folder.lastPathComponent.hasPrefix("serein-offline-check-"), GateSettings.shared.fileURL == nil,
-      hasCompletedSetup, installer == nil, let vm = machine, vm.canStop else {
+      hasCompletedSetup, !isInstalling, let vm = machine, vm.canStop else {
       throw SereinError.invalid("Power-cycle verification requires a prepared, dedicated test Mac.")
     }
     readiness?.cancel(); isReady = false

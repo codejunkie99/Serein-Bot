@@ -12,15 +12,22 @@ import Virtualization
 
 enum MacGuestProvisioning {
   static var available: Bool {
+    // VZMacOSVirtualMachineStartOptions is declared only for arm64.
+    #if arch(arm64)
     if #available(macOS 27, *) {
       return NSClassFromString("VZMacGuestProvisioningOptions") != nil
         && VZMacOSVirtualMachineStartOptions.instancesRespond(to: NSSelectorFromString("setGuestProvisioningOptions:error:"))
     }
     return false
+    #else
+    return false
+    #endif
   }
 
   /// The password stays in this Mac's Keychain and Apple's provisioning call for this guest.
-  static func startOptions(storage: URL) throws -> VZMacOSVirtualMachineStartOptions? {
+  /// The returned object is a `VZMacOSVirtualMachineStartOptions` on Apple silicon. Intel has no such type.
+  static func startOptions(storage: URL) throws -> VZVirtualMachineStartOptions? {
+    #if arch(arm64)
     guard available, let type = NSClassFromString("VZMacGuestProvisioningOptions") as? NSObject.Type else { return nil }
     let provisioning = type.init()
     let values: [String: Any] = [
@@ -37,6 +44,10 @@ enum MacGuestProvisioning {
     let options = VZMacOSVirtualMachineStartOptions()
     try apply(provisioning, to: options)
     return options
+    #else
+    // Intel Macs have no macOS guest start options.
+    return nil
+    #endif
   }
 
   /// Apple's setter validates the account before the guest starts. Refused options never
