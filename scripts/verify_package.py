@@ -38,6 +38,12 @@ FRAMEWORK_LINKS.update({
 FRAMEWORK_LINKS[str(SPEECH_FRAMEWORK / "Versions/Current")] = "A"
 
 
+UPDATE_FEED = {
+    "SUFeedURL": "https://github.com/codejunkie99/Serein-Bot/releases/latest/download/appcast.xml",
+    "SUPublicEDKey": "Cvu8zrIxWdP+DO1H6jtbfTbFjMtncUu8lTj/w9rKIvU=",
+}
+
+
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -266,12 +272,13 @@ def validate(archive_path):
                               "LSMinimumSystemVersion": "14.0"}.items():
             require(info.get(key) == expected, f"Unexpected {key}: {info.get(key)!r}")
         lines.append("APP_INFO PASS")
-        for key in ("CFBundleURLTypes", "SUFeedURL", "SUPublicEDKey"):
-            require(key not in info, f"Free v1 must omit {key}")
+        require("CFBundleURLTypes" not in info, "Free must omit CFBundleURLTypes")
+        feed = {key: info[key] for key in UPDATE_FEED if key in info}
+        require(feed in ({}, UPDATE_FEED), f"Update feed must be absent (local build) or exactly {UPDATE_FEED}: {feed}")
         daemon = "pro.serein.mac-provisioner.plist"
         require(digest(app / "Contents/Library/LaunchDaemons" / daemon) == digest(ROOT / "scripts" / daemon),
                 "Provisioner registration differs from its source")
-        lines.append("MANUAL_UPDATE_AND_HELPER_REGISTRATION PASS")
+        lines.append("UPDATE_FEED_AND_HELPER_REGISTRATION PASS")
         for name in EXECUTABLES:
             executable = app / "Contents/MacOS" / name
             require(executable.is_file() and executable.stat().st_mode & 0o111,

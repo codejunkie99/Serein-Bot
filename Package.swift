@@ -12,7 +12,7 @@ let package = Package(
     .executable(name: "serein-mac-provisioner", targets: ["MacProvision"]),
   ],
   dependencies: [
-    // Updates.swift links Sparkle. Free v1 ships without a feed.
+    // Updates.swift links Sparkle. Release builds update from the newest GitHub release.
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
   ],
   targets: [
