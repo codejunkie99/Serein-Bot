@@ -86,7 +86,7 @@ PLIST
 # appcast.xml there). A local build has no feed, so it never replaces itself.
 if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
   /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/codejunkie99/Serein-Bot/releases/latest/download/appcast.xml" \
-    -c "Add :SUPublicEDKey string Cvu8zrIxWdP+DO1H6jtbfTbFjMtncUu8lTj/w9rKIvU=" "$APP/Contents/Info.plist"
+    -c "Add :SUPublicEDKey string ETsGf57Hz5ZVwRJhwE/OuxVi0vage99RKYJiTOvmY6M=" "$APP/Contents/Info.plist"
 fi
 xattr -cr "$APP"
 # A real identity when one exists: macOS ties Accessibility, Automation and Screen Recording

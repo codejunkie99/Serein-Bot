@@ -40,7 +40,7 @@ FRAMEWORK_LINKS[str(SPEECH_FRAMEWORK / "Versions/Current")] = "A"
 
 UPDATE_FEED = {
     "SUFeedURL": "https://github.com/codejunkie99/Serein-Bot/releases/latest/download/appcast.xml",
-    "SUPublicEDKey": "Cvu8zrIxWdP+DO1H6jtbfTbFjMtncUu8lTj/w9rKIvU=",
+    "SUPublicEDKey": "ETsGf57Hz5ZVwRJhwE/OuxVi0vage99RKYJiTOvmY6M=",
 }
 
 
