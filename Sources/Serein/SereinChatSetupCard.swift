@@ -105,7 +105,7 @@ struct SereinChatSetupCard: View {
   private var modelChoices: some View {
     VStack(alignment: .leading, spacing: 8) {
       if routes.count > 6 {
-        TextField("Find a model", text: $query).textFieldStyle(.roundedBorder)
+        TextField("Find a model", text: $query).textFieldStyle(.serein)
           .accessibilityLabel("Find a model")
       }
       if shownRoutes.isEmpty {

@@ -388,7 +388,7 @@ struct JevKeyForm: View {
         }.pickerStyle(.segmented).labelsHidden()
         HStack(spacing: 8) {
           SecureField(route == .openRouter ? "Paste your OpenRouter key (sk-or-…)" : "Paste your TypeSafe key", text: $key)
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.serein)
             .onSubmit { connect() }
           Button("Connect") { connect() }.disabled(key.isEmpty || busy)
         }

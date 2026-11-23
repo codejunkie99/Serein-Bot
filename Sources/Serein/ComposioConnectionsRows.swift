@@ -94,7 +94,7 @@ struct ComposioConnectionsRows: View {
       Text(ConnectedApps.privacyText).role(.meta).fixedSize(horizontal: false, vertical: true)
       HStack(spacing: 8) {
         SecureField("Paste your Composio API key", text: $key)
-          .textFieldStyle(.roundedBorder)
+          .textFieldStyle(.serein)
           .onSubmit(turnOn)
           .accessibilityLabel("Composio API key")
         Button("Turn On", action: turnOn).buttonStyle(PrimaryButton()).disabled(key.isEmpty || busy)
@@ -136,7 +136,7 @@ struct ComposioConnectionsRows: View {
       if typing {
         HStack(spacing: 8) {
           TextField("Its Composio name, such as linear", text: $other)
-            .textFieldStyle(.roundedBorder).onSubmit(connectOther)
+            .textFieldStyle(.serein).onSubmit(connectOther)
             .accessibilityLabel("Composio name of the app to connect")
           Button("Connect…", action: connectOther).buttonStyle(QuietButton())
             .disabled(busy || apps.waitingFor != nil || other.isEmpty)
@@ -183,7 +183,7 @@ struct ComposioConnectionsRows: View {
       }
       HStack(spacing: 8) {
         TextField("Block a tool, such as GMAIL_SEND_EMAIL", text: $blockDraft)
-          .textFieldStyle(.roundedBorder).onSubmit(block)
+          .textFieldStyle(.serein).onSubmit(block)
           .accessibilityLabel("Tool to block")
         Button("Block", action: block).buttonStyle(QuietButton()).disabled(ConnectedApps.toolSlug(blockDraft) == nil)
       }

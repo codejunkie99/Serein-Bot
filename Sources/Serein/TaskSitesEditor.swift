@@ -27,7 +27,7 @@ struct TaskSitesEditor: View {
       }
       HStack(spacing: 8) {
         TextField("Add a site", text: $draft)
-          .textFieldStyle(.roundedBorder)
+          .textFieldStyle(.serein)
           .onSubmit { add() }
         Button("Add") { add() }.buttonStyle(QuietButton()).disabled(TaskPass.host(draft).isEmpty)
       }

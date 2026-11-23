@@ -543,13 +543,13 @@ struct OutsideAgentsSettings: View {
   }
   private var form: some View {
     VStack(alignment: .leading, spacing: 12) {
-      TextField("Name, such as Grok Bot", text: $name).textFieldStyle(.roundedBorder)
-      TextField("Sites where it may use your sign-ins (optional)", text: $sites).textFieldStyle(.roundedBorder)
+      TextField("Name, such as Grok Bot", text: $name).textFieldStyle(.serein)
+      TextField("Sites where it may use your sign-ins (optional)", text: $sites).textFieldStyle(.serein)
       Text(
         "With no sites, its tabs are isolated: no sign-ins and nothing saved. With sites, it uses your sign-ins on those sites only, and its tabs cannot leave them."
       ).role(.meta).fixedSize(horizontal: false, vertical: true)
       TextField("Local addresses it may open, such as localhost (optional)", text: $local)
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.serein)
       Toggle("Clicks and typing", isOn: $actions).toggleStyle(SettingsToggleStyle())
       Toggle("May ask Serein", isOn: $relay).toggleStyle(SettingsToggleStyle())
       Text("Serein can start tasks with your AI apps and use your Mac apps. Its requests follow your choices in Settings › Assistants, including what Serein asks first.")

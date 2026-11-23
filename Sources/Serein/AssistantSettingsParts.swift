@@ -33,7 +33,7 @@ struct AssistantDoesSettings: View {
         TextField("Writes and edits drafts", text: Binding(get: { job }, set: { value in
           jobDraft = String(value.prefix(TeamProposal.personaLimit))
         }))
-        .textFieldStyle(.roundedBorder).accessibilityLabel("What it does")
+        .textFieldStyle(.serein).accessibilityLabel("What it does")
         SettingsNote("One line \(profile.name) reads every turn. It grants nothing.")
       }
       SettingsBlock("Extra instructions") { extraField }
@@ -184,7 +184,7 @@ struct AssistantAppsSettings: View {
       }
     }
     HStack(spacing: 8) {
-      TextField("Add a site, like example.com", text: $site).textFieldStyle(.roundedBorder)
+      TextField("Add a site, like example.com", text: $site).textFieldStyle(.serein)
         .onSubmit(addSite).accessibilityLabel("Add a site")
       Button("Add", action: addSite).buttonStyle(QuietButton()).disabled(site.trimmingCharacters(in: .whitespaces).isEmpty)
     }

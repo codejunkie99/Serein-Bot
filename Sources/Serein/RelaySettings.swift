@@ -364,7 +364,7 @@ struct RelayAnyAppSettings: View {
       Text(title)
       Spacer()
       Text(RelayHotKey.symbols(value.wrappedValue)).font(UIStyle.monoMeta).foregroundStyle(p.secondary)
-      TextField("", text: draft).textFieldStyle(.roundedBorder).frame(width: 160)
+      TextField("", text: draft).textFieldStyle(.serein).frame(width: 160)
         .accessibilityLabel("\(title) shortcut")
         .onSubmit {
           guard RelayHotKey.parse(draft.wrappedValue) != nil else {
@@ -1172,7 +1172,7 @@ private struct ReminderEditor: View {
           : "Saved changes apply at once. Undo them in Recent changes to schedules."
       ) { EmptyView() }
       TextField(isGoal ? "What Serein looks for, and where" : reminder.action ? "What Serein does" : "Reminder", text: $text, axis: .vertical)
-        .textFieldStyle(.roundedBorder).lineLimit(2...5)
+        .textFieldStyle(.serein).lineLimit(2...5)
         .accessibilityLabel(isGoal ? "The goal" : reminder.action ? "What Serein does" : "Reminder text")
       HStack {
         Text(isGoal ? "Checks" : "When")
@@ -1193,7 +1193,7 @@ private struct ReminderEditor: View {
             choices: RelayReminder.minuteChoices.map { SettingsChoice(value: $0, label: "\($0) minutes") }, showsTitle: false)
         }
       case .custom:
-        TextField("17 9 * * 1-5", text: $cron).textFieldStyle(.roundedBorder).font(UIStyle.monoMeta)
+        TextField("17 9 * * 1-5", text: $cron).textFieldStyle(.serein).font(UIStyle.monoMeta)
           .accessibilityLabel("Custom schedule, as a cron")
         SettingsNote("Minute, hour, day of month, month and day of week, in your time zone: 17 9 * * 1-5 is 9:17 every weekday.")
       }
@@ -1234,7 +1234,7 @@ private struct ReminderEditor: View {
             .accessibilityValue("\(quietLimit)")
         }
         TextField("Progress note", text: $note, axis: .vertical)
-          .textFieldStyle(.roundedBorder).lineLimit(2...6)
+          .textFieldStyle(.serein).lineLimit(2...6)
           .accessibilityLabel("Progress note")
         SettingsNote("Each check reads this note and writes the next one from web pages, so read it as such. Undo an edit in Recent changes to schedules.")
       }
@@ -1317,9 +1317,9 @@ private struct WatchEditor: View {
       PageHeader("Edit alert", subtitle: "Saved changes apply at once. Undo them in Recent changes to schedules.") {
         EmptyView()
       }
-      TextField("Name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Alert name")
+      TextField("Name", text: $name).textFieldStyle(.serein).accessibilityLabel("Alert name")
       TextField(watch.kind == .script ? "AppleScript read" : "Page address", text: $source, axis: .vertical)
-        .textFieldStyle(.roundedBorder).font(UIStyle.monoMeta).lineLimit(1...8)
+        .textFieldStyle(.serein).font(UIStyle.monoMeta).lineLimit(1...8)
         .accessibilityLabel(watch.kind == .script ? "AppleScript the alert reads" : "Page the alert checks")
       SettingsNote(
         watch.kind == .script

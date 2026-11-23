@@ -35,7 +35,7 @@ struct KeyConnectSheet: View {
           Button("Open \(pageHost)") { NSWorkspace.shared.open(page) }.buttonStyle(QuietButton())
             .help(key.page)
         }
-        SecureField(key.placeholder, text: $token).textFieldStyle(.roundedBorder).onSubmit { submit(key) }
+        SecureField(key.placeholder, text: $token).textFieldStyle(.serein).onSubmit { submit(key) }
           .accessibilityLabel("\(connector.name) \(key.name)")
           .disabled(working)
         status

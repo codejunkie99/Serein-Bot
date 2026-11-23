@@ -389,7 +389,7 @@ private struct PluginRow: View {
             Spacer()
             SecureField(PluginHost.secret(plugin: manifest.id, name: name) == nil ? "Not set" : "Saved in Keychain", text: Binding(
               get: { secrets[name] ?? "" }, set: { secrets[name] = $0 }))
-              .textFieldStyle(.roundedBorder).frame(width: 220)
+              .textFieldStyle(.serein).frame(width: 220)
               .accessibilityLabel("\(name) for \(manifest.name)")
               .onSubmit { saveSecret(name, manifest) }
             Button("Save Key") { saveSecret(name, manifest) }.disabled((secrets[name] ?? "").isEmpty)

@@ -252,7 +252,7 @@ struct RecipeReviewSheet: View {
           }
         }.frame(maxWidth: .infinity, alignment: .leading)
       }.frame(maxHeight: 340)
-      TextField("Recipe name, such as Expense report", text: $name).textFieldStyle(.roundedBorder)
+      TextField("Recipe name, such as Expense report", text: $name).textFieldStyle(.serein)
         .accessibilityLabel("Recipe name")
       if let error { Text(error).role(.meta).foregroundStyle(p.danger) }
       HStack {
@@ -292,7 +292,7 @@ struct RecipeReviewSheet: View {
         }.pickerStyle(.segmented).labelsHidden().frame(width: UIStyle.wide(260))
         if let blank = blanks[step.id] {
           TextField("Name of this value", text: Binding(get: { blank }, set: { blanks[step.id] = $0 }))
-            .textFieldStyle(.roundedBorder).frame(width: UIStyle.wide(260))
+            .textFieldStyle(.serein).frame(width: UIStyle.wide(260))
             .accessibilityLabel("Name of the value asked in step \(index + 1)")
         }
       }
@@ -324,7 +324,7 @@ struct RecipeSettings: View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         TextField("Recipe name", text: Binding(get: { names[recipe.id] ?? recipe.name }, set: { names[recipe.id] = $0 }))
-          .textFieldStyle(.roundedBorder).frame(width: UIStyle.wide(200))
+          .textFieldStyle(.serein).frame(width: UIStyle.wide(200))
           .accessibilityLabel("Name of the recipe \(recipe.name)")
           .onSubmit { rename(recipe) }
         Text("\(recipe.steps.count) step\(recipe.steps.count == 1 ? "" : "s") · \(recipe.host)").role(.meta).lineLimit(1)

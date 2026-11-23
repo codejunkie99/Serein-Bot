@@ -144,7 +144,7 @@ struct ShortcutSettings: View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         TextField("Shortcut name", text: Binding(get: { names[shortcut.id] ?? shortcut.name }, set: { names[shortcut.id] = $0 }))
-          .textFieldStyle(.roundedBorder).frame(width: UIStyle.wide(200))
+          .textFieldStyle(.serein).frame(width: UIStyle.wide(200))
           .accessibilityLabel("Name of the shortcut /\(shortcut.name)")
           .onSubmit { save(shortcut) }
         Spacer()
@@ -158,7 +158,7 @@ struct ShortcutSettings: View {
           .accessibilityLabel("Delete /\(shortcut.name)")
       }
       TextField("Words", text: Binding(get: { texts[shortcut.id] ?? shortcut.text }, set: { texts[shortcut.id] = $0 }), axis: .vertical)
-        .textFieldStyle(.roundedBorder).lineLimit(2...6)
+        .textFieldStyle(.serein).lineLimit(2...6)
         .accessibilityLabel("Words of the shortcut /\(shortcut.name)")
     }
   }
