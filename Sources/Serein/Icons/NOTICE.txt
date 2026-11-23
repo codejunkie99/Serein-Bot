@@ -1,0 +1,122 @@
+Serein includes outline icon assets copied unchanged from Zeron.
+Source: https://github.com/zeronsh/zeron
+Revision: 1074bc540b995d6b7e5a6fa5431f1a2420df8d91
+Original paths: crates/ui/assets/icons; attribution: crates/ui/src/icons.rs
+
+Solar Icons by 480 Design, Linear set: Creative Commons Attribution 4.0.
+https://github.com/zeronsh/zeron/tree/1074bc540b995d6b7e5a6fa5431f1a2420df8d91/crates/ui/assets/icons
+https://creativecommons.org/licenses/by/4.0/
+The full license is included in CC-BY-4.0.txt.
+Some arrows are rotated or mirrored adaptations already present in Zeron.
+Serein renders these assets with the interface text color and does not edit the SVGs, with two
+exceptions. globe.svg is Serein's own drawing (an outline, one meridian and the equator), in place
+of Solar's earth, whose coastlines read as a check mark at sidebar size. And widget-add.svg is Serein's adaptation of Solar's widget.svg (CC BY 4.0), three of its
+four squares with a plus drawn in place of the fourth.
+
+Original Zeron glyphs: MIT, copyright (c) 2026 Wing.
+The full license is included in Zeron-MIT.txt.
+These names identify the source authors; no affiliation or endorsement is implied.
+
+Brand marks: claude-mark.svg (Anthropic) and openai-mark.svg (OpenAI), copied from
+Keel (https://github.com/codejunkie99/keel, crates/ui/assets/icons). They identify the
+CLI a task runs through and remain their owners' trademarks; no affiliation or endorsement
+is implied.
+
+Harness product marks (harness-*.svg): each identifies the coding agent a task runs through.
+- harness-claudecode, harness-codex, harness-cursor, harness-opencode, harness-pi,
+  harness-grok: copied unchanged from Lobe Icons,
+  @lobehub/icons-static-svg 1.95.1 (https://github.com/lobehub/lobe-icons), MIT,
+  copyright (c) 2023 LobeHub. The full license is included in LobeIcons-MIT.txt.
+  harness-codex has its path arc flags written out with separators
+  (same shapes) because macOS's SVG renderer misreads the compact form.
+- harness-ohmypi: assets/icon.svg from Oh My Pi (https://github.com/can1357/oh-my-pi,
+  revision a4d6f0adc63dda4ccdf4d25c26422219820f865b), copied unchanged, MIT,
+  copyright (c) 2025 Mario Zechner and (c) 2025-2026 Can Bölük. The full license is included
+  in OhMyPi-MIT.txt.
+Serein renders these marks as template images in the interface color (Claude Code's may be
+tinted orange). In Settings › AI apps and the model picker, a mark whose company has no colour
+logo is drawn in white on a black plate: the colours Lobe Icons gives these brands
+(@lobehub/icons, COLOR_PRIMARY #000 with a white avatar mark). The SVG files are unchanged. The product names and marks remain their owners' trademarks; no affiliation
+or endorsement is implied.
+
+Company logos (logo-*.svg and place-daytona.svg): each identifies a company Settings names
+(the Marketplace, Settings › AI apps and Serein's computer), in its own colours.
+- logo-gmail (google-gmail.svg), logo-slack (slack-icon.svg), logo-notion (notion-icon.svg),
+  logo-github (github-icon.svg), logo-docker (docker-icon.svg), logo-composio
+  (composio-icon.svg) and logo-googlecalendar (google-calendar.svg): from SVG Logos by
+  gilbarbara (https://github.com/gilbarbara/logos, logos/), CC0-1.0, copied unchanged except
+  logo-googlecalendar, whose two masked shading layers and blur filter were removed (the same
+  outline, colours and "31"), because macOS's SVG renderer does not draw masks and filters, and
+  logo-composio, whose unchanged shape is filled in Composio's blue (#31AAFF) and centred on a
+  black rounded tile, as Composio shows its mark.
+- The one-click apps' logos, from the same SVG Logos (revision
+  22f03ffc4a652309d1fea4ade70f46e9e1d6602c), CC0-1.0, copied unchanged: logo-asana
+  (asana-icon.svg), logo-cloudflare (cloudflare-icon.svg), logo-dropbox (dropbox.svg),
+  logo-figma (figma.svg), logo-intercom (intercom-icon.svg), logo-linear (linear-icon.svg),
+  logo-monday (monday-icon.svg), logo-paypal (paypal.svg), logo-sentry (sentry-icon.svg),
+  logo-square (square.svg), logo-supabase (supabase-icon.svg) and logo-vercel (vercel-icon.svg).
+- More app logos for Connect Apps, each from the source and revision named. The license named
+  is the one that source's repository states for its files:
+  - SVG Logos at the same revision, CC0-1.0, copied unchanged: logo-adobe (adobe-icon.svg),
+    logo-amplitude (amplitude-icon.svg), logo-apify (apify-icon.svg), logo-clickup
+    (clickup-icon.svg), logo-contentful (contentful.svg), logo-descript (descript-icon.svg),
+    logo-ifttt (ifttt.svg), logo-lovable (lovable-icon.svg), logo-neon (neon-icon.svg),
+    logo-newrelic (new-relic-icon.svg), logo-posthog (posthog-icon.svg), logo-postman
+    (postman-icon.svg), logo-prisma (prisma.svg), logo-sourcegraph (sourcegraph.svg), logo-wix
+    (wix.svg) and logo-workos (workos-icon.svg).
+  - Simple Icons (https://github.com/simple-icons/simple-icons, icons/, revision
+    1bb2f6e6ea50f920de8d2f3d273ae48564a5eaee), CC0-1.0. Copied unchanged: logo-brex, logo-lucid
+    and logo-sanity (Simple Icons records Sanity's mark as MIT, from sanity-io/logos). With one
+    change, a fill in the brand colour that Simple Icons' own data gives: logo-algolia
+    (#003DFF), logo-bitly (#EE6123), logo-calendly (#006BFF), logo-hubspot (#FF7A59),
+    logo-mixpanel (#7856FF), logo-semrush (#FF642D), logo-stripe (#635BFF), logo-webflow
+    (#146EF5) and logo-zapier (#FF4F00).
+  - svgl (https://github.com/pheralb/svgl, static/library/, revision
+    c0ec7ab121354ac1096b17b3aebbb293c8ce5600), MIT, copied unchanged: logo-apollo
+    (apollo-io.svg), logo-canva (canva.svg) and logo-granola (granola-light.svg).
+  - theSVG (https://github.com/glincker/thesvg, public/icons/<name>/default.svg, revision
+    2e6109e60b391e777833f52b63571542b5446e49), MIT, copied unchanged: logo-attio, logo-beehiiv
+    and logo-pipedrive.
+  - Composio's logo set (https://github.com/ComposioHQ/logo-cdn, src/assets/, revision
+    87cc47cec2a0ab5ae1e60c97fb2761dff4024ad4), MIT. Copied unchanged: logo-heygen (heygen.svg)
+    and logo-lemlist (lemlist.svg). With one change, the DOCTYPE line (which names a web
+    address) removed: logo-deel (deel.svg), logo-fathom (fathom.svg), logo-gocardless
+    (gocardless_mcp.svg), logo-gusto (gusto.svg), logo-highlevel (highlevel.svg), logo-kit
+    (kit.svg), logo-klaviyo (klaviyo.svg), logo-motion (motion.svg), logo-outreach
+    (outreach.svg), logo-similarweb (similarweb_digitalrank_api.svg) and logo-wordpress
+    (wordpress_com.svg).
+  - Meltano Hub (https://github.com/meltano/hub, static/assets/logos/extractors/, revision
+    eb03107ea4bd556e65ef0a85e7acbb121ad30331), Apache-2.0, copied unchanged: logo-jotform
+    (jotform.svg) and logo-tally (tally.svg).
+  - Hive (https://github.com/aden-hive/hive, core/frontend/public/logos/, revision
+    c6c2cdcfe5a6142cd0da3f82424afc9dd9721cc3), Apache-2.0, copied unchanged: logo-metricool
+    (metricool.svg).
+  - Each company's own repository, MIT, copied unchanged: logo-agentmail (assets/logo.svg,
+    https://github.com/agentmail-to/agentmail-plugins, revision
+    cd2a14987b4bca9698681dbafe38e0ce2c08ebae), logo-context7 (public/context7-icon.svg,
+    https://github.com/upstash/context7, revision c5e34a01799bce82534eb0ed74bb16b025d75f47),
+    logo-mercury (icons/mercury.svg, https://github.com/MercuryTechnologies/n8n-nodes-mercury,
+    revision 01892df68517bbaefdd3714a478c3b7e6375e80e), logo-remote (assets/icon.svg,
+    https://github.com/remoteoss/remote-for-ai, revision
+    4e241875984e0f512f4f80464a0449612acf6e45) and logo-zoominfo
+    (assets/zoominfo-logomark-red.svg, https://github.com/Zoominfo/zoominfo-mcp-plugin, revision
+    e3b6ec9765cefad549ea8bb888d9cc3a259fdd11).
+  The MIT notices are in AppLogos-MIT.txt and the Apache License in Apache-2.0.txt. The marks
+  that are one dark or white colour only (AgentMail, Amplitude, Attio, beehiiv, Brex, Granola,
+  IFTTT, Intercom, Linear, Lucid, Mercury, Metricool, Prisma, Sanity, Sentry, Square, Tally,
+  Vercel and Wix) are drawn in the text colour, as GitHub's is, so they show on a dark surface.
+- logo-claude (claude-color.svg), logo-codex (codex-color.svg) and logo-gemini
+  (gemini-color.svg): copied from Lobe Icons, @lobehub/icons-static-svg 1.95.1
+  (https://github.com/lobehub/lobe-icons), MIT, copyright (c) 2023 LobeHub; the full license is
+  in LobeIcons-MIT.txt. logo-claude and logo-gemini are unchanged. logo-codex is from 1.102.0
+  (the same drawing) with its path arc flags written out with separators (same shapes), because
+  macOS's SVG renderer misreads the compact form and tore the cloud.
+- logo-e2b: e2b-symbol-fire-orange.svg from E2B's brand asset pack
+  (https://e2b.dev/brand/e2b-brand-assets.zip), copied unchanged.
+- place-daytona: the glyph of Daytona's logotype from its brand page (https://daytona.io/brand),
+  cut from the logotype file with its own 224 x 224 frame and filled black; the shapes are
+  unchanged. Daytona's mark is black or white only, so Serein draws it in the text colour, as it
+  does the black GitHub and Cursor marks.
+The apps on this Mac (Mail, Messages, Calendar, Reminders, Contacts, Notes) show their own icons,
+read from the installed apps at run time; no Apple icon is bundled.
+The names and marks remain their owners' trademarks; no affiliation or endorsement is implied.
