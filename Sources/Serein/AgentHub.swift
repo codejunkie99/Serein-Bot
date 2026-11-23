@@ -509,9 +509,8 @@ extension TaskMode {
 }
 
 
-/// Holds every agent run. Up to `maxConcurrent` run at once; each keeps its own capability.
+/// Holds every agent run; each keeps its own capability.
 @MainActor final class AgentHub: ObservableObject {
-  static let maxConcurrent = 3
   /// Active runs plus finished ones the user has not dismissed yet.
   @Published private(set) var runs: [AgentRun] = []
   /// Ticks while runs are active so elapsed and idle labels stay current.
@@ -575,10 +574,8 @@ extension TaskMode {
     ) { [weak self] _ in MainActor.assumeIsolated { self?.stopAllForQuit() } }
   }
   var active: [AgentRun] { runs.filter(\.isActive) }
-  /// Active runs that take one of the `maxConcurrent` slots: every one but Relay's own.
+  /// Active runs other than Relay's own.
   var slotted: [AgentRun] { active.filter { !$0.spec.relay } }
-  /// A slot is free, or the run to start is Relay's own.
-  func hasRoom(for spec: RunSpec) -> Bool { spec.relay || slotted.count < Self.maxConcurrent }
   var waiting: [AgentRun] { runs.filter { [.waiting, .stuck].contains($0.record.outcome) } }
   func run(for threadID: String) -> AgentRun? {
     runs.first { $0.isActive && $0.spec.threadID == threadID }
@@ -592,10 +589,6 @@ extension TaskMode {
     _ spec: RunSpec, task: BrowserTask, arguments: [String], folder: URL, prompt: String,
     transcript: [AgentMessage], runtimeDirectory: URL? = nil
   ) throws -> AgentRun {
-    guard hasRoom(for: spec) else {
-      throw SereinError.invalid(
-        "\(Self.maxConcurrent) tasks are already running. Stop one or wait for one to finish.")
-    }
     let run = AgentRun(spec: spec, taskID: task.capability.task, transcript: transcript)
     browser?.stepJournal.turnStarts(spec.threadID)
     try browser?.beginBehaviorHistory(run)
@@ -636,9 +629,6 @@ extension TaskMode {
     engine: TurnRequest? = nil, runtimeDirectory: URL? = nil,
     revalidate: @escaping (AgentRun) throws -> Void
   ) throws -> AgentRun {
-    guard hasRoom(for: spec) else {
-      throw SereinError.invalid("\(Self.maxConcurrent) tasks are already running. Stop one or wait for one to finish.")
-    }
     guard run(for: spec.threadID) == nil, let browser, !browser.behaviorHistoryPreparation.closed,
       browser.tasks[task.capability.task]?.capability.token == task.capability.token else {
       throw SereinError.invalid("This task is already running or its browser capability has expired.")

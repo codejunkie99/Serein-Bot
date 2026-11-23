@@ -5,8 +5,7 @@ import SereinCore
 
 /// Relay, the assistant summoned from anywhere (RelayPanel). Its Main chat is one Serein thread
 /// whose turns run as Anywhere runs of the chosen harness with Relay's tools (RelayToolHost), so
-/// every harness policy, file guard, capability and history record applies to it unchanged. It
-/// takes none of the three task slots; the runs it delegates do.
+/// every harness policy, file guard, capability and history record applies to it unchanged.
 ///
 /// Autopilot (off by default, confirmed once) lets Relay act without "Allow once" for steps that
 /// RelayAutonomy judges ordinary. Password fields, password managers and Serein itself stay out
@@ -2642,7 +2641,6 @@ import SereinCore
     capture = nil
     if let run { agent.hub.stop(run) }
     for run in childRuns where run.isActive { agent.hub.stop(run) }
-    _ = tools.waiting.removeAll()
     stopHandoffs()
     // Light asks stop too (RelayAsks.swift); link turns are scheduled turns, so their ledger
     // rows ended above.
@@ -3558,8 +3556,8 @@ import SereinCore
 
   /// The roster as `RelayProactive.Speaker`s: each assistant's own level (the main one, unset,
   /// keeps Settings' level) and its team's lead for the huddle. Another assistant waits while a
-  /// hand-off works in its chat, while it may not use Answers (it speaks in words only), while
-  /// every task slot is taken, and while a run holds its Main chat.
+  /// hand-off works in its chat, while it may not use Answers (it speaks in words only), and
+  /// while a run holds its Main chat.
   private func proactiveSpeakers() -> [RelayProactive.Speaker] {
     RelayProactive.speakers(team, global: proactiveLevel).map { speaker in
       var speaker = speaker
@@ -3568,7 +3566,6 @@ import SereinCore
       let busy: Bool = speaker.id != team.activeID
         && (handoffLedger.records.contains { $0.to == speaker.id && $0.state == .running }
           || !(effectiveScope(profile(id: speaker.id)) ?? personScope).allows(.answer)
-          || agent.hub.slotted.count >= AgentHub.maxConcurrent
           || knownMainThread(of: speaker.id).flatMap { agent.hub.run(for: $0) } != nil)
       speaker.occupied = paused || busy
       return speaker

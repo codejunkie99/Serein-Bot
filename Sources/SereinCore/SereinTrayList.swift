@@ -198,10 +198,6 @@ public enum TaskWords {
     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.count > limit ? String(trimmed.prefix(limit - 1)) + "…" : trimmed
   }
-  /// What Serein says at the limit of three tasks at once, for a start that cannot wait in line.
-  public static func atLimit(_ max: Int) -> String {
-    "I am already working on \(max) things. Stop one, or ask me again when one finishes."
-  }
   /// The Delete Chat… confirmation.
   public static func deleteTitle(_ title: String) -> String {
     "Delete “\(title.isEmpty ? "this chat" : String(title.prefix(80)))”?"
