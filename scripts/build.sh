@@ -112,7 +112,7 @@ if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Frameworks/CTranscribe.framework"
   codesign --force --options runtime --timestamp --entitlements scripts/Serein.entitlements --sign "$IDENTITY" "$APP"
   codesign --verify --deep --strict "$APP"
-  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq "TeamIdentifier=${TEAM_ID}" || {
+  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fx "TeamIdentifier=${TEAM_ID}" >/dev/null || {
     echo "In-place release requires signing team (${TEAM_ID})." >&2
     exit 1
   }

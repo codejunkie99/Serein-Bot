@@ -8,8 +8,10 @@
 # SPARKLE_PRIVATE_KEY), and a gh login with write access to the repository.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-GITHUB_REPO="${SEREIN_GITHUB_REPO:-codejunkie99/Serein-Bot}"
-ZIP=dist/Serein-Free-macOS-universal.zip
+# Must match the SUFeedURL scripts/build.sh writes.
+GITHUB_REPO=codejunkie99/Serein-Bot
+DIST_DIR="${SEREIN_DIST_DIR:-$PWD/dist}"
+ZIP="$DIST_DIR/Serein-Free-macOS-universal.zip"
 die() { echo "release: $*" >&2; exit 1; }
 
 [ -z "$(git status --porcelain)" ] || die "commit or stash your changes first."
@@ -38,7 +40,7 @@ echo "== Notarized app"
 SEREIN_NOTARIZE=1 bash scripts/build.sh
 python3 scripts/verify_package.py --archive "$ZIP"
 
-PLIST=dist/Serein.app/Contents/Info.plist
+PLIST="$DIST_DIR/Serein.app/Contents/Info.plist"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
 MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")"
 /usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$PLIST" >/dev/null 2>&1 || die "the built app has no update feed."
