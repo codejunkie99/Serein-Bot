@@ -167,16 +167,13 @@ import SwiftUI
     try commit(TodoBoard.started(cards, card: id, task: started))
   }
 
-  /// Why Start cannot go now: the assistant may not work there, no AI app, or three tasks working.
+  /// Why Start cannot go now: the assistant may not work there, or no AI app.
   private func startRefusal(_ relay: RelayOrchestrator, profile: RelayProfile?, place: AssistantPlace, provider: Provider) throws {
     if let profile, let refusal = relay.placeRefusal(place, for: profile, suggestOthers: false) {
       throw SereinError.invalid(refusal)
     }
     guard relay.agent.available[provider] != nil || HarnessRegistry.shared.executable(provider) != nil else {
       throw SereinError.invalid("Serein needs an AI app for this. Connect one in Settings › AI apps.")
-    }
-    guard relay.agent.hub.slotted.count < AgentHub.maxConcurrent else {
-      throw SereinError.invalid(TaskWords.atLimit(AgentHub.maxConcurrent))
     }
   }
 

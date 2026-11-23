@@ -300,60 +300,15 @@ import SereinCore
       actions: destination != .answer, edits: edits, mac: destination == .mac,
       permission: Self.startPermission(edits: edits, fullAccessConfirmed: FullAccessConsent.confirmed(projectID)),
       initiator: .delegated)
-    // Read in this tool call, as waitInLine's newChild is: a queued start keeps the turn that approved it.
     target.byPerson = relay.startedByPerson
     try await gateRun(Self.runEffect(target), title: card.title, detail: card.detail, button: "Start", task: true)
     let model = choice.model.isEmpty ? "default" : choice.model
-    guard agent.hub.slotted.count < AgentHub.maxConcurrent else {
-      let id = UUID().uuidString
-      let n = waitInLine(id, task: task, target: target, edits: edits, provider: provider.name, place: place)
-      return ["run": id, "agent": provider.name, "destination": raw, "place": place, "state": "waiting", "position": n,
-              "model": model, "effort": choice.effort,
-              "note": "\(AgentHub.maxConcurrent) tasks are already working, so this one waits and starts by itself when one ends. Tell the user it is number \(n) in line."]
-    }
     let id = try await agent.dispatch(task, into: nil, as: target)
     relay.adopt(id, edits: edits)
     try carryPersonalMark(to: id)
     relay.note("Asked \(provider.name) to work on \(place): \(String(task.prefix(80)))", .auto)
     return ["run": id, "agent": provider.name, "destination": raw, "place": place, "state": "working",
             "model": model, "effort": choice.effort]
-  }
-
-  /// Delegated starts past the limit, each started when a slot frees (`start`).
-  private(set) lazy var waiting = WaitingStarts { [unowned self] in AgentHub.maxConcurrent - self.agent.hub.slotted.count }
-  /// Why a waiting task did not start, by its id, for agent_status.
-  private var waitFailures: [String: String] = [:]
-
-  /// Queues an approved start; the task joins Serein's chat (`adopt`) only when it starts.
-  private func waitInLine(_ id: String, task: String, target: AgentModel.DispatchTarget, edits: Bool,
-                          provider: String, place: String) -> Int {
-    let child = relay.newChild(id, edits: edits)
-    let personal = agent.readsPersonal(thread: relay.turnThread)
-    let n = waiting.add(id) { [weak self] in
-      guard let self else { return true }
-      do {
-        _ = try await self.agent.dispatch(task, into: id, create: true, as: target)
-      } catch {
-        // The person's own chat was mid-switch, or another task took the slot first: try again
-        // in a moment, keeping its place.
-        if error.localizedDescription == AgentModel.choosingWords || self.agent.hub.slotted.count >= AgentHub.maxConcurrent {
-          return false
-        }
-        self.waitFailures[id] = String(error.localizedDescription.prefix(400))
-        self.relay.note("A waiting task for \(provider) could not start: \(String(error.localizedDescription.prefix(80)))", .refused)
-        return true
-      }
-      self.relay.adopt(child)
-      if personal, !self.agent.markPersonalRead(thread: id) {
-        if let run = self.agent.hub.run(for: id) { self.agent.hub.stop(run) }
-        self.waitFailures[id] = BrowserModel.personalMarkFailed
-        return true
-      }
-      self.relay.note("Started the waiting task for \(provider) on \(place): \(String(task.prefix(80)))", .auto)
-      return true
-    }
-    relay.note("Asked \(provider) to work on \(place); it waits, number \(n) in line: \(String(task.prefix(60)))", .auto)
-    return n
   }
 
   static let namedTab = SereinError.invalid(
@@ -377,7 +332,6 @@ import SereinCore
     let approvedPage = SereinPageChip.page(tab)
     let isCurrent = { [weak relay] in relay?.threadID == chat && relay?.turnPage == page }
     let provider = try harness(a["agent"] as? String)
-    guard agent.hub.slotted.count < AgentHub.maxConcurrent else { throw Self.atLimit }
     let key = CurrentPageContext.workHereKey(chat: chat, url: approvedPage.url)
     if let key, relay.workHereAllowed.contains(key) {
       // Already allowed in this chat for this site. New instructions for a task already here
@@ -394,7 +348,6 @@ import SereinCore
         .access, title: card.title, detail: card.detail, button: card.button, more: task, moreName: "the task",
         declined: "The user said no to working in their tab. Offer to do it in your own tabs instead.", site: .ask)
     }
-    guard agent.hub.slotted.count < AgentHub.maxConcurrent else { throw Self.atLimit }
     // An answer covers the displayed site, not a different site reached while it waited.
     guard isCurrent(), browser.tabs.contains(where: { $0.id == tab.id }), !tab.privateMode,
       !tab.hiddenFromAgents, CurrentPageContext.host(tab.address) == site else {
@@ -543,10 +496,6 @@ import SereinCore
 
   /// A To do card's deadline reminder changes only with its card, on the board.
   static let boardReminder = SereinError.invalid("That reminder belongs to a To do card; the user changes it on the board.")
-  /// Three tasks already work: Serein says so in its own words.
-  static var atLimit: SereinError {
-    .invalid("\(AgentHub.maxConcurrent) tasks are already working. Tell the user exactly: “\(TaskWords.atLimit(AgentHub.maxConcurrent))”")
-  }
   /// The model and effort for a new task: what agent_start named, kept only when the AI app
   /// lists that model and the model offers that effort (an invented name would stop the task
   /// from starting); else the app's own default model, at medium effort when that is offered.
@@ -644,9 +593,9 @@ import SereinCore
 
   private func wait(_ a: [String: Any]) async throws -> [String: Any] {
     let seconds = min(max((a["seconds"] as? Int) ?? RelayTools.maxWait, 1), RelayTools.maxWait)
-    let named = (a["runs"] as? [String])?.filter { relay.isChild($0) || waiting.place(of: $0) != nil }
-    let ids = named ?? relay.childRuns.filter(\.isActive).map(\.spec.threadID) + waiting.ids
-    let working = { (id: String) in self.agent.hub.run(for: id) != nil || self.waiting.place(of: id) != nil }
+    let named = (a["runs"] as? [String])?.filter { relay.isChild($0) }
+    let ids = named ?? relay.childRuns.filter(\.isActive).map(\.spec.threadID)
+    let working = { (id: String) in self.agent.hub.run(for: id) != nil }
     let deadline = Date().addingTimeInterval(TimeInterval(seconds))
     while Date() < deadline, ids.contains(where: working) {
       try await Task.sleep(nanoseconds: 500_000_000)
@@ -656,12 +605,10 @@ import SereinCore
 
   private func stop(_ a: [String: Any]) throws -> [String: Any] {
     if a["all"] as? Bool == true {
-      let queued = waiting.removeAll()
       let active = relay.childRuns.filter(\.isActive)
       for run in active { agent.hub.stop(run) }
-      return ["stopped": active.map(\.spec.threadID) + queued]
+      return ["stopped": active.map(\.spec.threadID)]
     }
-    if let id = a["run"] as? String, waiting.remove(id) { return ["stopped": [id], "note": "It had not started yet."] }
     guard let id = a["run"] as? String, relay.isChild(id) else {
       throw SereinError.invalid("Give run (one Serein started) or all=true")
     }
@@ -673,8 +620,8 @@ import SereinCore
   private func overview() -> [String: Any] {
     let recent = relay.state.children.suffix(12).reversed()
     return [
-      "runs": (waiting.ids + recent.map(\.threadID)).compactMap { try? status(of: $0, detailed: false) },
-      "working": relay.childRuns.filter(\.isActive).count, "slots": AgentHub.maxConcurrent, "waiting": waiting.ids.count,
+      "runs": recent.map(\.threadID).compactMap { try? status(of: $0, detailed: false) },
+      "working": relay.childRuns.filter(\.isActive).count,
       "projects": browser.shareableProjects.prefix(80).map { ["id": $0.id, "name": $0.name] },
       "agents": Provider.allCases.filter { $0.thinksForSerein && agent.available[$0] != nil }.map(\.name),
     ]
@@ -682,8 +629,6 @@ import SereinCore
 
   /// One delegated run. The reply is the agent's own words, which may quote websites: data.
   private func status(of id: String, detailed: Bool) throws -> [String: Any] {
-    if let n = waiting.place(of: id) { return ["run": id, "state": "waiting", "position": n] }
-    if !relay.isChild(id), let why = waitFailures[id] { return ["run": id, "state": "failed", "error": why] }
     guard relay.isChild(id) else { throw SereinError.invalid("Serein did not start run \(id).") }
     let run = agent.hub.latest(for: id)
     let thread = agent.conversations.first { $0.id == id }

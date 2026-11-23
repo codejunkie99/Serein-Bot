@@ -382,11 +382,6 @@ extension RelayToolHost {
         throw SereinError.invalid("\(name) is not on \(asker.name)'s team. Ask Serein to ask \(name).")
       }
     }
-    let free: Int = AgentHub.maxConcurrent - relay.agent.hub.slotted.count
-    guard request.targetIDs.count <= free else {
-      throw SereinError.invalid(
-        "Serein is already working on \(AgentHub.maxConcurrent - max(free, 0)) tasks. Ask fewer assistants, or ask again when a task is done.")
-    }
     let threads = relay.startAsk(request, asker: asker, turn: turn)
     let deadline = Date().addingTimeInterval(AskPolicy.inlineWait)
     // A stopped turn stops the wait only: the answers still land, later, as their own turn.

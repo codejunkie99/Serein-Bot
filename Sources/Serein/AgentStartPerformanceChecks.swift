@@ -241,9 +241,7 @@ import SereinCore
   hub.beforePreparedLaunch = { await capacityGate.wait() }
   let reservations = try (0..<3).map { try launch("capacity-\($0)") }
   try await until { capacityGate.reached }
-  try check(hub.active.count == AgentHub.maxConcurrent, "Pending starts count toward the three-run capacity")
-  do { _ = try launch("capacity-overflow"); throw SereinError.invalid("Capacity overflow accepted") }
-  catch { try check(error.localizedDescription.contains("3 tasks"), "The fourth pending start is refused") }
+  try check(hub.active.count == 3, "Pending starts are held as active runs")
   for (run, _, _) in reservations { hub.stop(run) }
   try check(reservations.allSatisfy { browser.tasks[$0.0.taskID] == nil }, "Stop revokes all pending capabilities immediately")
   do { try browser.clearBehaviorHistory(); throw SereinError.invalid("In-flight reconciliation was cleared") }

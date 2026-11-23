@@ -385,8 +385,7 @@ import SwiftUI
     guard let agent, id != agent.conversationID, RelayOrchestrator.shared?.isChild(id) == true,
       agent.hub.run(for: id) == nil, !drainingTasks.contains(id),
       !EditReview.shared.held.isHolding(thread: id), queue.next(for: id) != nil,
-      force || QueuePolicy.shouldDrain(after: lastOutcome(id)),
-      agent.hub.slotted.count < AgentHub.maxConcurrent
+      force || QueuePolicy.shouldDrain(after: lastOutcome(id))
     else { return }
     drainingTasks.insert(id)
     let burst = queue.items(for: id)
@@ -457,8 +456,7 @@ import SwiftUI
     // step ends); the queued message follows when that step ends.
     guard !EditReview.shared.held.isHolding(thread: thread) else { return }
     guard queue.next(for: thread) != nil,
-      QueuePolicy.shouldDrain(after: lastOutcome(thread)),
-      agent.hub.active.count < AgentHub.maxConcurrent
+      QueuePolicy.shouldDrain(after: lastOutcome(thread))
     else { return }
     // Everything waiting goes as one turn, each message its own bubble, through the first that
     // carries chips: those are the turn's chips, never what is attached now.
@@ -498,8 +496,7 @@ import SwiftUI
     // On its own, it never goes out over what the user is typing; it tries again when the
     // composer is empty. When the user pressed Send, their draft is kept.
     let draft = agent.draft
-    guard userAsked || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      agent.hub.active.count < AgentHub.maxConcurrent
+    guard userAsked || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return }
     // A step of the failed turn has an unknown outcome: it never goes again by itself, only on
     // the person's Send, where the step asks first (`StepJournal`).

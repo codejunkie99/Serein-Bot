@@ -736,11 +736,6 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
         : ConnectNeed.noAIApp
       return
     }
-    guard relay || hub.slotted.count < AgentHub.maxConcurrent else {
-      error =
-        "\(AgentHub.maxConcurrent) tasks are already running. Stop one or wait for one to finish."
-      return
-    }
     guard
       (mode != .page && !pageInProject)
         || (pageTab != nil && pageTab?.privateMode == false

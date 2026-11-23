@@ -235,13 +235,11 @@ extension RelayOrchestrator {
         body: "“\(String(record.task.prefix(80)))”: \(String((result ?? "").prefix(120)))", always: true)
     }
   }
-  /// Starts each waiting hand-off whose target chat is idle while a task slot is free, oldest
-  /// first. The target runs with only its own scope, on its own Main chat, as the lower trust
+  /// Starts each waiting hand-off whose target chat is idle, oldest first. The target runs with only its own scope, on its own Main chat, as the lower trust
   /// class (`.handoff`); nothing the sender was allowed carries over.
   func startWaitingHandoffs() {
     guard !state.paused else { return }
     for record in handoffLedger.records where record.state == .waiting {
-      guard agent.hub.slotted.count < AgentHub.maxConcurrent else { return }
       // One hand-off holds a chat at a time, also while it waits there for what it handed on.
       guard chatFree(record.threadID), handoffLedger.running(thread: record.threadID) == nil else { continue }
       guard let target = team.profiles.first(where: { $0.id == record.to }) else {
@@ -414,7 +412,7 @@ extension RelayOrchestrator {
         closeHandoff(parent.id, .failed, result: "\(target.name) was paused, so it could not finish.")
         continue
       }
-      guard agent.hub.slotted.count < AgentHub.maxConcurrent, chatFree(parent.threadID) else { continue }
+      guard chatFree(parent.threadID) else { continue }
       launch(parent, target: target, results: results)
     }
   }

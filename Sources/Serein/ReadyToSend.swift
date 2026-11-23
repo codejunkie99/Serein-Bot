@@ -38,7 +38,7 @@ struct ReadyToSendCard: View {
         .lineLimit(1)
       HStack(spacing: 2) {
         Button("Send") { open(task) { flow.sendReady(task.id) } }.buttonStyle(QuietButton())
-          .disabled(!flow.isOnline || agent.hub.slotted.count >= AgentHub.maxConcurrent)
+          .disabled(!flow.isOnline)
         Button("Edit") { open(task) { flow.editReady(task.id) } }.buttonStyle(QuietButton())
         Spacer(minLength: 0)
         Button("Discard") { flow.cancelOffline(task.id) }.buttonStyle(QuietButton())

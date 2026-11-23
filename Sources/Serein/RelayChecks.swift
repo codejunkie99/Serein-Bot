@@ -60,7 +60,7 @@ extension SmokeTest {
     try check(agent.conversationID == userThread && agent.draft == "my unsent draft" && agent.mode == userMode,
               "The user's thread, draft and destination are untouched by the swap")
     try check(relay.run?.spec.relay == true && relay.run?.spec.mode == .anywhere, "Relay runs as an Anywhere run flagged relay")
-    try check(agent.hub.slotted.isEmpty, "Relay's own run takes none of the three task slots")
+    try check(agent.hub.slotted.isEmpty, "Relay's own run is not counted among its tasks")
     if let run = relay.run { try check(browser.tasks[run.taskID]?.allowRelay == true, "Only Relay's capability holds Relay's tools") }
     // The fake CLI's remember comes in the person's turn, but their words ("Please delegate a
     // check task.") do not ask to keep anything: it is the assistant's own idea, kept unreviewed
