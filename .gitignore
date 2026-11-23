@@ -1,0 +1,31 @@
+# Swift and local builds
+.build/
+.swiftpm/
+DerivedData/
+dist/
+*.app/
+*.dmg
+*.zip
+*.dSYM/
+*.xcuserstate
+xcuserdata/
+__pycache__/
+*.py[cod]
+
+# Avatar build tooling (tools/avatar): installed from package-lock.json
+node_modules/
+
+# Local runtime, credentials and tooling indexes
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.mobileprovision
+*.jsonl
+*.sock
+.codebase-memory/
+.codegraph/
+work/
+Library/
+.DS_Store

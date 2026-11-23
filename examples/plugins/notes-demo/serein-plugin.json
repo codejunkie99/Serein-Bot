@@ -1,0 +1,16 @@
+{
+  "id": "dev.serein.notes-demo",
+  "name": "Notes demo",
+  "version": "1.0.0",
+  "description": "A tiny example plugin: keeps short notes in its own folder.",
+  "author": "Serein contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/codejunkie99/serein/tree/main/examples/plugins/notes-demo",
+  "mcp": { "command": "/usr/bin/python3", "args": ["-I", "server.py"] },
+  "tools": [
+    { "name": "list_notes", "risk": "read" },
+    { "name": "add_note", "risk": "write" },
+    { "name": "clear_notes", "risk": "delete" }
+  ],
+  "permissions": { "files": "plugin-data" }
+}

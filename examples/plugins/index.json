@@ -1,0 +1,14 @@
+{
+  "updated": "2026-10-23",
+  "entries": [
+    {
+      "id": "dev.example.notes",
+      "name": "Notes demo",
+      "description": "Writes a note into its own plugin-data folder; the walkthrough plugin from the guide.",
+      "author": "Serein examples",
+      "link": "https://github.com/codejunkie99/serein/tree/main/examples/plugins/notes-demo",
+      "kind": "tools",
+      "license": "MIT"
+    }
+  ]
+}

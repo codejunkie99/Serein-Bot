@@ -1,0 +1,372 @@
+import Foundation
+import SereinCore
+
+/// The agent behind a task's team tools.
+public struct PeerCaller: Sendable {
+  public var thread: ThreadKey
+  public var cli: HarnessDriver
+  /// The most a callee may get: the host decides each callee's own access within it.
+  public var access: Access
+  public init(thread: ThreadKey, cli: HarnessDriver, access: Access) {
+    self.thread = thread
+    self.cli = cli
+    self.access = access
+  }
+}
+
+/// One callee turn, in Serein's terms; the app makes it a `TurnRequest`.
+public struct PeerCallee: Sendable {
+  public var thread: ThreadKey
+  public var cli: HarnessDriver
+  public var access: Access
+  public var prompt: TurnPrompt
+  /// The caller's browser task. The callee gets its own task under it, so a secure card it opens
+  /// shows in the caller's chat and never waits behind the caller's own team-tool call.
+  public var callerTask: String
+  /// Whether the callee's browser task lists the team tools (`PeerTools.flag`).
+  public var mayCall: Bool
+}
+
+/// The app's side: the binary, model and browser task of each callee.
+public protocol PeerHost: Sendable {
+  /// Throws when the CLI is not installed or signed in; the job then fails with that reason.
+  func request(for callee: PeerCallee) async throws -> TurnRequest
+  /// The callee's turn ended: close the browser task `request(for:)` made.
+  func release(task: String) async
+  /// Task `task` stands at Allow all: a callee's question to its caller gets `Peers.keepGoing`
+  /// instead of ending the callee's turn.
+  func keepsGoing(task: String) async -> Bool
+  /// Task `task` holds an open secure card or person step: the callee's turn ended waiting on the person.
+  func holdsCard(task: String) async -> Bool
+}
+
+extension PeerHost {
+  public func keepsGoing(task: String) async -> Bool { false }
+  public func holdsCard(task: String) async -> Bool { false }
+}
+
+public struct PeerReply: Sendable, Equatable {
+  public var text: String
+  public var isError: Bool
+  public init(_ text: String, isError: Bool = false) {
+    self.text = text
+    self.isError = isError
+  }
+}
+
+/// Runs the team tools (`PeerTools`): who may call whom, how many run at once, how long a call
+/// waits, and stopping a whole tree of calls.
+public actor Peers {
+  public struct Limits: Sendable {
+    /// A task is depth 0. Depth 1 may call once more; depth 2 has no team tools.
+    public var maxDepth = 2
+    /// Callee turns running at once for one top task's own calls...
+    public var perTask = 4
+    /// ...and across Serein. A callee's own calls run one at a time outside both caps, so they
+    /// never wait on slots their caller holds.
+    public var overall = 6
+    /// Longest a call waits inline: the caller CLI's tool-call limit less a margin, at most this.
+    public var inlineCap: Duration = .seconds(100)
+    public var inlineMargin: Duration = .seconds(5)
+    public var inlineUnknown: Duration = .seconds(20)
+    public init() {}
+  }
+
+  public static let shared = Peers(engines: .shared)
+
+  private let engines: Engines
+  private var host: (any PeerHost)?
+  private let limits: Limits
+
+  private struct Seat {
+    var caller: PeerCaller
+    var root: ThreadKey
+    /// The browser task of the top task in this tree of calls.
+    var rootTask: String
+    var chain: [HarnessDriver]
+    var depth: Int
+  }
+
+  private struct Job {
+    var agent: HarnessDriver
+    var role: String?
+    var prompt: String
+    var thread: ThreadKey
+    var state: PeerJobState = .queued
+    var work: Task<Void, Never>?
+  }
+
+  private enum Kind { case ask, bridge, burst }
+
+  private struct Run {
+    var id: String
+    var kind: Kind
+    var owner: Seat
+    var ownerTask: String
+    var jobs: [Job] = []
+    /// A bridge decides when it is done; an ask or burst is done when every job is.
+    var finished = false
+    var approved = false
+    var settled: Bool { kind == .bridge ? finished : jobs.allSatisfy(\.state.settled) }
+  }
+
+  private var seats: [String: Seat] = [:]
+  private var runs: [String: Run] = [:]
+  private var order: [String] = []
+  private var made = 0
+  private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+  public init(engines: Engines, host: (any PeerHost)? = nil, limits: Limits = Limits()) {
+    self.engines = engines
+    self.host = host
+    self.limits = limits
+  }
+
+  public func use(host: any PeerHost) { self.host = host }
+
+  /// A task whose agent may use the team tools, at depth 0.
+  public func register(task: String, caller: PeerCaller) {
+    seats[task] = Seat(caller: caller, root: caller.thread, rootTask: task, chain: [caller.cli], depth: 0)
+  }
+
+  /// The caller's run stopped or finished: every run it started stops, and theirs in turn.
+  public func callerEnded(_ thread: ThreadKey) {
+    seats = seats.filter { $0.value.caller.thread != thread }
+    for id in order where runs[id]?.owner.caller.thread == thread { stop(id) }
+  }
+
+  public func handle(_ call: PeerCall, task: String) async -> PeerReply {
+    guard let seat = seats[task] else { return PeerReply("Team tools are not available in this run.", isError: true) }
+    guard host != nil else { return PeerReply("Team tools are not set up in this build.", isError: true) }
+    let window = await inlineWindow(seat.caller.cli)
+    switch call {
+    case .ask(let agents, let question):
+      if let blocked = blocked(seat, agents) { return PeerReply(blocked.text) }
+      let id = open(.ask, seat, task, agents.map { ($0, nil, question) })
+      return await answer([id], within: window)
+    case .burst(let jobs):
+      if let blocked = blocked(seat, jobs.map(\.agent)) { return PeerReply(blocked.text) }
+      let id = open(.burst, seat, task, jobs.map { ($0.agent, nil, $0.prompt) })
+      return await answer([id], within: window)
+    case .bridge(let writer, let reviewer, let brief, let rounds):
+      if let blocked = blocked(seat, [writer, reviewer]) { return PeerReply(blocked.text) }
+      let id = open(.bridge, seat, task, [])
+      Task { await self.bridge(id, writer: writer, reviewer: reviewer, brief: brief, rounds: rounds) }
+      return await answer([id], within: window)
+    case .wait(let asked, let seconds):
+      let mine = order.filter { runs[$0]?.owner.caller.thread == seat.caller.thread }
+      let unknown = asked.filter { !mine.contains($0) }
+      if !unknown.isEmpty { return PeerReply("No run of yours is called \(unknown.joined(separator: ", ")).", isError: true) }
+      let ids = asked.isEmpty ? mine : asked
+      return await answer(ids, within: seconds.map { min(.seconds($0), window) } ?? window)
+    case .stop(let one):
+      let mine = order.filter { runs[$0]?.owner.caller.thread == seat.caller.thread }
+      if let one, !mine.contains(one) { return PeerReply("No run of yours is called \(one).", isError: true) }
+      let ids = one.map { [$0] } ?? mine
+      for id in ids { stop(id) }
+      return PeerReply(PeerTools.render(reports(ids)))
+    }
+  }
+
+  // MARK: Rules
+
+  /// A normal result with routes, never `isError` (R17): the call is the one thing that does not run.
+  private func blocked(_ seat: Seat, _ agents: [HarnessDriver]) -> Blocked? {
+    if seat.depth >= limits.maxDepth {
+      return Blocked(
+        "team tools stop \(limits.maxDepth) calls deep, and this agent was called that deep",
+        routes: .init("do this part yourself", "put what is left in your reply, and the agent that called you hands it on"))
+    }
+    let looped = agents.filter(seat.chain.contains)
+    if !looped.isEmpty {
+      let chain = seat.chain.map(\.rawValue).joined(separator: " > ")
+      return Blocked(
+        "\(looped.map(\.rawValue).joined(separator: ", ")) is already in this chain of calls (\(chain)), and an agent cannot call itself or an agent that called it",
+        routes: .init("call an app that is not in the chain", "do this part yourself"))
+    }
+    return nil
+  }
+
+  private func inlineWindow(_ cli: HarnessDriver) async -> Duration {
+    guard let wait = await engines.cardWait(for: cli) else { return min(limits.inlineUnknown, limits.inlineCap) }
+    return min(wait - limits.inlineMargin, limits.inlineCap)
+  }
+
+  // MARK: Runs
+
+  private func open(_ kind: Kind, _ seat: Seat, _ task: String, _ jobs: [(HarnessDriver, String?, String)]) -> String {
+    made += 1
+    let id = "peer-\(made)"
+    runs[id] = Run(id: id, kind: kind, owner: seat, ownerTask: task)
+    order.append(id)
+    for job in jobs { add(id, agent: job.0, role: job.1, prompt: job.2) }
+    pump()
+    return id
+  }
+
+  @discardableResult
+  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String) -> Int {
+    let index = runs[id]!.jobs.count
+    runs[id]!.jobs.append(Job(agent: agent, role: role, prompt: prompt, thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)")))
+    return index
+  }
+
+  /// Starts queued jobs, oldest first, while the caps allow.
+  private func pump() {
+    for id in order {
+      guard let run = runs[id] else { continue }
+      for index in run.jobs.indices where runs[id]!.jobs[index].state == .queued {
+        if run.owner.depth > 0 {
+          guard working(where: { $0.owner.caller.thread == run.owner.caller.thread }) == 0 else { break }
+        } else {
+          guard working(where: { $0.owner.depth == 0 }) < limits.overall,
+            working(where: { $0.owner.depth == 0 && $0.owner.root == run.owner.root }) < limits.perTask
+          else { break }
+        }
+        runs[id]!.jobs[index].state = .working
+        runs[id]!.jobs[index].work = Task { await self.run(id, index) }
+      }
+    }
+  }
+
+  private func working(where match: (Run) -> Bool) -> Int {
+    runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter { $0.state == .working }.count }
+  }
+
+  private func run(_ id: String, _ index: Int) async {
+    guard let run = runs[id], let host else { return }
+    let job = run.jobs[index]
+    let owner = run.owner
+    let mayCall = owner.depth + 1 < limits.maxDepth
+    var stable = "You are \(job.agent.displayName), called by another agent (\(owner.caller.cli.displayName)) from inside a Serein task. You see only this message. Do the work in the folder you were given, then end with the result itself: your last message goes back to the caller as your answer."
+    if !mayCall { stable += " You cannot call other agents." }
+    let keepGoing = await host.keepsGoing(task: owner.rootTask)
+    if keepGoing { stable += " " + Self.askMark }
+    let callee = PeerCallee(
+      thread: job.thread, cli: job.agent, access: owner.caller.access,
+      prompt: TurnPrompt(stable: stable, volatile: "", message: job.prompt, recovery: nil),
+      callerTask: run.ownerTask, mayCall: mayCall)
+    var task: String?
+    let state: PeerJobState
+    do {
+      let request = try await host.request(for: callee)
+      task = request.taskID
+      seats[request.taskID] = Seat(
+        caller: PeerCaller(thread: job.thread, cli: job.agent, access: request.access), root: owner.root,
+        rootTask: owner.rootTask, chain: owner.chain + [job.agent], depth: owner.depth + 1)
+      try Task.checkCancellation()
+      var answer = try await engines.ask(request)
+      if keepGoing, let question = RelayMarks.after(RelayUnattended.inputMark, in: answer) {
+        var next = request
+        next.prompt.message = Self.keepGoing(question: question, work: job.prompt)
+        try Task.checkCancellation()
+        answer = try await engines.ask(next)
+      }
+      state = await host.holdsCard(task: request.taskID) ? .parked : .answered(answer)
+    } catch StopReason.stopped {
+      state = .stopped
+    } catch is CancellationError {
+      state = .stopped
+    } catch StopReason.failed(let why) {
+      state = .failed(why)
+    } catch {
+      state = .failed(String(describing: error))
+    }
+    callerEnded(job.thread)
+    await engines.close(job.thread)
+    if let task { await host.release(task: task) }
+    if runs[id]?.jobs[index].state.settled == false { runs[id]!.jobs[index].state = state }
+    changed()
+  }
+
+  /// At Allow all the caller does not stop to answer: a callee marks a question so Serein can
+  /// send it back to work once (`keepGoing`).
+  static let askMark = "If you need your caller to decide something before you can go on, end your message with \(RelayUnattended.inputMark) followed by the question."
+  static func keepGoing(question: String, work: String) -> String {
+    "Your caller does not answer questions here. Pick the safest reasonable default, say in one line which you picked, and continue the work.\n\nYour question: \(question.prefix(1_000))\n\nThe work: \(work)"
+  }
+
+  /// Stops a run: its queued jobs never start, its running ones stop with their whole tree.
+  private func stop(_ id: String) {
+    guard let run = runs[id] else { return }
+    for index in run.jobs.indices where !run.jobs[index].state.settled {
+      run.jobs[index].work?.cancel()
+      runs[id]!.jobs[index].state = .stopped
+    }
+    runs[id]!.finished = true
+    changed()
+  }
+
+  private func bridge(_ id: String, writer: HarnessDriver, reviewer: HarnessDriver, brief: String, rounds: Int) async {
+    var draft = ""
+    var review: String?
+    for round in 1...rounds {
+      let write =
+        review.map {
+          "\(brief)\n\nYour last draft:\n\(draft)\n\nThe reviewer's notes:\n\($0)\n\nRevise the draft to answer the notes. Reply with the whole revised draft."
+        } ?? brief
+      guard case .answered(let text) = await turn(id, writer, "writer, round \(round)", write) else { break }
+      draft = text
+      let check = "Review this draft against the task. If it is right and complete, reply \(PeerTools.approved) on the first line. Otherwise list what to change.\n\nThe task:\n\(brief)\n\nThe draft:\n\(draft)"
+      guard case .answered(let notes) = await turn(id, reviewer, "reviewer, round \(round)", check) else { break }
+      if notes.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix(PeerTools.approved) {
+        runs[id]?.approved = true
+        break
+      }
+      review = notes
+    }
+    runs[id]?.finished = true
+    changed()
+  }
+
+  /// One bridge turn, queued like any job; `.stopped` once the run was stopped.
+  private func turn(_ id: String, _ agent: HarnessDriver, _ role: String, _ prompt: String) async -> PeerJobState {
+    guard runs[id]?.finished == false else { return .stopped }
+    let index = add(id, agent: agent, role: role, prompt: prompt)
+    pump()
+    while let state = runs[id]?.jobs[index].state, !state.settled { await next(until: .now + .seconds(86_400)) }
+    return runs[id]?.jobs[index].state ?? .stopped
+  }
+
+  // MARK: Waiting
+
+  private func answer(_ ids: [String], within window: Duration) async -> PeerReply {
+    let deadline = ContinuousClock.now + window
+    while ids.contains(where: { runs[$0]?.settled == false }), ContinuousClock.now < deadline { await next(until: deadline) }
+    return PeerReply(PeerTools.render(reports(ids)))
+  }
+
+  /// Returns at the next change to any run, or at the deadline.
+  private func next(until deadline: ContinuousClock.Instant) async {
+    let key = UUID()
+    let timer = Task {
+      try? await Task.sleep(until: deadline, clock: .continuous)
+      self.wake(key)
+    }
+    await withCheckedContinuation { waiters[key] = $0 }
+    timer.cancel()
+  }
+
+  private func wake(_ key: UUID) { waiters.removeValue(forKey: key)?.resume() }
+
+  private func changed() {
+    pump()
+    let woken = waiters.values
+    waiters = [:]
+    for waiter in woken { waiter.resume() }
+  }
+
+  private func reports(_ ids: [String]) -> [PeerRunReport] {
+    ids.compactMap { runs[$0] }.map { run in
+      let kind: PeerRunReport.Kind
+      switch run.kind {
+      case .ask: kind = .ask(count: run.jobs.count)
+      case .bridge: kind = .bridge(approved: run.approved)
+      case .burst: kind = .burst
+      }
+      return PeerRunReport(
+        id: run.id, kind: kind, jobs: run.jobs.map { PeerJobReport(agent: $0.agent, role: $0.role, state: $0.state) },
+        settled: run.settled)
+    }
+  }
+}

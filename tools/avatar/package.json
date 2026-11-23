@@ -1,0 +1,13 @@
+{
+  "name": "serein-relay-avatar",
+  "private": true,
+  "description": "Relay's hologram avatar for Serein. Bundled into Sources/Serein/Avatar by scripts/build-avatar.sh.",
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/entry.js --bundle --format=iife --minify --legal-comments=eof --target=safari16 --outfile=../../Sources/Serein/Avatar/avatar.bundle.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5",
+    "three": "0.160.0"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "updatedAt": "2026-11-16",
+  "models": [
+    {
+      "id": "claude-fable-5-2",
+      "name": "Claude Fable 5.2",
+      "blurb": "Most capable. Slower, and billed to your usage credits; for the hardest, longest work.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "minVersion": "2.1.321"
+    },
+    {
+      "id": "claude-fable-5-1",
+      "name": "Claude Fable 5.1",
+      "blurb": "Previous Fable. Slower, and billed to your usage credits.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-opus-5-5",
+      "name": "Claude Opus 5.5",
+      "blurb": "Deep and careful. A strong default for most tasks.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium",
+      "isDefault": true
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
+      "blurb": "Balanced speed and depth, steady on longer tasks.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium"
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "name": "Claude Haiku 5.5",
+      "blurb": "Fastest. Quick answers and simple lookups.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium"
+    },
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "blurb": "The previous Fable.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "blurb": "The previous Opus.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "blurb": "An earlier Opus.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "blurb": "An earlier Opus.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "xhigh",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "blurb": "An earlier Opus.",
+      "efforts": ["low", "medium", "high", "max"],
+      "defaultEffort": "high",
+      "supportsLongContext": true,
+      "isLegacy": true
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "blurb": "The previous Sonnet.",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "high",
+      "isLegacy": true
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "blurb": "An earlier Sonnet.",
+      "efforts": ["low", "medium", "high", "max"],
+      "defaultEffort": "high",
+      "supportsLongContext": true,
+      "isLegacy": true
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "blurb": "An earlier Haiku. No effort control.",
+      "efforts": [],
+      "defaultEffort": "",
+      "supportsLongContext": false,
+      "isLegacy": true
+    }
+  ]
+}
