@@ -86,7 +86,8 @@ xattr -cr "$APP"
 # A real identity when one exists: macOS ties Accessibility, Automation and Screen Recording
 # grants to the signer, so an ad-hoc signature loses them on every rebuild.
 if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
-  IDENTITY="${SEREIN_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Developer ID Application: [^"]* (965Q2ZFHG4)"' | head -1 | tr -d '"' || true)}"
+  TEAM_ID="${SEREIN_TEAM_ID:-Z4TS3CNN32}"
+  IDENTITY="${SEREIN_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -o "\"Developer ID Application: [^\"]* (${TEAM_ID})\"" | head -1 | tr -d '"' || true)}"
   NOTARY_PROFILE="${SEREIN_NOTARY_PROFILE:-serein-notary}"
   [ -n "$IDENTITY" ] || { echo "No 'Developer ID Application' certificate in the keychain (Xcode > Settings > Accounts > Manage Certificates)." >&2; exit 1; }
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || { echo "Notary profile '$NOTARY_PROFILE' missing; run: xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <email> --team-id <TEAMID> --password <app-specific-password>" >&2; exit 1; }
@@ -105,8 +106,8 @@ if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Frameworks/CTranscribe.framework"
   codesign --force --options runtime --timestamp --entitlements scripts/Serein.entitlements --sign "$IDENTITY" "$APP"
   codesign --verify --deep --strict "$APP"
-  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq 'TeamIdentifier=965Q2ZFHG4' || {
-    echo "In-place release requires the existing Serein signing team (965Q2ZFHG4)." >&2
+  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq "TeamIdentifier=${TEAM_ID}" || {
+    echo "In-place release requires signing team (${TEAM_ID})." >&2
     exit 1
   }
   ditto -c -k --keepParent --norsrc --noextattr --noqtn "$APP" "$STAGE/notarize.zip"
