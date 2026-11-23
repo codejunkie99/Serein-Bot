@@ -44,6 +44,8 @@ import Virtualization
   }
 
   func image(progress: @escaping (String?) -> Void) async throws -> URL {
+    // VZMacOSRestoreImage is declared only for arm64. Intel cannot install a macOS guest.
+    #if arch(arm64)
     if let downloading { return try await downloading.value }
     let operation = Task { @MainActor () throws -> URL in
       guard let root else { throw SereinError.invalid("Choose where to keep the virtual Mac first.") }
@@ -80,6 +82,9 @@ import Virtualization
     downloading = operation
     defer { downloading = nil }
     return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    #else
+    throw SereinError.invalid("The virtual Mac needs an Apple silicon Mac and a signed Serein build.")
+    #endif
   }
 }
 

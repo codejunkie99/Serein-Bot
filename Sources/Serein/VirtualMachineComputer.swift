@@ -34,7 +34,12 @@ import Virtualization
   /// The memory and processors the machine on now was made with; a saved state needs the same.
   private var bootedHardware: Hardware?
   /// Whether the framework can save this machine's memory; without it a pause shuts it down cleanly.
+  /// `saveMachineStateTo` and `restoreMachineStateFrom` exist only on Apple silicon.
+  #if arch(arm64)
   private var canSave = true
+  #else
+  private var canSave = false
+  #endif
   private let fm = FileManager.default
 
   private struct Hardware: Codable, Equatable {
@@ -364,7 +369,11 @@ import Virtualization
     do { try config.validate() } catch let error where VirtualMachinePolicy.missingEntitlement(error.localizedDescription) {
       throw SereinError.invalid(VirtualMachinePolicy.unsigned)
     }
+    #if arch(arm64)
     canSave = (try? config.validateSaveRestoreSupport()) != nil
+    #else
+    canSave = false
+    #endif
     bootedHardware = hardware
     return VZVirtualMachine(configuration: config)
   }
@@ -386,6 +395,8 @@ import Virtualization
     machine = vm
     if saved != nil {
       defer { removeSaved(resumeState, resumeHardware) }
+      // Restore is Apple silicon only. An Intel slice drops the file and starts from off.
+      #if arch(arm64)
       do {
         try await Self.call { vm.restoreMachineStateFrom(url: resumeState, completionHandler: $0) }
         try await Self.result { vm.resume(completionHandler: $0) }
@@ -393,6 +404,7 @@ import Virtualization
       } catch {
         guard machine === vm, vm.state == .stopped else { throw error }
       }
+      #endif
     }
     try await Self.result { vm.start(completionHandler: $0) }
     return vm
@@ -565,7 +577,11 @@ import Virtualization
   /// Saves the paused machine's memory and the hardware it needs to be restored.
   private func save(_ vm: VZVirtualMachine, to state: URL, hardware: URL) async throws {
     removeSaved(state, hardware)
+    #if arch(arm64)
     try await Self.call { vm.saveMachineStateTo(url: state, completionHandler: $0) }
+    #else
+    throw SereinError.invalid(VirtualMachinePolicy.unsupported)
+    #endif
     try writeJSON(bootedHardware ?? currentHardware(), to: hardware)
     if fm.fileExists(atPath: state.path) { try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path) }
   }
