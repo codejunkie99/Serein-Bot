@@ -54,6 +54,8 @@ Serein is a personal assistant for your Mac. It runs the AI apps you already use
 
 Download Serein for Mac from [serein.pro](https://serein.pro/#download). The build there is signed and notarized, runs on macOS 14 or later, and supports Apple Silicon and Intel.
 
+Release builds update themselves from the newest [release](https://github.com/codejunkie99/Serein-Bot/releases). A build from source does not.
+
 Or [build it from source](#build-from-source).
 
 ## Quick start

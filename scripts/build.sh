@@ -41,7 +41,7 @@ mkdir -p "$APP/Contents/Library/LaunchDaemons"
 cp scripts/pro.serein.mac-provisioner.plist "$APP/Contents/Library/LaunchDaemons/"
 cp -R "$BIN/Serein_Serein.bundle" "$APP/Contents/Resources/"
 bash scripts/mac-guest.sh "$BIN/serein-mac-guest" "$APP/Contents/Resources"
-# The app links Sparkle even with manual updates. Preserve its framework symlinks.
+# Sparkle updates release builds. Preserve its framework symlinks.
 mkdir -p "$APP/Contents/Frameworks"
 ditto ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/Serein"
@@ -82,6 +82,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>
 </dict></plist>
 PLIST
+# Only a release updates itself, from the newest GitHub release (scripts/release.sh publishes
+# appcast.xml there). A local build has no feed, so it never replaces itself.
+if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
+  /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/codejunkie99/Serein-Bot/releases/latest/download/appcast.xml" \
+    -c "Add :SUPublicEDKey string Cvu8zrIxWdP+DO1H6jtbfTbFjMtncUu8lTj/w9rKIvU=" "$APP/Contents/Info.plist"
+fi
 xattr -cr "$APP"
 # A real identity when one exists: macOS ties Accessibility, Automation and Screen Recording
 # grants to the signer, so an ad-hoc signature loses them on every rebuild.
@@ -106,7 +112,7 @@ if [ "${SEREIN_NOTARIZE:-0}" = 1 ]; then
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents/Frameworks/CTranscribe.framework"
   codesign --force --options runtime --timestamp --entitlements scripts/Serein.entitlements --sign "$IDENTITY" "$APP"
   codesign --verify --deep --strict "$APP"
-  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fxq "TeamIdentifier=${TEAM_ID}" || {
+  codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fx "TeamIdentifier=${TEAM_ID}" >/dev/null || {
     echo "In-place release requires signing team (${TEAM_ID})." >&2
     exit 1
   }
