@@ -17,6 +17,8 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
   public private(set) var made: [RelayProfile.ID]
   /// Teams this room saved, for `Staffing.teamsPerRoot`. Never shrinks.
   public private(set) var teamsMade: Int
+  /// Packets numbered in this room. Never shrinks, so a packet number is never given twice.
+  public private(set) var packets: Int
   public var state: State
   public var openedAt: Date
   public var closedAt: Date?
@@ -69,6 +71,7 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
     personal = false
     made = []
     teamsMade = 0
+    packets = 0
     state = .open
     openedAt = now
   }
@@ -79,6 +82,12 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
   public mutating func markPersonal() { personal = true }
   public mutating func recordMade(_ id: RelayProfile.ID) { made.append(id) }
   public mutating func recordTeam() { teamsMade += 1 }
+  /// The next packet's number. `taken`: the highest one already given elsewhere (the ledger), for
+  /// a room.json that a crash left behind it.
+  public mutating func nextPacket(after taken: Int = 0) -> Int {
+    packets = max(packets, taken) + 1
+    return packets
+  }
 
   /// Run before every seat's run, so reach holds over time: each seat is narrowed again under its
   /// parent's reach as it is now (the lead under the ceiling), top-down. Narrowing a maker later

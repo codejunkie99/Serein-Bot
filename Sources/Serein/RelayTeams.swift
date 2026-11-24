@@ -189,6 +189,10 @@ extension RelayOrchestrator {
       || handoffLedger.records.contains(where: { $0.task == task && $0.personal == true }) {
       record.personal = true
     }
+    // The tool call runs in the sender's turn: its steps so far are the packet's trail.
+    let message = how == .user ? "board-" + record.id : parent == nil ? lastPersonMessage(chat) : nil
+    record = pack(record, root: .person(thread: chat, message: message ?? "handoff-" + (record.rootID ?? record.id)),
+                  sender: how == .user ? nil : agent.hub.run(for: chat))
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
     note("Handed “\(String(task.prefix(60)))” to \(target.name)", how)
@@ -275,20 +279,38 @@ extension RelayOrchestrator {
       actions: mode != .answer && places.contains(.web), mac: places.contains(.mac), relay: false, initiator: .handoff)
     let prompt = results.isEmpty ? handoffPrompt(record, target: target, scope: scope) : resultsPrompt(record, results)
     let thread = record.threadID
-    // Running before the dispatch, so a run that ends at once still finds its record.
-    updateHandoff(record.id) {
-      if results.isEmpty {
-        $0.state = .running
-        $0.startedAt = Date()
+    // A row from before rooms, or one a relaunch left waiting: packed now, reusing what it has.
+    let packed = results.isEmpty
+      ? pack(record, root: .person(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)), sender: nil) : record
+    if packed.room != record.room || packed.packet != record.packet {
+      updateHandoff(record.id) {
+        $0.room = packed.room
+        $0.packet = packed.packet
       }
-      $0.progressAt = Date()
     }
+    if !results.isEmpty { updateHandoff(record.id) { $0.progressAt = Date() } }
     for result in results { _ = claimReport(result.id) }
     handoffsStarting.insert(thread)
     Task { [weak self] in
       guard let self else { return }
       defer { self.handoffsStarting.remove(thread) }
       do {
+        if let room = packed.room, results.isEmpty {
+          // Its packet is on disk before it counts as launched. Running before the dispatch, so a
+          // run that ends at once still finds its record.
+          let launched = await self.rooms.launch(record.id, room: room, seat: { self.seat(for: record, target: target, in: $0) }) { sealed in
+            guard self.handoffLedger.records.first(where: { $0.id == record.id })?.state == .waiting, !self.state.paused else { return false }
+            self.updateHandoff(record.id) {
+              $0.state = .running
+              $0.startedAt = Date()
+              $0.progressAt = Date()
+              if !sealed { $0.packet = nil }
+            }
+            return true
+          }
+          // Paused while its packet was sealed: it waits, as a queued hand-off does.
+          if !launched, self.handoffLedger.records.first(where: { $0.id == record.id })?.state == .waiting { return }
+        }
         // Stop Everything, or the end of the task it was part of, closed it before this ran.
         guard self.handoffLedger.running(thread: thread)?.id == record.id else { throw CancellationError() }
         // No Relay context rides a hand-off's run, so the rules in force for its target lead the prompt.

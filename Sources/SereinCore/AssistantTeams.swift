@@ -612,6 +612,10 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   /// The assistants that already hold this work, from the root's sender to `from`, in order.
   /// nil for a root, where it is `from` alone.
   public var chain: [String]? = nil
+  /// The room its packet is in (`Workroom`), and the packet's number there. nil in older ledgers,
+  /// and `packet` nil when its packet could not be sealed, so nothing trusts a missing file.
+  public var room: String? = nil
+  public var packet: Int? = nil
 
   /// `parent`: the hand-off whose target sends this one as part of its own task.
   public init(

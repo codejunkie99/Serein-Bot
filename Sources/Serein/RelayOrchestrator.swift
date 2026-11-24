@@ -207,6 +207,8 @@ import SereinCore
   var macAccessActive: NSObjectProtocol?
   /// The Main chats a hand-off is being dispatched into right now, so none starts twice.
   var handoffsStarting: Set<String> = []
+  /// Every hand-off's room and sealed packet (relay/rooms, RelayRooms.swift).
+  private(set) lazy var rooms = Rooms(folder: browser.library.root.appendingPathComponent(Rooms.path))
   /// The assistant each delegated task started under (thread → profile id; "" for a scheduled
   /// turn of the person's own), so its scope holds after a switch. This launch only.
   var childOwners: [String: String] = [:]

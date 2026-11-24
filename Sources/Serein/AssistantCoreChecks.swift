@@ -104,6 +104,7 @@ enum AssistantCoreChecks {
     ("workroom", AssistantCoreChecks.workroom),
     ("packet", AssistantCoreChecks.packet),
     ("reach", AssistantCoreChecks.reach),
+    ("roomFiles", AssistantCoreChecks.roomFiles),
     ("staffing", AssistantCoreChecks.staffing),
     ("keyFailure", AssistantCoreChecks.keyFailure),
     ("secureField", AssistantCoreChecks.secureField),
