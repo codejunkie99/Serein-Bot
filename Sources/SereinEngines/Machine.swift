@@ -23,6 +23,8 @@ enum WireEvent: Sendable, Equatable {
   case notice(String)
   /// The CLI's own word that its usage limit refused a request, with its reset when it gave one.
   case limitReached(UsageLimit)
+  /// The provider's own count of the share it has left, 0 to 1 (an API route's rate-limit headers).
+  case usageLeft(Double)
   case turnDone(StopReason)
   case failed(String)
 }
@@ -220,6 +222,8 @@ enum Machine {
       return (accepted ? .running(turn) : .awaitingAccept(turn), [.emit(.notice(text))])
     case .limitReached(let limit):
       return (accepted ? .running(turn) : .awaitingAccept(turn), [.emit(.limitReached(limit))])
+    case .usageLeft(let share):
+      return (accepted ? .running(turn) : .awaitingAccept(turn), [.emit(.usageLeft(share))])
     case .toolStarted(let id, let name, let arguments, let shell):
       turn.openTools.append(id)
       turn.steps += 1

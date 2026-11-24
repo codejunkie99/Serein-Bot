@@ -274,6 +274,10 @@ import SereinCore
   var limitFailovers = LimitFailovers() {
     didSet { if Self.persists, limitFailovers != oldValue { persist(limitFailovers, Self.limitFailoversFile) } }
   }
+  /// What each provider's own signals said about its usage (`tallyUsage`).
+  var usageTally = UsageTally() {
+    didSet { if Self.persists, usageTally != oldValue { persist(usageTally, Self.usageTallyFile) } }
+  }
   /// Chats whose last turn parked on a secure card: a usage limit there keeps its hold (`noteSecureCard`).
   var cardThreads: Set<String> = []
   /// The reset time each limited AI app named, by provider id; none when it named none.
@@ -284,7 +288,7 @@ import SereinCore
   @Published private(set) var elsewhereOffered: [String: String] = [:]
   /// AI apps a held message just failed on after a move, by provider id, until this time: the
   /// next move skips them, so a chain of failures never comes back round to the same app.
-  private var failedApps: [String: Date] = [:]
+  private(set) var failedApps: [String: Date] = [:]
   static let failedAppWait: TimeInterval = 10 * 60
   /// How long an AI app counts as limited when its answer named no reset time.
   static let unnamedLimitWait: TimeInterval = 60 * 60
@@ -972,6 +976,7 @@ import SereinCore
     teamJournal = Self.read([RelayJournalEntry].self, "relay/team-journal.json", library, &aside) ?? []
     handoffLedger = Self.read(HandoffLedger.self, Self.handoffsFile, library, &aside) ?? HandoffLedger()
     limitFailovers = Self.read(LimitFailovers.self, Self.limitFailoversFile, library, &aside) ?? LimitFailovers()
+    usageTally = Self.read(UsageTally.self, Self.usageTallyFile, library, &aside) ?? UsageTally()
     macAccess = Self.read(MacAccessWait.self, Self.macAccessFile, library, &aside) ?? MacAccessWait()
     activity = Self.read([Activity].self, "relay/activity.json", library, &aside) ?? []
     proactiveMemory = Self.read(RelayProactive.Memory.self, "relay/proactive.json", library, &aside) ?? RelayProactive.Memory()
@@ -2250,6 +2255,7 @@ import SereinCore
     // Whatever ended, a queued scheduled turn may go now (its owner's chat may be free).
     defer { drainScheduled() }
     noteSecureCard(run)
+    tallyUsage(run)
     // Get to know you ended: the check-ins card comes next, whatever the reply said. While they
     // are on (the default) it says so, with what they do.
     if checkInsAfterTurn == run.spec.threadID {

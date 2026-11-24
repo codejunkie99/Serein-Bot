@@ -66,14 +66,18 @@ struct DirectHTTPReply {
     let session = EphemeralHTTP.session(resourceTimeout: 1_800)
     defer { session.invalidateAndCancel() }
     let (bytes, response) = try await session.bytes(for: post)
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    let http = response as? HTTPURLResponse
+    let status = http?.statusCode ?? 0
+    let header = { (name: String) in http?.value(forHTTPHeaderField: name) }
+    if let share = UsageTally.headerLeft(header) { events.yield(.usageLeft(share)) }
     guard (200..<300).contains(status) else {
+      if let limit = UsageLimit.http(status: status, header: header, now: Date()) { events.yield(.limitReached(limit)) }
       var body = Data()
       for try await byte in bytes {
         body.append(byte)
         if body.count >= 4_000 { break }
       }
-      let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+      let after = header("Retry-After").flatMap(Double.init)
       throw DirectHTTPError.status(status, detail(body, hiding: secret), retryAfter: after)
     }
     var reply = Self()

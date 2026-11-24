@@ -116,6 +116,7 @@ enum AssistantCoreChecks {
     ("openCodeEngine", AssistantCoreChecks.openCodeEngine),
     ("launchMode", AssistantCoreChecks.launchMode),
     ("failover", AssistantCoreChecks.failover),
+    ("modelRegistry", AssistantCoreChecks.modelRegistry),
     ("composerChips", AssistantCoreChecks.composerChips),
     ("firstRun", AssistantCoreChecks.firstRun),
   ]

@@ -206,6 +206,8 @@ public enum EngineEvent: Sendable, Equatable {
   case notice(String)
   /// The app's usage limit refused a request (LimitFailover reads it when the turn fails).
   case limitReached(UsageLimit)
+  /// The provider's own count of the share it has left, 0 to 1 (UsageTally reads it when the turn ends).
+  case usageLeft(Double)
   /// The CLI has not started: the Mac is short of memory (EngineRoom). The run is waiting, not silent.
   case waiting(String)
   case usage(input: Int, output: Int, cachedInput: Int?)
