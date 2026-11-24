@@ -123,6 +123,7 @@ enum AssistantCoreChecks {
     ("launchMode", AssistantCoreChecks.launchMode),
     ("failover", AssistantCoreChecks.failover),
     ("modelRegistry", AssistantCoreChecks.modelRegistry),
+    ("chatRegistry", AssistantCoreChecks.chatRegistry),
     ("composerChips", AssistantCoreChecks.composerChips),
     ("firstRun", AssistantCoreChecks.firstRun),
   ]

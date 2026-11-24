@@ -161,11 +161,22 @@ public struct TurnPrompt: Hashable, Sendable {
   /// A session command the CLI advertised (ACP `/compact`), sent instead of `message` on a resumed
   /// session only.
   public var command: String? = nil
+  /// The chat registry's slice for a cold session (ChatRegistry.slice). ACP takes it as an
+  /// embedded resource; every other engine reads it ahead of `volatile` (`registryInVolatile`).
+  public var registry: String? = nil
   public init(stable: String, volatile: String, message: String, recovery: String?) {
     self.stable = stable
     self.volatile = volatile
     self.message = message
     self.recovery = recovery
+  }
+  /// The slice moved into `volatile`; `stable` is never touched, so the warm key holds.
+  public var registryInVolatile: TurnPrompt {
+    guard let registry else { return self }
+    var moved = self
+    moved.volatile = [registry, volatile].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    moved.registry = nil
+    return moved
   }
 }
 

@@ -56,9 +56,13 @@ protocol EngineSession: AnyObject, Sendable {
   /// Whether the process takes another turn after this one. When false the core ends it at the
   /// turn's end and the next turn starts a new one.
   var reusable: Bool { get }
+  /// The session sends `prompt.registry` itself (ACP's embedded resource); otherwise Engines
+  /// moves it into `volatile`.
+  var takesRegistry: Bool { get }
 }
 
 extension EngineSession {
+  var takesRegistry: Bool { false }
   var steers: Bool { true }
   func cancel() async {}
   var reusable: Bool { true }

@@ -70,6 +70,8 @@ final class ACPSession: EngineSession {
 
   func steer(_ text: String) async -> SteerOutcome { .handedBack(text) }
 
+  var takesRegistry: Bool { true }
+
   func cancel() async { await link.cancel() }
 }
 
@@ -87,6 +89,8 @@ private actor ACPLink {
   private var sessionID: String?
   private var loadSession = false
   private var acceptsImages = false
+  /// `promptCapabilities.embeddedContext`: the registry slice goes as a `resource` block.
+  private var acceptsResources = false
   /// A new session: the stable prompt still has to lead its first prompt.
   private var fresh = true
   /// `resume` was asked for and not loaded, so the first prompt carries `prompt.recovery`.
@@ -148,6 +152,7 @@ private actor ACPLink {
     let agent = initialized["agentCapabilities"]
     loadSession = agent?["loadSession"]?.bool == true
     acceptsImages = agent?["promptCapabilities"]?["image"]?.bool == true
+    acceptsResources = agent?["promptCapabilities"]?["embeddedContext"]?.bool == true
     // Never `authenticate`: Cursor answers it by opening its sign-in page in the browser. A
     // signed-out CLI says so at session/new instead.
     let mcp = Self.mcpServers(request)
@@ -264,7 +269,8 @@ private actor ACPLink {
         return
       }
       do {
-        blocks = [Self.text(compose(prompt, schema: request.schema))] + (try request.images.map(Self.image))
+        let resource = fresh && acceptsResources ? prompt.registry.map { [Self.resource($0, thread: request.thread.id)] } ?? [] : []
+        blocks = resource + [Self.text(compose(prompt, schema: request.schema))] + (try request.images.map(Self.image))
       } catch {
         events.yield(.turnDone(.failed("Could not read the image: \(error.localizedDescription)")))
         return
@@ -337,9 +343,10 @@ private actor ACPLink {
   private func compose(_ prompt: TurnPrompt, schema: String?) -> String {
     let message = rebuilt ? prompt.recovery ?? prompt.message : prompt.message
     let stable = fresh && !dialect.stableElsewhere ? prompt.stable : ""
+    let registry = fresh && !acceptsResources ? prompt.registry ?? "" : ""
     // ACP has no output schema: a pure-answer caller's schema rides in the message.
     let schema = schema.map { "Reply with only JSON that matches this JSON Schema, and nothing else:\n" + $0 } ?? ""
-    return [stable, prompt.volatile, message, schema].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    return [stable, registry, prompt.volatile, message, schema].filter { !$0.isEmpty }.joined(separator: "\n\n")
   }
 
   /// Some CLIs count cache reads inside `inputTokens`, OpenCode beside it: beside when the total
@@ -538,6 +545,14 @@ private actor ACPLink {
 
   static func text(_ text: String) -> JSON { .object(["type": .string("text"), "text": .string(text)]) }
 
+  /// ACP has no history field: the slice rides in the first prompt as embedded context.
+  static func resource(_ text: String, thread: String) -> JSON {
+    .object(["type": .string("resource"), "resource": .object([
+      "uri": .string("serein-registry://" + (thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "thread")),
+      "mimeType": .string("text/markdown"), "text": .string(text),
+    ])])
+  }
+
   static func image(_ url: URL) throws -> JSON {
     let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "image/png"
     return .object([
@@ -546,7 +561,7 @@ private actor ACPLink {
   }
 
   static func characters(_ blocks: [JSON]) -> Int {
-    blocks.reduce(0) { $0 + ($1["text"]?.string?.count ?? 0) }
+    blocks.reduce(0) { $0 + ($1["text"]?.string?.count ?? $1["resource"]?["text"]?.string?.count ?? 0) }
   }
 
   static func canonical(_ json: JSON) -> String {

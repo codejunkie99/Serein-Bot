@@ -1074,6 +1074,11 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           // R7: the task's level decides what the CLI opens natively; Auto and Manual keep the folder.
           level: level)
         if engineRequest != nil { try HarnessRegistry.shared.prepare(&engineRequest!, ownSetup: grant.ownSetup) }
+        // A cold session on a provider that did not read this thread last gets the chat registry's slice.
+        engineRequest?.prompt.registry = RelayChatRegistry.shared.handoff(
+          self, thread: conversationID, provider: provider.rawValue, project: project?.name,
+          personal: readsPersonal(thread: conversationID),
+          query: (conversations.first { $0.id == conversationID }?.title ?? "") + "\n" + turn.prompt, cold: remoteID == nil)
         if direct != nil, engineRequest?.directHTTP == nil { throw SereinError.invalid("The provider connection changed. Select it again.") }
         if let nativeCommand {
           guard remoteID == commandSession, remoteID != nil else {
@@ -1251,6 +1256,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
     syncSelection()
     // An engine failure moves the chat to its next backup, asking first when the cost can change.
     fallBack(after: run)
+    RelayChatRegistry.shared.refresh(self)
   }
   private func runSummarized(_ run: AgentRun) {
     // A helper can finish after the next turn starts. Its old question must not hide that
