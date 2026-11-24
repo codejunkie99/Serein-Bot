@@ -76,8 +76,11 @@ extension AssistantCoreChecks {
     try check(first.contains(.session(id: dir.path + "/session.jsonl", rebuilt: false)), "The session id is Pi's session file")
     let launched = starts().first ?? ""
     try check(!launched.contains("STABLE-RULES") && !launched.contains("hello"), "No prompt text is on argv")
-    let promptFile = launched.components(separatedBy: "--append-system-prompt ").last?.components(separatedBy: " ").first ?? ""
-    try check((try? String(contentsOfFile: promptFile, encoding: .utf8)) == "STABLE-RULES", "The stable prompt goes through Pi's system-prompt file")
+    // The library path holds a space ("Application Support"), so match the whole path, never split argv on spaces.
+    let promptFile = planted
+    try check(
+      launched.contains("--append-system-prompt \(promptFile)") && (try? String(contentsOfFile: promptFile, encoding: .utf8)) == "STABLE-RULES",
+      "The stable prompt goes through Pi's system-prompt file")
     try check(
       ((try? manager.attributesOfItem(atPath: promptFile)[.posixPermissions]) as? Int) == 0o600, "The prompt file is the owner's only")
     try check(launched.contains("--no-tools --tools read,grep,find,ls,edit,write,bash"), "Commands level gets Pi's tools with bash")
