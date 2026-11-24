@@ -405,7 +405,7 @@ public enum ConnectCatalog {
   }
   /// The refusal for a name the catalogue does not know.
   public static let unknown =
-    "Serein cannot find that app to connect. Ask the person which app they mean, or tell them to add it in Settings › Connections."
+    "Serein cannot find that app to connect. Ask the person which app they mean, or tell them to add it in the Marketplace."
   /// The refusal in a turn the person did not start.
   public static let notHere = "Only the person can connect an app, in their own chat. Tell them what is needed when they are back."
 }

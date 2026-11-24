@@ -5633,20 +5633,23 @@ extension RelayOrchestrator {
       ideas = RelayProactive.ideas(in: reply)
     }
     if CommandLine.arguments.contains("--ui-serein-automatic") {
-      // `--ui-serein-automatic`: turns Serein started itself, each as its “why” line: a scheduled
-      // request, one with nothing new (hidden), an alert's change, a webhook and a check-in.
+      // `--ui-serein-automatic`: turns Serein started itself. A webhook, an alert's change and a
+      // scheduled request have their “why” line (one with nothing new is hidden); a check-in and
+      // the brief, last, are plain messages.
       let stamp = RelayToolHost.stamp(now)
       thread.messages += [
         AgentMessage(role: "you", text: RelayHook.prompt(source: "GitHub", body: #"{"action":"opened","pull_request":"Fix checkout"}"#, key: nil)),
         AgentMessage(role: "assistant", text: "GitHub: a pull request “Fix checkout” was opened."),
-        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
-        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
         AgentMessage(role: "you", text: RelayWatch.changePrompt(name: "Flight price to Tokyo", before: "$420", now: "$380")),
         AgentMessage(role: "assistant", text: "The flight to Tokyo dropped from $420 to $380, its lowest this month."),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Back up the shop-web database", repeats: .daily, now: stamp)),
         AgentMessage(role: "assistant", text: "NOTHING NEW"),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Check my inbox and tell me what needs me", repeats: .weekdays, now: stamp)),
         AgentMessage(role: "assistant", text: "Two emails need you: Maya asked about the 4 pm review, and Northwind's invoice is due Friday."),
+        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
+        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
+        AgentMessage(role: "you", text: RelayUnattended.prompt(text: RelayBriefing.text, repeats: .daily, now: stamp)),
+        AgentMessage(role: "assistant", text: "Good morning. Two meetings today, the design review at 4 and dinner with Maya at 7. Nothing ran overnight."),
       ]
     }
     if Self.previewDoHere {

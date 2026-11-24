@@ -44,6 +44,28 @@ extension SmokeTest {
     let twoLines = RelayUnattended.prompt(text: "Check the shop\nand the blog", repeats: .none, now: now)
     try check(RelayAutomatic.label(twoLines) == "Your scheduled request “Check the shop and the blog”",
       "A request written on two lines reads as one")
+    // Serein speaking first is just its next message; a turn something of the person's set off
+    // keeps its line, and a webhook's above all, since its words are untrusted.
+    try check([RelayAutomatic.Kind.checkIn, .brief, .attention].allSatisfy { !RelayAutomatic.showsLine($0) },
+      "A check-in, the brief and something Serein noticed have no line above the reply")
+    try check([RelayAutomatic.Kind.scheduled, .goal, .alert, .webhook, .macAccess].allSatisfy(RelayAutomatic.showsLine),
+      "A scheduled request, a goal check, an alert, a webhook and the Mac access follow-up keep their line")
+    try check(RelayAutomatic.settingsTitle(.brief) == "Daily brief settings…" && RelayAutomatic.settingsTitle(.checkIn) == "Check-in settings…"
+      && RelayAutomatic.settingsTitle(.attention) == "Check-in settings…",
+      "A reply with no line has the way to its setting in its menu")
+    try check([RelayAutomatic.Kind.checkIn, .brief, .attention, .scheduled, .goal, .alert, .webhook, .macAccess]
+      .allSatisfy { RelayAutomatic.showsLine($0) != (RelayAutomatic.settingsTitle($0) != nil) },
+      "Each turn Serein started has its line or its menu item, never neither")
+    let spoke: [AgentMessage] = [
+      AgentMessage(id: "p1", role: "you", text: "Hi"), AgentMessage(id: "a1", role: "assistant", text: "Hello"),
+      AgentMessage(id: "c1", role: "you", text: RelayProactive.prompt(.checkIn)), AgentMessage(id: "a2", role: "assistant", text: "Your review starts in 20 minutes."),
+      AgentMessage(id: "b1", role: "you", text: brief), AgentMessage(id: "a3", role: "assistant", text: "Good morning. Two meetings today."),
+      AgentMessage(id: "s1", role: "you", text: scheduled), AgentMessage(id: "a4", role: "assistant", text: "Two emails need you."),
+    ]
+    try check(!ChatTurns.draws(2, in: spoke) && !ChatTurns.draws(4, in: spoke) && ChatTurns.draws(6, in: spoke),
+      "The chat draws nothing for a check-in's or the brief's prompt, and the line for a scheduled request")
+    let gaps: Set<String> = ChatTurns.breaks(spoke)
+    try check(gaps == ["a2", "a3", "s1"], "A check-in's and the brief's reply start their turn; a scheduled request's line starts its own")
     let kinds: [RelayAutomatic.Kind] = [.checkIn, .brief, .attention, .scheduled, .goal, .alert, .webhook]
     try check(kinds.allSatisfy { RelayAutomatic.why($0).contains("Settings › Serein") || $0 == .attention },
       "Each line says why the person is seeing it and where to change it")

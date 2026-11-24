@@ -9,7 +9,7 @@ extension RelayOrchestrator {
 
   /// The places the person allows any assistant: everything (Mac apps too while Accessibility is
   /// off: the chat then shows how to turn it on, MacAccessWait), except Mail and Messages unless
-  /// turned on in Settings › Connections, the
+  /// turned on in the Marketplace (Your apps, On this Mac), the
   /// calendar and contacts while their connections are off, connected apps while there is
   /// neither a Composio key nor an MCP connection on, and Serein's computer unless its switch is
   /// on. A scope only narrows this.

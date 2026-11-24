@@ -29,37 +29,26 @@ public struct SettingsCategory: Equatable, Sendable, Identifiable {
   /// page under Relay. Ids, labels and aliases never hold it.
   public static let separator: Character = "/"
 
-  /// The captions of Settings' list, in order: the pages of each follow it (`group`).
-  public static let assistantsGroup = "Assistants and apps"
-  public static let dataGroup = "Your data"
-
-  /// The pages in list order, each group's together. Renamed pages retain their ids; merged pages
-  /// remain aliases.
+  /// The pages in list order: eight, in one flat list with no captions
+  /// (docs/demos/simple-settings.decision.md). Renamed pages keep their ids (Vault is `Passwords`,
+  /// Voice is `Talking`, Assistants is `Relay`, AI apps is `Agents`); a page folded into another
+  /// stays an alias of it (Appearance and Keyboard open General), and ReferenceSettings opens
+  /// the part that holds what it had. Apps, connections and plugins are in the Marketplace (`moved`).
   public static let all: [SettingsCategory] = [
-    SettingsCategory("General", icon: "gearshape", summary: "Choose how Serein starts, where files go and how it updates."),
-    // The old Tabs page's id stays an alias.
-    SettingsCategory("Appearance", icon: "paintpalette", aliases: ["Wallpaper", "Tabs"],
-                     summary: "Choose how Serein looks."),
+    SettingsCategory("General", icon: "gearshape", aliases: ["Appearance", "Wallpaper", "Tabs", "Keyboard"],
+                     summary: "How Serein looks, starts and updates."),
     SettingsCategory("Talking", label: "Voice", icon: "mic", aliases: ["Talking"], summary: "Talk to Serein, and choose how it talks back."),
-    SettingsCategory("Keyboard", icon: "keyboard", summary: "The keys for each menu command."),
     SettingsCategory("Relay", label: "Assistants", icon: "person.2", aliases: ["Serein"],
-                     summary: "Your assistants, and what every assistant does.", group: assistantsGroup),
+                     summary: "Your assistants, and how you reach them."),
     // The outside agents' MCP setup is a group on AI apps (`/mcp`).
     SettingsCategory("Agents", label: "AI apps", icon: "terminal", aliases: ["AI apps", "MCP connection"],
-                     summary: "The AI apps on this Mac that Serein uses, and what new chats start with.", group: assistantsGroup),
-    // Mail, Messages, Calendar, Reminders, Contacts and Notes (Connections, NativeConnection), and
-    // apps connected through Composio (ComposioApps) or by their MCP server's address (MCPConnectionsRows).
-    SettingsCategory("Connections", icon: "envelope", aliases: ["Mail", "Messages", "Calendar", "Reminders", "Contacts", "Notes", "Connected apps", "Composio", "MCP"],
-                     summary: "The apps Serein can use for you.", group: assistantsGroup),
+                     summary: "The AI apps Serein thinks with."),
     SettingsCategory("Computer", label: "Serein's computer", icon: "desktopcomputer",
-                     summary: "A desktop of its own where an assistant works, apart from your Mac.", group: assistantsGroup),
-    SettingsCategory("Plugins", icon: "puzzlepiece.extension", summary: "Add tools to Serein from a folder, a link or the community list.",
-                     group: assistantsGroup),
-    SettingsCategory("Privacy", icon: "hand.raised", aliases: ["History"], summary: "Choose what Serein sees and what it keeps.",
-                     group: dataGroup),
-    SettingsCategory("Passwords", icon: "key", aliases: ["Import"],
-                     summary: "Your saved passwords, and ones to bring in.", group: dataGroup),
-    SettingsCategory("Usage", icon: "chart.bar", summary: "What you do in Serein, counted on this Mac only.", group: dataGroup),
+                     summary: "A desktop of its own where an assistant works, apart from your Mac."),
+    SettingsCategory("Privacy", icon: "hand.raised", aliases: ["History"], summary: "What Serein sees, what it may do, and what it keeps."),
+    SettingsCategory("Passwords", label: "Vault", icon: "key", aliases: ["Passwords", "Import"],
+                     summary: "Sign-ins and keys Serein keeps for you, in your Mac's Keychain. The AI never sees them."),
+    SettingsCategory("Usage", icon: "chart.bar", summary: "What you do in Serein, counted on this Mac only."),
   ]
 
   /// `pages` split by `group`, in order of first appearance: what Settings' list draws under
@@ -76,6 +65,19 @@ public struct SettingsCategory: Equatable, Sendable, Identifiable {
     return result
   }
 
+  /// Apps, connections and plugins are managed in the Marketplace, not in Settings (their two pages
+  /// left). The Marketplace place a name that used to open one of them opens now: the old ids, labels
+  /// and aliases, in any case, with or without a sub-page. nil for every name Settings still has.
+  public static func moved(_ name: String) -> MarketplacePlace? {
+    let page: Substring = name.split(separator: separator, maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+    switch page.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "plugins": return .plugins
+    case "connections", "connected apps", "composio", "mcp": return .yours
+    case "mail", "messages", "calendar", "reminders", "contacts", "notes", "on this mac": return .mac
+    default: return nil
+    }
+  }
+
   /// The page a stored or requested name opens: an id, a label or an alias (any case). A sub-page
   /// after `separator` is ignored here (`subpath` reads it). Anything else opens General.
   public static func resolve(_ name: String, in categories: [SettingsCategory] = all) -> SettingsCategory {
@@ -89,19 +91,17 @@ public struct SettingsCategory: Equatable, Sendable, Identifiable {
   }
 
   /// Everyday words for a page that are not its name, keyed by page id: "mic" finds Voice and
-  /// "dark" finds Appearance. Search only (`search`); a page never opens by one of these (`resolve`).
+  /// "dark" finds General, where Appearance is. Search only (`search`); a page never opens by one of these (`resolve`).
   public static let synonyms: [String: [String]] = [
-    "General": ["startup", "launch", "update", "sleep", "downloads", "search engine"],
-    "Appearance": ["dark", "light", "mode", "theme", "colour", "color", "text size", "font", "bigger"],
+    "General": ["startup", "launch", "update", "sleep", "downloads", "search engine",
+                "dark", "light", "mode", "theme", "colour", "color", "text size", "font", "bigger",
+                "shortcuts", "hotkeys", "keys"],
     "Relay": ["team", "routines", "memory", "persona"],
     "Agents": ["model", "Claude", "Codex", "LLM", "provider"],
-    "Connections": ["email", "iMessage", "integrations"],
     "Computer": ["sandbox", "virtual machine", "VM"],
     "Privacy": ["tracking", "cookies", "ads", "sign-ins", "permissions"],
-    "Passwords": ["password", "keychain", "login"],
+    "Passwords": ["password", "keychain", "login", "credentials", "secrets", "token", "API key"],
     "Talking": ["mic", "microphone", "speech", "dictation", "wake word", "read aloud"],
-    "Plugins": ["extensions", "skills", "add-ons"],
-    "Keyboard": ["shortcuts", "hotkeys", "keys"],
     "Usage": ["stats", "statistics", "counts"],
   ]
 
@@ -109,13 +109,18 @@ public struct SettingsCategory: Equatable, Sendable, Identifiable {
   /// page's id, label, summary, an alias or a synonym (any case, accents ignored), so "ai" finds AI
   /// apps and not Mail. An empty search keeps every page.
   public static func search(_ query: String, in categories: [SettingsCategory] = all) -> [SettingsCategory] {
-    let wanted: [String] = searchWords(query)
-    guard !wanted.isEmpty else { return categories }
+    guard !searchWords(query).isEmpty else { return categories }
     return categories.filter { category in
-      let text: [String] = [category.id, category.label, category.summary] + category.aliases + (synonyms[category.id] ?? [])
-      let words: [String] = searchWords(text.joined(separator: " "))
-      return wanted.allSatisfy { word in words.contains { $0.hasPrefix(word) } }
+      matches(query, in: [category.id, category.label, category.summary] + category.aliases + (synonyms[category.id] ?? []))
     }
+  }
+  /// Whether each word typed starts a word of `text` (any case, accents ignored): how a search
+  /// matches a page, and one setting on it (`SettingsIndex`). An empty search matches nothing.
+  public static func matches(_ query: String, in text: [String]) -> Bool {
+    let wanted: [String] = searchWords(query)
+    guard !wanted.isEmpty else { return false }
+    let words: [String] = searchWords(text.joined(separator: " "))
+    return wanted.allSatisfy { word in words.contains { $0.hasPrefix(word) } }
   }
   private static func searchWords(_ text: String) -> [String] {
     text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased()

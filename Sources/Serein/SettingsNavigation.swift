@@ -98,10 +98,9 @@ struct SettingsBackLink: View {
   static func title(_ key: String, in category: String) -> String {
     switch category {
     case "General": return GeneralSettings.title(key)
-    case "Appearance": return AppearanceSettings.title(key)
     case "Relay": return RelaySettings.title(key)
     case "Agents": return AIAppsSettings.title(key)
-    case "Passwords": return key == PasswordsKey.bring ? "Bring from your browser" : "Passwords"
+    case "Passwords": return key == PasswordsKey.bring ? "Bring from your browser" : "Vault"
     case "Privacy": return PrivacySettings.title(key)
     default: return key
     }
@@ -153,8 +152,8 @@ extension View {
 @MainActor enum SettingsInline {
   static func isSection(_ key: String, page: String, under parent: [String]) -> Bool {
     switch (page, parent.count) {
+    // General's cards scroll into view; its Keyboard shortcuts and Serein's look are sub-pages.
     case ("General", 0): return GeneralKey.titles[key] != nil
-    case ("Appearance", 0): return AppearanceKey.titles[key] != nil
     case ("Passwords", 0): return key == PasswordsKey.bring
     case ("Privacy", 0): return PrivacyKey.titles[key] != nil
     case ("Relay", 0): return RelaySettingsKey.titles[key] != nil

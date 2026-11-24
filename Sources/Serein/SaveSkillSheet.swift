@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Save as Skill: the how-to Serein drafted from a finished task (`TaskSkill.draft`), for the
 /// person to edit, then save with the plugins' skills (`PluginHost.saveSkill`). It saves off;
-/// the person turns it on in Settings › Plugins.
+/// the person turns it on in Marketplace › Plugins.
 @MainActor struct SaveSkillSheet: View {
   let close: () -> Void
   /// After a skill saved: the chat's offer under its reply never comes back (SkillOfferLine).
@@ -46,7 +46,7 @@ import SwiftUI
       }
       Text("Serein wrote these steps in its own words, with no page text or anything typed. Add the request yourself.")
         .role(.meta).fixedSize(horizontal: false, vertical: true)
-      Text("Name it with lowercase words joined by hyphens. It stays off until you turn it on in Settings › Plugins.")
+      Text("Name it with lowercase words joined by hyphens. It stays off until you turn it on in Marketplace › Plugins.")
         .role(.meta).fixedSize(horizontal: false, vertical: true)
       if let error { Text(error).role(.meta).foregroundStyle(p.danger) }
       HStack {
@@ -66,7 +66,7 @@ import SwiftUI
   private func save() {
     do {
       let package = try PluginHost.shared.saveSkill(TaskSkillDraft(name: name, whenToUse: whenToUse, steps: steps))
-      ToastCenter.shared.show("Saved the skill \(package.name). It stays off until you turn it on in Settings › Plugins.")
+      ToastCenter.shared.show("Saved the skill \(package.name). It stays off until you turn it on in Marketplace › Plugins.")
       saved?()
       close()
     } catch { self.error = error.localizedDescription }

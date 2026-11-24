@@ -152,13 +152,15 @@ struct TeamSheetHost: ViewModifier {
   }
 }
 extension TeamSheets {
-  /// The Settings page whose switch allows a place for Serein: Serein's computer and Connections
-  /// (Mail, Messages, Calendar, Contacts, connected apps) have their own pages; every other place
+  /// Where the switch that allows a place for Serein lives: Serein's computer has its Settings
+  /// page; Mail, Messages, Calendar and Contacts are in the Marketplace's On this Mac, and connected
+  /// apps in its Your apps (`SettingsCategory.moved` opens them from these ids); every other place
   /// is under AI apps.
   static func settingsPage(_ place: AssistantPlace) -> (id: String, name: String) {
     switch place {
     case .computer: return ("Computer", "Settings › Serein's computer")
-    case .mail, .messages, .calendar, .contacts, .connectedApps: return ("Connections", "Settings › Connections")
+    case .mail, .messages, .calendar, .contacts: return ("On this Mac", "Marketplace › On this Mac")
+    case .connectedApps: return ("Connected apps", "Marketplace › Your apps")
     default: return ("Agents", "Settings › AI apps")
     }
   }
@@ -1038,18 +1040,18 @@ struct AssistantRow: View {
   }
 
   /// Serein's own items after an assistant's: Stop Everything while anything runs (File › Stop
-  /// Everything has it always), Resume Serein while paused, and Serein Settings….
+  /// Everything has it always) and Resume Serein while paused. Serein's own settings are not
+  /// here: the chat's Settings… sits just above, and ⌘, opens Serein's.
   static func sereinItems(relay: RelayOrchestrator) -> [SereinMenuItem] {
     guard let controller = RelayController.shared else { return [] }
-    var items: [SereinMenuItem] = [.divider]
+    var items: [SereinMenuItem] = []
     if relay.working || !relay.agent.hub.active.isEmpty {
       items.append(.action("Stop Everything", icon: "stop.circle", shortcut: controller.killLabel, destructive: true) {
         controller.killSwitch()
       })
     }
     if relay.state.paused { items.append(.action("Resume Serein", icon: "play") { relay.resume() }) }
-    items.append(.action("Serein Settings…", icon: "gearshape") { controller.openSettings("Relay") })
-    return items
+    return items.isEmpty ? [] : [.divider] + items
   }
 
   /// Mark as unread, or Mark as read (which also clears Serein's own dot for the active chat).

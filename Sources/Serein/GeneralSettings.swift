@@ -2,66 +2,81 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// Settings › General on one page (docs/demos/settings-one-page.decision.md): Startup and sleep,
-/// Search, Downloads, Updates, and Tips and setup, each a section with its controls in view. The
-/// keys are the old sub-pages'; a request for one scrolls to its section (`SettingsInline`).
+/// Settings › General (docs/demos/simple-settings.decision.md): how Serein looks (the theme and the
+/// text size, from the old Appearance page), Startup and sleep, Search and Updates in view; then
+/// Advanced, which folds Darken pages, Serein's look, Keyboard shortcuts, Downloads and Tips and
+/// setup. Serein's look and Keyboard shortcuts open as sub-pages. Each card keeps its old key as its
+/// id, so a request for one scrolls to it (`SettingsInline`) after its fold opens (`SettingsFolds`).
 struct GeneralSettings: View {
   @ObservedObject var browser: BrowserModel
+  @Environment(\.settingsNavigation) private var nav
   var body: some View {
-    VStack(alignment: .leading, spacing: 32) {
-      ForEach(GeneralKey.order, id: \.self) { key in
-        SettingsSection(key, title: GeneralKey.titles[key] ?? key) { section(key) }
+    switch nav.key(0) {
+    case GeneralKey.keyboard?:
+      VStack(alignment: .leading, spacing: 24) {
+        SettingsPageHeader("Keyboard shortcuts", sentence: "The keys for each menu command.")
+        KeyboardSettings()
+      }
+    case GeneralKey.look?: SereinLookPage()
+    default: page
+    }
+  }
+  private var page: some View {
+    VStack(alignment: .leading, spacing: 24) {
+      SettingsRowList("Appearance") { AppearanceRows() }.id(GeneralKey.appearance)
+      SettingsBlock("Startup and sleep") { StartupSettings() }.id(GeneralKey.startup)
+      GeneralSearchSettings().id(GeneralKey.search)
+      UpdatesSettings().id(GeneralKey.updates)
+      SettingsAdvanced(page: "General", count: 6) {
+        SettingsRowList {
+          DarkenPagesRow()
+          SettingsSummaryRow(title: "Serein's look", answer: "The hologram, and the look Serein wears", open: { nav.push(GeneralKey.look) }) {
+            SettingsGlyphTile(systemName: "sparkles")
+          }
+          SettingsSummaryRow(title: "Keyboard shortcuts", answer: "The keys for each menu command", open: { nav.push(GeneralKey.keyboard) }) {
+            SettingsGlyphTile(systemName: "keyboard")
+          }
+        }
+        SettingsBlock("Downloads") {
+          DownloadsView()
+          SettingsNote("A file you save from a page asks where it goes. A task's files wait until you keep them, and tasks download only if you allow it in Settings › Assistants › Advanced.")
+        }.id(GeneralKey.downloads)
+        GeneralTipsSettings(browser: browser).id(GeneralKey.tips)
       }
     }
   }
-  @ViewBuilder private func section(_ key: String) -> some View {
-    switch key {
-    case GeneralKey.startup:
-      SettingsPageHeader("Startup and sleep", sentence: "Choose when Serein opens, and whether the Mac stays awake for its work.")
-      SettingsBlock("Startup and sleep") { StartupSettings() }
-    case GeneralKey.search: GeneralSearchSettings()
-    case GeneralKey.downloads:
-      SettingsPageHeader("Downloads", sentence: "Files you keep from a task, and files you save from a page.")
-      SettingsBlock("Downloads") {
-        DownloadsView()
-        SettingsNote("A file you save from a page asks where it goes. A task's files wait until you keep them, and tasks download only if you allow it in Settings › Assistants › Task downloads.")
-      }
-    case GeneralKey.updates:
-      SettingsPageHeader("Updates", sentence: "Which version of Serein you have, and how it updates.")
-      UpdatesSettings()
-    default: GeneralTipsSettings(browser: browser)
-    }
-  }
-  static func title(_ key: String) -> String { GeneralKey.titles[key] ?? "General" }
+  static func title(_ key: String) -> String { GeneralKey.pages[key] ?? GeneralKey.titles[key] ?? "General" }
 }
 
-/// The sub-pages of General.
+/// The parts of General: its cards (sections a request scrolls to) and its two sub-pages.
 enum GeneralKey {
+  static let appearance = "appearance"
   static let startup = "startup"
   static let search = "search"
   static let downloads = "downloads"
   static let updates = "updates"
   static let tips = "tips"
-  /// The sections in page order.
-  static let order = [startup, search, downloads, updates, tips]
+  static let keyboard = "keyboard"
+  static let look = "look"
+  /// The cards, by key: a request for one scrolls to it.
   static let titles: [String: String] = [
-    startup: "Startup and sleep", search: "Search", downloads: "Downloads", updates: "Updates", tips: "Tips and setup",
+    appearance: "Appearance", startup: "Startup and sleep", search: "Search", downloads: "Downloads", updates: "Updates",
+    tips: "Tips and setup",
   ]
+  /// The sub-pages, which open in the page's place: the old Keyboard page and Appearance's Serein's look.
+  static let pages: [String: String] = [keyboard: "Keyboard shortcuts", look: "Serein's look"]
 }
 
 /// General › Search: the engine `BrowserPolicy.address` uses and agents can change (`search_engine`).
 private struct GeneralSearchSettings: View {
   @AppStorage("serein.searchEngine") private var searchEngine = "DuckDuckGo"
   var body: some View {
-    VStack(alignment: .leading, spacing: 24) {
-      SettingsPageHeader("Search", sentence: "Which search site opens when Serein sends a search to your browser.")
-      SettingsBlock("Search") {
-        HStack {
-          Text("Search engine")
-          Spacer()
-          SettingsPopUp("Search engine", selection: $searchEngine,
-            choices: ["DuckDuckGo", "Google", "Bing"].map { SettingsChoice(value: $0, label: $0) }, showsTitle: false)
-        }
+    SettingsRowList("Search") {
+      SettingsChoiceRow(
+        title: "Search engine", answer: "Opens when Serein sends a search to your browser", selection: $searchEngine,
+        choices: ["DuckDuckGo", "Google", "Bing"].map { SettingsChoice(value: $0, label: $0) }
+      ) {
+        SettingsGlyphTile(systemName: "magnifyingglass")
       }
     }
   }
@@ -76,11 +91,9 @@ private struct GeneralTipsSettings: View {
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
-      SettingsPageHeader("Tips and setup", sentence: "Short tips while you work, and setup with Serein in its chat.")
-      SettingsBlock("Guidance") {
+      SettingsBlock("Tips and setup") {
         Toggle("Show tips", isOn: $hints.enabled)
-      }
-      SettingsBlock("Setup") {
+        Divider()
         HStack {
           VStack(alignment: .leading, spacing: 4) {
             Text("Set up with Serein")

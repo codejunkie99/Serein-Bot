@@ -8,13 +8,13 @@ import Foundation
 /// A place an assistant may work, in the words the person reads ("can use: Web, This page,
 /// Answers, Mac, Projects, Mail, Messages, Calendar, Contacts, Connected apps, Serein's
 /// computer"). Mail, Messages, Calendar and Contacts are the connections the person turned on in
-/// Settings › Connections (Connections, NativeConnection).
+/// the Marketplace (Your apps, On this Mac) (Connections, NativeConnection).
 public enum AssistantPlace: String, Codable, CaseIterable, Sendable {
   case web, page, answer, mac, project
   case mail, messages
   /// Connections (NativeConnection), only while the person turned one on.
   case calendar, contacts
-  /// Apps connected through Composio or by their MCP server's address (Settings › Connections),
+  /// Apps connected through Composio or by their MCP server's address (the Marketplace (Your apps, On this Mac)),
   /// only while a Composio key is saved or an MCP connection is on.
   case connectedApps
   /// Serein's computer (ComputerPolicy): a separate Linux desktop an assistant works in; only

@@ -1005,7 +1005,17 @@ struct UIPreview {
     try? await Task.sleep(nanoseconds: 300_000_000)
     if ["setup", "models", "settings"].contains(screen) { HarnessRegistry.shared.installSyntheticPreview() }
     if screen == "settings" { browser.showSettings = true }
-    if screen == "connect" { browser.showMarketplace = true }
+    if screen == "connect" {
+      browser.showMarketplace = true
+      // `--ui-marketplace-place yours|mac|plugins|teams`: the Marketplace on that page. A name the old
+      // Settings pages had (`Connections`, `Plugins`, `Mail`) opens where it moved, as a link would.
+      let arguments = CommandLine.arguments
+      if let index = arguments.firstIndex(of: "--ui-marketplace-place"), index + 1 < arguments.count {
+        let named = arguments[index + 1]
+        let places: [String: MarketplacePlace] = ["yours": .yours, "mac": .mac, "plugins": .plugins, "teams": .teams]
+        if let place = places[named] ?? SettingsCategory.moved(named) { browser.marketplacePlace = place }
+      }
+    }
     if screen == "search" { SearchPaletteCenter.shared.open = true }
     // affectUI lane 6, only in memory.
     // `--ui-affect-cited-answer` (`--ui-preview thread`): a reply whose claims cite their pages;

@@ -84,18 +84,26 @@ struct TalkingSettings: View {
   /// recordings). Every note that says what is never sent or allowed stays in view.
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
+      // Everyday (docs/demos/simple-settings.decision.md): how you talk and whether Serein reads its
+      // replies aloud. Setup, calls and what is kept fold under Advanced.
       SettingsBlock("You talk") {
-        guidedSetup
-        Divider().overlay(p.line)
         pushToTalk
         Divider().overlay(p.line)
         wakePhrase
         Divider().overlay(p.line)
         languageRows
+      }
+      SettingsBlock("Serein talks") {
+        Toggle("Read replies aloud", isOn: $speak)
+        SettingsNote("Speech is recognized on this Mac where it can be. In a call, replies are always read aloud, and holding the round button talks.")
+      }
+      SettingsAdvanced(page: "Talking", count: 6) {
+      SettingsBlock("Setup and microphone") {
+        guidedSetup
         Divider().overlay(p.line)
         microphone
       }
-      sereinTalks
+      inCalls
       SettingsBlock("Privacy") {
         Toggle("Fix likely mishearings and drop fillers with my AI app", isOn: $proofread)
         SettingsNote(
@@ -106,6 +114,7 @@ struct TalkingSettings: View {
             ? "Recordings stay on this Mac for 30 days. Private pages keep nothing."
             : "Off. Audio is not saved.")
         if keep { TalkRecordingsList() }
+      }
       }
     }.onDisappear { meter.stop() }
       .task { languages = TalkLanguageSupport.choices() }
@@ -167,12 +176,10 @@ struct TalkingSettings: View {
         label: "About speech recognition")
     }
   }
-  /// Read replies aloud, Speak progress in calls and Answer low-risk questions by voice, each with
-  /// its note. Moved here from Settings › Serein, so voice has one page.
-  private var sereinTalks: some View {
-    SettingsBlock("Serein talks", info: "In a call, say “decline” to answer any question no. With “Answer low-risk questions by voice” on, “allow” answers clicks, typing, scrolling and going to a page: Serein reads the step back and allows it only after you say “yes”. Sending, posting, paying, deleting, booking, installing and settings always need a click. The microphone is closed while Serein speaks.") {
-      Toggle("Read replies aloud", isOn: $speak)
-      SettingsNote("Speech is recognized on this Mac where it can be. In a call, replies are always read aloud, and holding the round button talks.")
+  /// Under Advanced: Speak progress in calls and Answer low-risk questions by voice, each with its
+  /// note. Read replies aloud is in view above.
+  private var inCalls: some View {
+    SettingsBlock("In calls", info: "In a call, say “decline” to answer any question no. With “Answer low-risk questions by voice” on, “allow” answers clicks, typing, scrolling and going to a page: Serein reads the step back and allows it only after you say “yes”. Sending, posting, paying, deleting, booking, installing and settings always need a click. The microphone is closed while Serein speaks.") {
       Toggle("Speak progress in calls", isOn: $speakProgress)
       SettingsNote("Short lines about what Serein is doing, and each question it asks, in its own words. Text from a page is never read out.")
       Toggle("Answer low-risk questions by voice", isOn: $voiceAnswers)

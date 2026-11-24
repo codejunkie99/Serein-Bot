@@ -10,8 +10,8 @@ import SwiftUI
 /// agent tool reads it, and every name and file name in it is shown as plain text.
 @MainActor final class AssistantInspector: ObservableObject {
   static let shared = AssistantInspector()
-  /// What the pane can show. Tasks and Computer are parts of Activity; a tab saved by an
-  /// earlier build under one of those names opens Activity (`tab(for:)`).
+  /// What the pane can show: the one list (Activity) or Details from the settings button. Library
+  /// is kept only so a tab saved by an earlier build still reads; it shows the list, where Files is.
   enum Tab: String, CaseIterable, Identifiable {
     case details, library, activity
     var id: String { rawValue }
@@ -39,9 +39,6 @@ import SwiftUI
   /// Until when a hologram that appears glides from where the last one was: just after the pane
   /// opens or closes, never for a chat switch or a resize.
   private(set) var glideUntil = Date.distantPast
-  /// The tabs it shows, each of which works for every assistant in every state (an empty one
-  /// says so); Details opens from the settings button instead.
-  static let shownTabs: [Tab] = [.activity, .library]
   /// Open or closed, saved with the window (the main window is the only one with Serein).
   @Published private(set) var open: Bool
   @Published private(set) var assistantID: String?
@@ -156,8 +153,8 @@ import SwiftUI
   func answered(_ id: UUID) { offers.removeAll { $0.id == id } }
 }
 
-/// The pane: the Activity · Library tabs (Details from the settings button) with × beside them,
-/// then the chosen tab. Who it belongs to shows only on Details, where it is edited; the chat beside it
+/// The pane: settings and × at the corners, the face, then one list (Details from the settings
+/// button). Who it belongs to shows only on Details, where it is edited; the chat beside it
 /// already has the picture and name. A labelled region; Esc closes it while it has the keyboard.
 struct InspectorPane: View {
   @ObservedObject var relay: RelayOrchestrator
@@ -185,9 +182,6 @@ struct InspectorPane: View {
             }
           }.padding(12).frame(height: 60)
           InspectorFace(relay: relay, profile: profile).padding(.top, 8).padding(.bottom, 12)
-          if tab != .details {
-            InspectorTabs(profile: profile).padding(.top, 4).padding(.bottom, 10)
-          }
           ScrollView {
             Group {
               switch tab {
@@ -200,8 +194,7 @@ struct InspectorPane: View {
                     InspectorSettings(relay: relay, profile: profile)
                   }
                 }
-              case .library: InspectorLibrary(relay: relay, profile: profile)
-              case .activity: InspectorActivity(relay: relay, profile: profile)
+              case .library, .activity: InspectorActivity(relay: relay, profile: profile)
               }
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 16).frame(maxWidth: .infinity, alignment: .leading)
           }.scrollBounceBehavior(.basedOnSize)
@@ -278,53 +271,6 @@ private struct InspectorLabel: View {
   private func cancel() {
     error = nil
     editing = false
-  }
-}
-
-/// Activity · Library as Grok's `.segmented`: no track, only the chosen pill filled; VoiceOver reads
-/// them as one segmented control.
-private struct InspectorTabs: View {
-  let profile: RelayProfile
-  @ObservedObject private var inspector = AssistantInspector.shared
-  @Environment(\.palette) var p
-  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-  @Environment(\.sereinReducedEffects) private var previewReducedEffects
-  private var reduceMotion: Bool { systemReduceMotion || previewReducedEffects }
-  var body: some View {
-    let chosen: AssistantInspector.Tab = inspector.tab(for: profile.id)
-    HStack(spacing: 2) {
-      ForEach(AssistantInspector.shownTabs) { tab in
-        Button { choose(tab) } label: {
-          InspectorTabLabel(title: tab.label, chosen: chosen == tab)
-        }.buttonStyle(.pressable)
-      }
-    }.frame(maxWidth: .infinity).padding(.horizontal, 16)
-      .accessibilityRepresentation {
-        Picker("\(profile.name)'s sections", selection: Binding(get: { chosen }, set: { choose($0) })) {
-          ForEach(AssistantInspector.shownTabs) { Text($0.label).tag($0) }
-        }.pickerStyle(.segmented)
-      }
-  }
-  private func choose(_ tab: AssistantInspector.Tab) {
-    withAnimation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.2)) {
-      inspector.choose(tab, for: profile.id)
-    }
-  }
-}
-
-/// One segment: 13 on 18, 4 by 8 padding; `secondary`, `ink` under the pointer and when chosen.
-private struct InspectorTabLabel: View {
-  let title: String
-  let chosen: Bool
-  @State private var hovered = false
-  @Environment(\.palette) var p
-  var body: some View {
-    Text(title).font(UIStyle.font(13)).tracking(0.195).lineLimit(1).fixedSize()
-      .foregroundStyle(chosen || hovered ? p.ink : p.secondary)
-      .padding(.horizontal, 8).frame(height: 26)
-      .background(chosen ? p.track : .clear, in: Capsule())
-      .contentShape(Capsule())
-      .onHover { hovered = $0 }
   }
 }
 
@@ -406,52 +352,20 @@ private struct InspectorLibrary: View {
     }
     return out.sorted { $0.at > $1.at }
   }
-  enum Filter: String, CaseIterable, Identifiable {
-    case all = "All", media = "Media", files = "Files"
-    var id: String { rawValue }
-    func keeps(_ kind: Kind) -> Bool {
-      if case .recording = kind { return self != .files }
-      return self != .media
-    }
-  }
-  @State private var filter = Filter.all
-  /// Today, This week and Earlier, newest first, leaving out empty groups.
-  private static func groups(_ items: [Item]) -> [(title: String, items: [Item])] {
-    let calendar = Calendar.current
-    let week = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: Date())) ?? .distantPast
-    let today = items.filter { calendar.isDateInToday($0.at) }
-    let thisWeek = items.filter { !calendar.isDateInToday($0.at) && $0.at >= week }
-    let earlier = items.filter { $0.at < week }
-    return [("Today", today), ("This week", thisWeek), ("Earlier", earlier)].filter { !$0.1.isEmpty }
-  }
+  /// The newest three, then "All N" opens the rest in place.
+  static let shown = 3
+  @State private var all = false
   var body: some View {
-    let items = items.filter { filter.keeps($0.kind) }
-    VStack(alignment: .leading, spacing: 22) {
-      HStack(spacing: 6) {
-        ForEach(Filter.allCases) { chip in
-          Button { filter = chip } label: {
-            Text(chip.rawValue).font(UIStyle.font(12)).foregroundStyle(filter == chip ? p.ink : p.secondary)
-              .padding(.horizontal, 10).frame(height: 24)
-              .background(filter == chip ? p.selected : .clear, in: Capsule())
-              .overlay(Capsule().strokeBorder(p.line, lineWidth: filter == chip ? 0 : 1))
-              .contentShape(Capsule())
-          }.buttonStyle(.pressable).accessibilityAddTraits(filter == chip ? .isSelected : [])
-        }
-      }.padding(.horizontal, 12)
+    let items = items
+    let link: (title: String, action: () -> Void)? = items.count > Self.shown
+      ? (all ? "Fewer" : "All \(items.count)", { all.toggle() }) : nil
+    InspectorSection(title: "Files", link: link) {
       if items.isEmpty {
-        Text(verbatim: filter == .all
-          ? "Nothing here yet. Files \(profile.name)\u{2019}s tasks download, files from its computer and its task recordings show here."
-          : "Nothing in \(filter.rawValue) yet.")
-          .font(UIStyle.font(13)).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true)
-          .padding(.horizontal, 12)
+        Text(verbatim: "Nothing yet. Files \(profile.name)\u{2019}s tasks download, files from its computer and its task recordings show here.")
+          .font(UIStyle.font(13)).foregroundStyle(p.faint).fixedSize(horizontal: false, vertical: true)
+          .padding(.horizontal, 8).padding(.vertical, 10)
       }
-      ForEach(Self.groups(items), id: \.title) { group in
-        InspectorSection(title: group.title) {
-          InspectorShowMore(items: group.items) { row($0) }
-        }
-      }
-      Text("Everything here stays on this Mac. A file leaves Serein\u{2019}s computer only through the Outbox card in the chat.")
-        .font(UIStyle.micro).foregroundStyle(p.faint).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 12)
+      ForEach(all ? items : Array(items.prefix(Self.shown))) { row($0) }
     }
   }
   private func row(_ item: Item) -> some View {
@@ -739,7 +653,10 @@ private struct InspectorFace: View {
   }
 }
 
-/// Activity: its tasks, what is coming up, its computer and voice chat, each a labelled card.
+/// The one list under the face: its tasks, what is coming up, its newest files, its computer and
+/// voice chat, each a labelled card. What Serein asks before is not here: the level is under the
+/// composer and on every approval card, and its take-back list is in Settings › Privacy ›
+/// Allowed without asking (`AllowedWithoutAsking`).
 private struct InspectorActivity: View {
   @ObservedObject var relay: RelayOrchestrator
   let profile: RelayProfile
@@ -747,6 +664,7 @@ private struct InspectorActivity: View {
     VStack(alignment: .leading, spacing: 22) {
       if profile.id == relay.team.main?.id { InspectorTasks(relay: relay) }
       InspectorUpcoming(relay: relay, profile: profile)
+      InspectorLibrary(relay: relay, profile: profile)
       InspectorComputerSection(relay: relay, profile: profile)
       InspectorVoice()
     }

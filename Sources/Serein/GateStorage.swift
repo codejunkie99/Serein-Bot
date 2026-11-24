@@ -94,7 +94,7 @@ final class GateWatch: ObservableObject {
 /// not be saved (GateSettings).
 struct GateNotice: View {
   /// The pages that show a switch GateSettings holds.
-  static let pages: Set<String> = ["Agents", "Relay", "Connections", "Computer", "Privacy", "Passwords", "Talking"]
+  static let pages: Set<String> = ["Agents", "Relay", "Computer", "Privacy", "Passwords", "Talking"]
   @ObservedObject private var watch = GateWatch.shared
   @Environment(\.palette) private var p
   var body: some View {

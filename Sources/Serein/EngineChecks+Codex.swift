@@ -120,6 +120,42 @@ extension SmokeTest {
     try check(
       CodexChecks.threadProblem(other, writable: true, approvalPolicy: "never", profile: CodexDriver.profile) != nil,
       "Another permissions profile is refused")
+    // What codex-cli 0.171.0-alpha.13 reports for Serein's profiles (read live, 2026-11-23): the
+    // temp folder the profile writes is listed as a root, for a read-only profile too.
+    let readProfile = AgentFileGuard.codexProfile(folder: URL(fileURLWithPath: "/tmp/p"), writable: false)
+    let writeProfile = AgentFileGuard.codexProfile(folder: URL(fileURLWithPath: "/tmp/p"), writable: true)
+    // The profile spells paths Foundation's way (/tmp/p); Codex reports them resolved (/private/tmp/p).
+    let temp = AgentFileGuard.physicalPath(NSTemporaryDirectory())
+    func writes(_ profile: [String: Any]) -> Set<String> { Set(CodexChecks.profileWrites(profile).map(AgentFileGuard.physicalPath)) }
+    try check(writes(readProfile) == [temp], "A read-only profile writes the temp folder and nothing else")
+    try check(writes(writeProfile) == [temp, "/private/tmp/p"], "A writable profile writes the project and the temp folder")
+    func reports(_ roots: [String], type: String = "workspaceWrite") -> [String: Any] {
+      var response = profiled
+      response["sandbox"] = ["type": type, "writableRoots": roots, "networkAccess": true, "excludeSlashTmp": true]
+      return response
+    }
+    func problem(_ response: [String: Any], writable: Bool, opened: [String]) -> String? {
+      CodexChecks.threadProblem(response, writable: writable, approvalPolicy: "never", profile: CodexDriver.profile, opened: opened)
+    }
+    try check(
+      problem(reports([temp]), writable: false, opened: CodexChecks.profileWrites(readProfile)) == nil,
+      "A read-only turn takes Codex 0.171's workspaceWrite that lists only the temp folder")
+    try check(
+      problem(reports([temp]), writable: true, opened: CodexChecks.profileWrites(writeProfile)) == nil,
+      "A writable turn takes the temp folder as a root beside its project")
+    try check(
+      problem(reports([]), writable: false, opened: CodexChecks.profileWrites(readProfile)) != nil,
+      "A read-only turn refuses plain workspace-write, which lists no roots")
+    try check(
+      problem(reports([temp, "/private/tmp/p"]), writable: false, opened: CodexChecks.profileWrites(readProfile)) != nil,
+      "A read-only turn refuses its own project as a writable root")
+    try check(
+      problem(reports([temp, "/Users/other"]), writable: true, opened: CodexChecks.profileWrites(writeProfile)) != nil,
+      "A writable turn still refuses a root its profile does not write")
+    try check(problem(reports([temp]), writable: false, opened: []) != nil, "A root is refused when the profile is not known to write it")
+    try check(
+      problem(reports([], type: "dangerFullAccess"), writable: true, opened: CodexChecks.profileWrites(writeProfile)) != nil,
+      "Full access is refused at every level")
 
     // Probe reads version, sign-in and the person's config layers once.
     try check(await engines.probe(.codex, executable: codex) == .ready(version: "0.169.0"), "The probe reads 0.169.0 and a signed-in Codex")
@@ -521,9 +557,17 @@ for line in sys.stdin:
         if cfg.get("mcp_servers.serein_browser.command"):
             notify("mcpServer/startupStatus/updated", {"name": "serein_browser", "status": "ready"})
         profile = None if "badmode" in cwd else {"id": cfg.get("default_permissions")}
+        # The summary as Codex 0.171 gives it: every root the profile writes but cwd, and
+        # readOnly only when it writes nothing.
+        sent = cfg.get("permissions." + str(cfg.get("default_permissions"))) or {}
+        files = sent.get("filesystem") or {}
+        writes = sorted(os.path.realpath(p) for p, a in files.items() if p.startswith("/") and (a if isinstance(a, str) else a.get(".")) == "write")
+        real = os.path.realpath(cwd)
+        network = bool((sent.get("network") or {}).get("enabled"))
+        sandbox = {"type": "workspaceWrite", "writableRoots": [p for p in writes if p != real], "networkAccess": network,
+                   "excludeTmpdirEnvVar": real in writes, "excludeSlashTmp": True} if writes else {"type": "readOnly", "networkAccess": network}
         ok({"thread": {"id": tid}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"),
-            "cwd": cwd, "activePermissionProfile": profile,
-            "sandbox": {"type": "readOnly", "writableRoots": [], "networkAccess": False}})
+            "cwd": cwd, "activePermissionProfile": profile, "sandbox": sandbox})
     elif method == "mcpServerStatus/list": ok({"data": [], "nextCursor": None})
     elif method == "experimentalFeature/list":
         ok({"data": [{"name": "shell_tool", "enabled": False}], "nextCursor": None})

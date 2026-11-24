@@ -1,6 +1,6 @@
 import Foundation
 
-/// Settings › Appearance. System follows macOS and is the default.
+/// Settings › General. System follows macOS and is the default.
 public enum AppearancePreference: String, CaseIterable, Sendable {
   case system, light, dark
   public static let defaultsKey = "serein.appearance"

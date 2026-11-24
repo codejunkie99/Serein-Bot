@@ -62,8 +62,8 @@ import SereinCore
     return value
   }
   static let unreadable =
-    "Serein could not read the Composio key from the Keychain. The user can paste it again in Settings › Connections."
-  /// Settings › Connections opened: the next call reads the Keychain again after a failed read.
+    "Serein could not read the Composio key from the Keychain. The user can paste it again in Marketplace › Your apps."
+  /// Marketplace › Your apps opened: the next call reads the Keychain again after a failed read.
   func forgetFailedRead() {
     if case .some(nil) = key { key = nil }
   }
@@ -111,7 +111,7 @@ import SereinCore
     for account in accounts where account.status == "EXPIRED" || account.status == "FAILED" {
       RelayOrchestrator.shared?.needsRepair(
         "composio-\(account.id)-\(account.status)",
-        "The connected app \(account.app) says “\(account.statusWords)”. Fix: connect it again in Settings › Connections.")
+        "The connected app \(account.app) says “\(account.statusWords)”. Fix: connect it again in Marketplace › Your apps.")
     }
   }
   /// Connects one app: finds or makes its auth config, asks Composio for a hosted sign-in link,
@@ -264,7 +264,7 @@ import SereinCore
       case 401:
         if given == nil {
           RelayOrchestrator.shared?.needsRepair(
-            "composio-key", "Composio no longer accepts the saved key, so connected apps stop working. Fix: paste a new key in Settings › Connections.")
+            "composio-key", "Composio no longer accepts the saved key, so connected apps stop working. Fix: paste a new key in Marketplace › Your apps.")
         }
         throw Refusal(status: 401, message: "Composio did not accept the key.")
       case 429: throw Refusal(status: 429, message: "Composio is limiting requests right now. Try again in a minute.")

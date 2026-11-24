@@ -717,7 +717,7 @@ import SereinCore
     relay.note("Changed its look to “\(look.name)”" + (reason.map { $0.isEmpty ? "" : ": " + $0 } ?? ""), .auto)
     return [
       "wearing": look.name, "states": look.summary, "on_its_own": own,
-      "undo": "look_undo goes back; the user can also say “undo your look” or use Settings › Appearance › Serein's look.",
+      "undo": "look_undo goes back; the user can also say “undo your look” or use Settings › General › Serein's look.",
     ]
   }
 

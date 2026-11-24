@@ -47,7 +47,7 @@ extension AssistantCoreChecks {
     // The rule (AppPlaces.looksLikeKey): a known key prefix, or a piece of 32 or more characters
     // with at least 6 digits and 6 letters. Words, addresses and dates pass.
     let fixture: [String: Any] = [
-      "place": "settings/Connections",
+      "place": "connect_apps",
       "connections": [["name": "Calendar", "state": "connected"]],
       "pages": [["title_untrusted": "Pricing · Acme", "address_untrusted": "https://acme.example/pricing", "when": "2026-11-15T10:00:00Z"],
                 ["title_untrusted": "sk-live-abcdef0123456789", "address_untrusted": "https://x.example/cb/9f8e7d6c5b4a39281706f5e4d3c2b1a0ffee1234"]],

@@ -235,9 +235,14 @@ extension AssistantCoreChecks {
             cwds[tid] = cwd
             if cfg.get("mcp_servers.serein_browser.command"):
                 notify("mcpServer/startupStatus/updated", {"name": "serein_browser", "status": "ready"})
+            # The summary as Codex 0.171 gives it: every root the profile writes but cwd.
+            files = (cfg.get("permissions." + str(cfg.get("default_permissions"))) or {}).get("filesystem") or {}
+            writes = sorted(os.path.realpath(k) for k, a in files.items() if k.startswith("/") and (a if isinstance(a, str) else a.get(".")) == "write")
+            real = os.path.realpath(cwd)
+            sandbox = {"type": "workspaceWrite", "writableRoots": [k for k in writes if k != real], "networkAccess": True,
+                       "excludeTmpdirEnvVar": real in writes, "excludeSlashTmp": True} if writes else {"type": "readOnly", "networkAccess": True}
             ok({"thread": {"id": tid}, "approvalPolicy": p.get("approvalPolicy"), "approvalsReviewer": p.get("approvalsReviewer"),
-                "cwd": cwd, "activePermissionProfile": {"id": cfg.get("default_permissions")},
-                "sandbox": {"type": "readOnly", "writableRoots": [], "networkAccess": False}})
+                "cwd": cwd, "activePermissionProfile": {"id": cfg.get("default_permissions")}, "sandbox": sandbox})
         elif method == "mcpServerStatus/list": ok({"data": [], "nextCursor": None})
         elif method == "experimentalFeature/list": ok({"data": [{"name": "shell_tool", "enabled": False}], "nextCursor": None})
         elif method == "turn/start":

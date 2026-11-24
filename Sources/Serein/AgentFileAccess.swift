@@ -63,7 +63,7 @@ struct FullDiskAccessWarning: View {
             // Let Serein read Messages needs it: then the warning says what it is for.
             Text(
               Connections.readsMessages()
-                ? "Agents you start from Serein inherit it, so they could read mail, messages and other private files. Serein uses it only for Let Serein read Messages; turn that off in Settings › Connections and remove Serein in System Settings › Privacy & Security › Full Disk Access when you no longer need it."
+                ? "Agents you start from Serein inherit it, so they could read mail, messages and other private files. Serein uses it only for Let Serein read Messages; turn that off in Marketplace › On this Mac and remove Serein in System Settings › Privacy & Security › Full Disk Access when you no longer need it."
                 : "Agents you start from Serein inherit it, so they could read mail, messages and other private files. Serein doesn't need it. Remove Serein in System Settings › Privacy & Security › Full Disk Access."
             ).role(.meta).fixedSize(horizontal: false, vertical: true)
           }

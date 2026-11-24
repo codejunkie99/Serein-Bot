@@ -14,7 +14,7 @@ import SereinCore
   }
 
   /// The same sign-in by plugin id, for a server connected by address before its local manifest
-  /// exists (Settings › Connections); the tokens land where that manifest's calls read them.
+  /// exists (the Marketplace (Your apps, On this Mac)); the tokens land where that manifest's calls read them.
   /// `expectedHost` is the "Signs in at" host the person was shown: a discovery that now names
   /// another one is refused.
   static func run(plugin id: String, name: String, serverURL: URL, expectedHost: String? = nil) async throws {

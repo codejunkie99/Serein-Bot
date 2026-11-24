@@ -3,6 +3,7 @@ import SereinCore
 
 /// A saved secret's value: one Keychain item per record id, device-only. Never in a file, a prompt
 /// or a tool answer. Only keys are read: `SecretVault.plan` refuses a card, and filling a card is not built.
+/// Settings › Vault lists the records and deletes one (`forgetSecret`); it never reads a value.
 enum SecretKeys {
   static let service = "local.serein.secrets"
   static func item(_ id: String) -> KeychainItem { KeychainItem(service: service, account: id) }
@@ -40,7 +41,19 @@ extension RelayOrchestrator {
     return nil
   }
 
-  /// Save from the card a pasted key opened: the person names the service and its address.
+  /// Settings › Vault › Delete on a saved key or card: its value leaves the Keychain first, then its
+  /// record. The words to show when it could not be removed, or nil. A placeholder a chat still holds
+  /// stops working: `service_request` finds no record for it, and asks for the key again.
+  func forgetSecret(_ record: SecretRecord) -> String? {
+    guard !isUnreadable(Self.secretsFile) else { return RelayStateFile.words(for: Self.secretsFile) }
+    guard SecretKeys.item(record.id).replace(with: nil) else { return "Keychain did not remove it." }
+    desk.secrets.removeAll { $0.id == record.id }
+    saveSecrets()
+    return nil
+  }
+
+  /// Save from the card a pasted key opened: the person names the service and its address. The Vault's
+  /// New item saves a key the same way.
   func savePastedSecret(_ entry: SecretEntry) -> String? {
     let raw = entry.address.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let host = SecretVault.host(URLComponents(string: raw)?.host ?? raw) else { return "Type the address, such as api.stripe.com." }

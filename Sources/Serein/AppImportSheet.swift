@@ -1,7 +1,7 @@
 import SereinCore
 import SwiftUI
 
-/// Settings › Plugins › Import from your AI apps…: the person ticks the apps to read, and only then
+/// Marketplace › Plugins › Import from your AI apps…: the person ticks the apps to read, and only then
 /// Serein reads those apps' setup files (AppImport.read). It lists each MCP server (its name, its
 /// program or address, the network it may reach, what goes to the Keychain) and each skill, and
 /// the person picks what comes in. Skills come in as text by Save as Skill's rules. Each picked
@@ -222,7 +222,7 @@ import SwiftUI
 
   @ViewBuilder private func reviewCard(_ draft: PluginHost.ImportDraft, _ rows: [MCPServerConnection.ReviewTool]) -> some View {
     let on = rows.filter(\.on).count
-    let page = draft.connection == nil ? "Settings › Plugins" : "Settings › Connections"
+    let page = draft.connection == nil ? "Marketplace › Plugins" : "Marketplace › Your apps"
     Text("It comes in off; turn it on in \(page). Serein asks you before each call that changes anything. Descriptions are the server’s own words, not checked by Serein.")
       .role(.meta).fixedSize(horizontal: false, vertical: true)
     ScrollView {
@@ -375,7 +375,7 @@ import SwiftUI
   private func finish() {
     var lines: [String] = []
     if !added.isEmpty {
-      lines.append("Added, off: \(added.joined(separator: ", ")). Turn each on in Settings › Plugins or Settings › Connections.")
+      lines.append("Added, off: \(added.joined(separator: ", ")). Turn each on in Marketplace › Plugins or Marketplace › Your apps.")
     }
     if !skipped.isEmpty { lines.append("Left out: \(skipped.joined(separator: ", ")).") }
     done(lines.isEmpty ? nil : lines.joined(separator: " "))

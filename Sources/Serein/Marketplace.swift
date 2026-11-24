@@ -2,8 +2,8 @@ import SereinCore
 import SwiftUI
 
 /// The Marketplace, open in the main window like Settings (`ShellSection.marketplace`): the card's
-/// header row ("Marketplace › Apps", search, ×), its column (Apps, Teams, Plugins, then Your apps
-/// and On this Mac) and the open page. Opened from the sidebar's Marketplace row, the rail and Add
+/// header row ("Marketplace › Apps", search, ×), its column (Apps, Teams, Plugins, then Your apps,
+/// where connected apps are managed, and On this Mac) and the open page. Opened from the sidebar's Marketplace row, the rail and Add
 /// app in the message box's +; closing returns to what showed before. It opens on Apps, and keeps
 /// its page while Settings covers it.
 /// A search on Teams filters the starters; anywhere else it searches the apps.
@@ -63,7 +63,18 @@ struct MarketplacePage: View {
     case .mac where !searching:
       VStack(alignment: .leading, spacing: 24) {
         SettingsPageHeader("On this Mac", sentence: "Mail, Calendar and the other apps on this Mac keep their own switches and privacy steps.") { EmptyView() }
-        ConnectionSettings(macOnly: true)
+        // These switches are gate switches: the notice Settings showed over them shows here.
+        GateNotice()
+        ConnectionSettings()
+      }
+    case .yours where !searching:
+      // What Settings › Connections held for connected apps: each one's switch, tools, sign-in and
+      // Remove, then Composio's key and accounts. Apps to add are on Apps.
+      VStack(alignment: .leading, spacing: 24) {
+        SettingsPageHeader("Your apps", sentence: "The apps you connected: turn one off, review its tools, sign out, or remove it.") { EmptyView() }
+        GateNotice()
+        MCPConnectionsRows()
+        ComposioConnectionsRows()
       }
     default:
       MarketplaceApps(place: Binding(get: { place }, set: { open($0) }), query: query)
@@ -94,6 +105,7 @@ struct MarketplaceColumn: View {
         Text("Your apps").font(AssistantType.meta).foregroundStyle(p.secondary)
           .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
           .accessibilityAddTraits(.isHeader)
+        row(.yours, icon: "slider.horizontal.3")
         ForEach(yourApps, id: \.app.id) { entry in
           MarketplaceColumnRow(label: entry.app.name, selected: selected == .app(entry.app.id), action: { open(.app(entry.app.id)) }) {
             AppLogoTile(id: entry.app.id, name: entry.app.name, size: 18)
@@ -111,7 +123,7 @@ struct MarketplaceColumn: View {
   }
 
   private func row(_ place: MarketplacePlace, icon: String, trailing: String? = nil) -> some View {
-    MarketplaceColumnRow(label: place.label, selected: selected == place, action: { open(place) }) {
+    MarketplaceColumnRow(label: place == .yours ? "Manage apps" : place.label, selected: selected == place, action: { open(place) }) {
       InterfaceIcon(systemName: icon, size: 14).foregroundStyle(selected == place ? p.ink : p.secondary)
     } trailing: {
       if let trailing { Text(trailing).font(UIStyle.meta).foregroundStyle(p.faint).accessibilityHidden(true) }

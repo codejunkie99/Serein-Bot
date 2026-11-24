@@ -100,7 +100,7 @@ struct SereinSetupCard: View {
         return "Serein can hear English with a speech model that runs on this Mac. It is a \(SpeechModel.bytes / 1_000_000) MB download from Hugging Face, made by NVIDIA."
       }
     case .files:
-      return readsFiles ? "Reading is already on. You can turn it off in Settings › Connections."
+      return readsFiles ? "Reading is already on. You can turn it off in Marketplace › On this Mac."
         : MacFiles.consent + "\n\n" + MacFiles.macAsks
     case .dock, .showAndTell, .wake, .background, .downloads, .awake:
       return switchOn ? "This is already on. You can turn it off in Settings." : switchDetail

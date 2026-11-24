@@ -388,10 +388,28 @@ public enum CodexChecks {
       && requiredServerRequests.isSubset(of: serverRequests)
   }
 
+  /// The folders a Serein profile (`AgentFileGuard.codexProfile`) writes: an entry set to
+  /// "write", or a folder's table whose "." is. Always the temp folder; the project when it is
+  /// writable; home at Allow all; widened folders.
+  public static func profileWrites(_ profile: [String: Any]) -> [String] {
+    let files = profile["filesystem"] as? [String: Any] ?? [:]
+    return files.compactMap { path, access -> String? in
+      guard path.hasPrefix("/") else { return nil }
+      let own = access as? String ?? (access as? [String: Any])?["."] as? String
+      return own == "write" ? path : nil
+    }.sorted()
+  }
+
   /// nil when a thread/start, resume or fork response shows Serein's settings in force.
   /// `profile`: the permissions profile the thread was started with. Its network is open, so
-  /// `networkAccess` may be true, but only when Codex reports that profile. `opened`: roots past
-  /// the project the profile writes (home at Allow all).
+  /// `networkAccess` may be true, but only when Codex reports that profile. `opened`: the roots
+  /// the profile writes (`profileWrites`).
+  ///
+  /// `sandbox` is Codex's older summary of the profile, and it cannot say "read-only, with a
+  /// writable temp folder". Codex 0.171 reports such a profile as `workspaceWrite` listing the
+  /// roots it writes (codex-rs `compatibility_sandbox_policy_for_permission_profile`; checked
+  /// 2026-11-23, codex-cli 0.171.0-alpha.13), so a read-only turn takes that answer only when it
+  /// lists roots and each is one the profile writes. With no roots it is plain workspace-write.
   public static func threadProblem(
     _ response: Any, writable: Bool, approvalPolicy: String = "on-request", profile: String? = nil,
     opened: [String] = []
@@ -414,15 +432,18 @@ public enum CodexChecks {
     if profile == nil, sandbox["networkAccess"] as? Bool == true { return "Codex would allow network access." }
     switch type {
     case "readOnly": return nil
-    case "workspaceWrite" where writable:
+    case "workspaceWrite":
       let roots = (sandbox["writableRoots"] as? [String] ?? []).map(AgentFileGuard.physicalPath)
+      if !writable && roots.isEmpty { return "Codex did not accept Serein's sandbox." }
       // Codex reports roots resolved (/private/tmp/x) and cwd as given (/tmp/x).
       let cwd = (r["cwd"] as? String).flatMap { $0.isEmpty ? nil : AgentFileGuard.physicalPath($0) } ?? ""
-      let inside = ([cwd] + opened.map(AgentFileGuard.physicalPath)).filter { !$0.isEmpty }
+      // A read-only turn's project is not a place to write, whatever the summary's type implies.
+      let inside = ((writable ? [cwd] : []) + opened.map(AgentFileGuard.physicalPath)).filter { !$0.isEmpty }
       let outside = roots.filter { root in
         !inside.contains { root == $0 || root.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }
       }
-      return outside.isEmpty ? nil : "Codex would allow writes outside the project."
+      if outside.isEmpty { return nil }
+      return writable ? "Codex would allow writes outside the project." : "Codex did not accept Serein's sandbox."
     default: return "Codex did not accept Serein's sandbox."
     }
   }

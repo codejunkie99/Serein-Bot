@@ -29,8 +29,9 @@ public enum AgentSetting: String, CaseIterable, Sendable {
   /// The Settings page that shows it (a `SettingsCategory` id).
   public var page: String {
     switch self {
-    case .appearance, .darkenPages, .textSize, .compact: return "Appearance"
-    case .searchEngine, .tabSleep, .updateChecks, .updateInstalls: return "General"
+    // Appearance is part of General now; every setting here shows on that page.
+    case .appearance, .darkenPages, .textSize, .compact, .searchEngine, .tabSleep, .updateChecks, .updateInstalls:
+      return "General"
     }
   }
   /// The stored form of a requested value, or nil when it is not one of the choices.

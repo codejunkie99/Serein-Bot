@@ -2,7 +2,7 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// Settings › Keyboard. Menu shortcuts are read from the live main menu, so a new menu item shows up
+/// Settings › General › Keyboard shortcuts. Menu shortcuts are read from the live main menu, so a new menu item shows up
 /// here without a second list to maintain. Shortcuts that are not menu items are added by the catalog.
 struct KeyboardSettings: View {
   @Environment(\.palette) private var p

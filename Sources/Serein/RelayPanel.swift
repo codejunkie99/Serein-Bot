@@ -2695,6 +2695,9 @@ private struct RelayReplyFacts {
   let newestReceipt: Bool
   /// The ideas in a reply to Serein's own check-in or brief (`RelayMessages.ideas`); none otherwise.
   let ideas: [RelayProactive.Idea]
+  /// What started the turn when Serein spoke first and the chat draws no line for it
+  /// (`RelayAutomatic.showsLine`): the reply's ⋯ menu then leads to where it is turned off.
+  let spokeFirst: RelayAutomatic.Kind?
 }
 
 /// What every message list in one chat shares: its task cards, the brief's Go to card, the open
@@ -2833,7 +2836,9 @@ enum ChatTurns {
     let message: AgentMessage = shown[index]
     if message.condensed != nil { return true }
     if let line = message.line, !line.isEmpty { return true }
-    if message.role == "you", RelayAutomatic.kind(of: message.text) != nil {
+    if message.role == "you", let automatic = RelayAutomatic.kind(of: message.text) {
+      // Serein speaking first has no line: its reply is the first thing the turn draws.
+      guard RelayAutomatic.showsLine(automatic) else { return false }
       let next: AgentMessage? = index + 1 < shown.count ? shown[index + 1] : nil
       return !(next.map { $0.role == "assistant" && RelayAutomatic.isQuiet(reply: $0.text) } ?? false)
     }
@@ -2866,7 +2871,8 @@ extension RelayAutomatic {
 
 /// Where a turn nobody typed began, in Serein's chat and a past chat (RelayAutomatic): the mark,
 /// what started it and an info glyph, never the prompt. A click says why the person is seeing it,
-/// with the way to Settings › Serein, where that schedule, alert or check-in changes.
+/// with the way to Settings › Serein, where that schedule or alert changes. A check-in and the
+/// brief have no line (`RelayAutomatic.showsLine`): they read as Serein's next message.
 struct AutomaticTurnLine: View {
   let prompt: String
   let kind: RelayAutomatic.Kind
@@ -3163,7 +3169,8 @@ private struct RelayMessages: View {
     if let card, endsTurn, let asked, !layout.older {
       ForEach(cards.filter { $0.after == asked }.map(\.threadID), id: \.self) { id in card(id, id == layout.order.first) }
     }
-    if let brief, let briefAsk = layout.briefAsk, endsTurn, asked == briefAsk {
+    // Only when something waits: a card that says nothing waits is not part of the conversation.
+    if let brief, !brief.items.isEmpty, let briefAsk = layout.briefAsk, endsTurn, asked == briefAsk {
       SereinBriefWaitingCard(items: brief.items, open: openCards, goTo: goToCard, p: p)
     }
   }
@@ -3177,9 +3184,10 @@ private struct RelayMessages: View {
       // to its words, or a warning about an assistant's held-back answer.
       HostLineView(message: message, profiles: profiles)
     } else if message.role == "you", let automatic = RelayAutomatic.kind(of: message.text) {
-      // Serein started this turn itself: what started it and why, never the prompt; nothing at
-      // all when it had nothing to say.
-      if !quiet { AutomaticTurnLine(prompt: message.text, kind: automatic).padding(.top, 4) }
+      // Serein started this turn itself: never the prompt. A check-in or the brief is just its
+      // next message; any other turn says what started it and why. Nothing at all when it had
+      // nothing to say.
+      if !quiet, RelayAutomatic.showsLine(automatic) { AutomaticTurnLine(prompt: message.text, kind: automatic).padding(.top, 4) }
     } else if message.role == "assistant", RelayAutomatic.hidesReply(message, after: layout.shown[..<index]) {
       EmptyView()
     } else if message.role == "you" {
@@ -3409,10 +3417,21 @@ private struct RelayMessages: View {
     let chips: [String] = message.chips ?? parsed.chips
     let later: ArraySlice<AgentMessage> = messages[min(messages.count, layout.offset + index + 1)...]
     let newestReceipt: Bool = !later.contains { !($0.receipts ?? []).isEmpty }
+    let started: RelayAutomatic.Kind? = shown[..<index].last(where: { $0.role != "assistant" })
+      .flatMap { RelayAutomatic.kind(of: $0.text) }
     return RelayReplyFacts(
       message: message, index: index, first: first, last: last, newest: newest,
       text: text, chips: chips, newestReceipt: newestReceipt,
-      ideas: ideas)
+      ideas: ideas, spokeFirst: started.flatMap { RelayAutomatic.showsLine($0) ? nil : $0 })
+  }
+  /// The ⋯ menu's last item on a reply to Serein's own check-in or brief: the brief's switch is on
+  /// Settings › Assistants, and how often an assistant speaks first is on its own page.
+  private func firstSettings(_ reply: RelayReplyFacts) -> (title: String, open: () -> Void)? {
+    guard let kind = reply.spokeFirst, let title = RelayAutomatic.settingsTitle(kind) else { return nil }
+    let assistant: String? = face?.id ?? relay?.team.mainProfileID
+    return (title, {
+      if kind != .brief, let assistant { AssistantSettingsKey.open(assistant) } else { RelayController.shared?.openSettings("Relay") }
+    })
   }
   /// The reply's words: another assistant's group bubble, the team speaker's, or the chat's own
   /// assistant's bubbles.
@@ -3495,7 +3514,7 @@ private struct RelayMessages: View {
   }
   /// Reply and ⋯, beside the reply's last bubble, so they read as the reply's.
   private func replyActions(_ reply: RelayReplyFacts, retry: (() -> Void)?, hovered: Bool) -> some View {
-    MessageActions(text: ChatBubbles.plain(reply.text), retry: retry, speak: speak)
+    MessageActions(text: ChatBubbles.plain(reply.text), retry: retry, speak: speak, settings: firstSettings(reply))
       .opacity(hovered ? 1 : 0).offset(x: hovered ? 0 : -6)
       .animation(MessageMotion.controls, value: hovered)
       .allowsHitTesting(hovered).accessibilityHidden(!hovered)
@@ -3557,7 +3576,7 @@ private struct RelayMessages: View {
     }
     // The chat's own assistant has them on hover (`ownReplyRow`).
     if reply.newest, !working, !reply.text.isEmpty, reply.message.from == nil, speaker != nil || face == nil {
-      MessageActions(text: ChatBubbles.plain(reply.text), retry: retry, speak: speak)
+      MessageActions(text: ChatBubbles.plain(reply.text), retry: retry, speak: speak, settings: firstSettings(reply))
     }
   }
 
@@ -3725,9 +3744,9 @@ private struct HandoffMessageMenu: ViewModifier {
   }
 }
 
-/// The brief's “Waiting on you”, read only: one line per card open when the brief began. Go to
-/// card scrolls Serein's chat to a card still open; one answered since reads Answered. Nothing
-/// here answers a card; that stays on the card itself.
+/// The brief's “Waiting on you”, read only: one line per card open when the brief began, and no
+/// card at all when none was. Go to card scrolls Serein's chat to a card still open; one answered
+/// since reads Answered. Nothing here answers a card; that stays on the card itself.
 private struct SereinBriefWaitingCard: View {
   let items: [RelayBriefing.Waiting]
   let open: Set<UUID>
@@ -3736,9 +3755,6 @@ private struct SereinBriefWaitingCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(RelayBriefing.waitingTitle).font(UIStyle.metaStrong).foregroundStyle(p.ink)
-      if items.isEmpty {
-        Text(RelayBriefing.nothingWaiting).font(UIStyle.meta).foregroundStyle(p.secondary)
-      }
       ForEach(Array(items.enumerated()), id: \.offset) { _, item in
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(item.line).font(UIStyle.meta).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true)

@@ -2,7 +2,7 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// Settings › Appearance: System (default), Light or Dark. The choice sets `NSApp.appearance`;
+/// Settings › General: System (default), Light or Dark. The choice sets `NSApp.appearance`;
 /// windows, sheets, popovers and web views inherit it, and SwiftUI views pick the matching
 /// `Palette` from their effective color scheme (see `EnvironmentValues.palette`). With System,
 /// a change in macOS's own appearance flows through live.
@@ -65,7 +65,7 @@ import SwiftUI
   }
 }
 
-/// Settings › Appearance picker.
+/// Settings › General picker.
 struct AppearancePicker: View {
   @ObservedObject private var appearance = AppearanceController.shared
   @Environment(\.palette) var p

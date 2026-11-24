@@ -86,12 +86,13 @@ struct SereinPastChatView: View {
               let next = index + 1 < chat.messages.count ? chat.messages[index + 1] : nil
               let quiet = next.map { $0.role == "assistant" && RelayAutomatic.isQuiet(reply: $0.text) } ?? false
               // As the current chat shows them: a turn Serein started itself is its short line
-              // (nothing when it had nothing to say), and a reply with nothing in it is hidden.
+              // (nothing when it had nothing to say, or when it was a check-in or the brief), and a
+              // reply with nothing in it is hidden.
               if let range = message.condensed {
                 // Read only here: Show, but Undo belongs to the chat once it is continued.
                 CondensedDivider(summary: message, range: range, userWidth: style == .full ? 560 : 280)
               } else if message.role == "you", let automatic = RelayAutomatic.kind(of: message.text) {
-                if !quiet { AutomaticTurnLine(prompt: message.text, kind: automatic) }
+                if !quiet, RelayAutomatic.showsLine(automatic) { AutomaticTurnLine(prompt: message.text, kind: automatic) }
               } else if !(message.role == "assistant" && RelayAutomatic.hidesReply(message, after: chat.messages[..<index])) {
                 VStack(alignment: .leading, spacing: AssistantMetrics.turnInnerGap) {
                   ThreadMessageContent(message: message, placeholder: "", userWidth: style == .full ? 560 : 280,

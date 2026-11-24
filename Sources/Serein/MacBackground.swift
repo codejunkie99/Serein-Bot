@@ -24,7 +24,7 @@ struct MacBackgroundAsk {
 
 /// Background work in Mac apps, per task: the apps the person allowed on the start card, the
 /// window chosen in each, and the latest picture of it. Stop ends it for the rest of the task;
-/// an ended task forgets it. Nothing here runs unless Settings › AI apps › Mac access turns it on.
+/// an ended task forgets it. Nothing here runs unless Settings › Privacy › Mac permissions turns it on.
 @MainActor final class MacBackground: ObservableObject {
   static let shared = MacBackground()
   struct Grant {

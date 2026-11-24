@@ -2,7 +2,7 @@
 import Foundation
 import SereinCore
 
-/// Settings › Connections rows: a word or two, with the details behind the chevron and info button.
+/// the Marketplace (Your apps, On this Mac) rows: a word or two, with the details behind the chevron and info button.
 extension AssistantCoreChecks {
   static func connectionStatus(_ check: Check) throws {
     let W = ConnectionStatusWords.self
