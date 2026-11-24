@@ -83,6 +83,9 @@ import SereinCore
     case "recall": return try await relay.recallFacts(a["query"] as? String, limit: a["limit"] as? Int ?? 10)
     case "chats_search": return try relay.searchChats(a["query"] as? String, limit: a["limit"] as? Int)
     case "forget": return try await forget(a)
+    case "rule_save": return try await saveRule(a)
+    // A rule is a memory record: removing one is a forget, with the same Undo.
+    case "rule_undo": return try await forget(a)
     case "memory_share": return try await shareMemory(a)
     case "instructions_propose": return try await proposeInstructions(a)
     // A plain reminder only shows in the user's own UI; a request for later (action) is gated in createReminder.
@@ -787,6 +790,18 @@ import SereinCore
     let receipt = try await relay.forgetFacts(records)
     relay.note("Forgot \(records.count == 1 ? "a note" : "\(records.count) notes")", .auto)
     return ["forgotten": wanted, "done": receipt.line]
+  }
+
+  /// rule_save (harness v2 unit 1): a rule the person typed holds at once, with a receipt. No
+  /// card: the guard is the quote, which must be the person's own words from this turn.
+  private func saveRule(_ a: [String: Any]) async throws -> [String: Any] {
+    guard let rule = a["rule"] as? String else { throw SereinError.invalid("rule is required") }
+    guard let quote = a["quote"] as? String else { throw SereinError.invalid(Rules.quoteWordsMissing) }
+    try await admit(.memory, effect: AgentWrite.memoryEffect(), title: "Serein wants to keep a rule", detail: String(rule.prefix(240)))
+    let saved = try await relay.saveRule(rule, scope: a["scope"] as? String, quote: quote)
+    guard let receipt = saved.receipt else { return ["saved": saved.record.id, "already": "That rule is already in force."] }
+    relay.note("Rule: \(String(saved.record.text.prefix(80)))", .auto)
+    return ["saved": saved.record.id, "rule": saved.record.text, "done": receipt.line]
   }
 
   /// memory_share: one note to every assistant, to one of the person's teams, or back to this

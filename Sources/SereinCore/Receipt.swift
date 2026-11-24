@@ -109,6 +109,11 @@ public enum ReceiptCopy {
     let whose = sharedWithAll ? "Every assistant can use it." : "Only this assistant uses it."
     return Receipt(kind: .memorySaved, line: "Done. I will remember that. \(whose)", undo: UndoToken(entry: entry, kind: .memorySaved))
   }
+  /// A rule the person set (`Rules`): in force from the next turn on, with Undo. `whom` is
+  /// `MemoryTools.whom` of its scope.
+  public static func ruleSet(whom: String, entry: String) -> Receipt {
+    Receipt(kind: .memorySaved, line: "Done. \(whom) will follow that rule from now on.", undo: UndoToken(entry: entry, kind: .memorySaved))
+  }
   public static func forgot(entry: String) -> Receipt {
     Receipt(kind: .memoryForgot, line: "Done. I forgot it.", undo: .removal(entry: entry, kind: .memoryForgot))
   }

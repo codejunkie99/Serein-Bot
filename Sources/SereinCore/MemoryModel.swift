@@ -125,7 +125,8 @@ enum MemoryClock {
 /// creation time and personal-read mark are constants. Only `edited(_:now:)` changes the other
 /// fields, and each edit moves `updatedAt` forward.
 public struct MemoryRecord: Codable, Equatable, Identifiable, Sendable {
-  public enum Kind: String, Codable, CaseIterable, Sendable { case note, file, dashboard }
+  /// `rule`: a correction the person set (`Rules`). Never recalled; every turn gets it in force.
+  public enum Kind: String, Codable, CaseIterable, Sendable { case note, file, dashboard, rule }
   /// Whether the person has seen the record. `unreviewed` is a proposal: it is never recalled.
   public enum Review: String, Codable, CaseIterable, Sendable { case unreviewed, confirmed, edited }
 
@@ -392,7 +393,7 @@ public enum MemoryDefaults {
   public static func learned(
     _ text: String, quote: String? = nil, by assistant: String, from source: MemorySource,
     reference: String? = nil, app: String? = nil, personal: Bool, expires: Date? = nil, chat: String? = nil,
-    outside: Bool = false, now: Date = Date()
+    outside: Bool = false, kind: MemoryRecord.Kind = .note, now: Date = Date()
   ) throws -> MemoryRecord {
     let clean = try MemoryRecord.cleanText(text)
     let joined = clean + " " + (quote ?? "")
@@ -401,7 +402,7 @@ public enum MemoryDefaults {
     let provenance = MemoryProvenance(source: kept, reference: reference, app: app)
     let marked = personal || kept == .mail
     return MemoryRecord(
-      kind: .note, text: clean, quote: quote, owner: assistant, scope: .assistant(assistant),
+      kind: kind, text: clean, quote: quote, owner: assistant, scope: .assistant(assistant),
       provenance: provenance, createdAt: now, expires: expires, review: .unreviewed, personal: marked, chat: chat,
       outside: outside || kept != .assistant)
   }

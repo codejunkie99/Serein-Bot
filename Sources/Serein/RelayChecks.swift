@@ -376,6 +376,10 @@ extension SmokeTest {
         id: "check-codex", text: "Prefers Codex for Swift work", owner: memoryOwner, scope: .person,
         provenance: MemoryProvenance(source: .person), createdAt: t0.addingTimeInterval(60), review: .confirmed,
         personal: false),
+      MemoryRecord(
+        id: "check-rule", kind: .rule, text: "Answer in one short paragraph", quote: "answer in one short paragraph",
+        owner: memoryOwner, scope: .person, provenance: MemoryProvenance(source: .person), createdAt: t0, review: .confirmed,
+        personal: false),
     ])
     relay.updatePersona(RelayPersona(name: "Scout", about: "", rules: ""))
     let stableA = RelayPrompt.stable(browser: browser)
@@ -392,6 +396,13 @@ extension SmokeTest {
       && volatileA.contains(MemoryPrompt.start) && volatileA.contains(MemoryPrompt.notProof)
       && shopA != nil && codexA != nil && (shopA ?? volatileA.endIndex) < (codexA ?? volatileA.startIndex),
       "The volatile tail ranks fenced memory per request and says it replaces")
+    // Rules lead the volatile block, before the time and the memory, and never in the stable prefix.
+    let rulesAt = volatileA.range(of: Rules.header)?.lowerBound
+    let timeAt = volatileA.range(of: "The time now is")?.lowerBound
+    try check(rulesAt != nil && timeAt != nil && (rulesAt ?? volatileA.endIndex) < (timeAt ?? volatileA.startIndex)
+      && volatileA.contains("[check-rule] Answer in one short paragraph") && volatileB.contains(Rules.header)
+      && !stableA.contains(Rules.header),
+      "The rules in force go first in every turn's volatile block, and the stable prefix holds")
     try check(RelayPrompt.text(browser: browser, request: "x").hasSuffix(RelayPrompt.volatile(request: "x")), "text is stable then volatile")
     relay.restyleOverride = false
     let stableQuiet = RelayPrompt.stable(browser: browser)

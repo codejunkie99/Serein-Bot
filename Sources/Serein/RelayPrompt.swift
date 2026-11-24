@@ -68,10 +68,11 @@ import SereinCore
   static func volatile(request: String) -> String {
     let relay = RelayOrchestrator.shared
     let now = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withInternetDateTime])
-    var lines = """
-      Context updated since this conversation started; it replaces any earlier copy:
-      The time now is \(now).
-      """
+    var lines = "Context updated since this conversation started; it replaces any earlier copy:"
+    // The rules the person set go first: they outrank the task (`prepareMemory` builds them).
+    if let rules = relay?.turnRules { lines += "\n" + rules }
+    if let correction = relay?.turnCorrection { lines += "\n" + correction }
+    lines += "\nThe time now is \(now)."
     if RelayController.shared?.callMode == true, relay?.turnThread == relay?.threadID {
       lines += "\n" + SpeechDelivery.callGuidance
     }

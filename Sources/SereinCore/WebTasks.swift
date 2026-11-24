@@ -301,6 +301,8 @@ public struct AgentStep: Codable, Equatable, Identifiable {
     case "recall": return "Checked its memory"
     case "forget": return "Forgot a note"
     case "memory_share": return "Shared a note with an assistant"
+    case "rule_save": return "Kept a rule you set"
+    case "rule_undo": return "Removed a rule"
     case "instructions_propose": return "Proposed new instructions"
     case "reminder_create": return "Set a reminder"
     case "reminder_list": return "Checked its reminders"

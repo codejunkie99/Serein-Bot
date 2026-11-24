@@ -157,6 +157,19 @@ extension AssistantCoreChecks {
     try check(MemoryTools.carriesOutside([other]) && !MemoryTools.carriesOutside([typed]),
       "A learned note counts as outside content; the person's own note does not")
 
+    // Rules live in the store but never in recall, the memory block's 4 slots or the notes list.
+    let rule = MemoryRecord(
+      kind: .rule, text: "Ana gets a short reply only", quote: "keep replies to Ana short", owner: "planner", scope: .person,
+      provenance: MemoryProvenance(source: .person), createdAt: now, review: .confirmed, personal: false)
+    _ = try store.insert(rule, now: now)
+    let reader = MemoryReader(assistant: "planner")
+    let anaHits = try store.search("Ana", reader: reader, now: now).reveal { true }
+    let newestHits = try store.search("", reader: reader, now: now).reveal { true }
+    try check(!anaHits.isEmpty && !(anaHits + newestHits).contains { $0.kind == .rule }, "Search never returns a rule")
+    try check(!MemoryTools.forTurn(topical: anaHits, newest: newestHits).contains { $0.id == rule.id }, "A rule never takes one of the 4 memory slots")
+    try check(try store.rules(reader: reader, now: now).map(\.id) == [rule.id], "The rules read returns the rule")
+    try check(!(try store.notes(owner: "planner")).contains { $0.id == rule.id }, "A rule is not in the notes file")
+
     // Receipts the memory shell writes.
     let narrowed = Receipt(kind: .memoryShared, line: "Done. Only Planner uses it now.")
     try check(ReceiptCopy.lint(narrowed.line).isEmpty, "The narrow receipt is plain")

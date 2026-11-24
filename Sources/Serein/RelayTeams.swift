@@ -285,7 +285,9 @@ extension RelayOrchestrator {
       do {
         // Stop Everything, or the end of the task it was part of, closed it before this ran.
         guard self.handoffLedger.running(thread: thread)?.id == record.id else { throw CancellationError() }
-        _ = try await self.agent.dispatch(prompt, into: thread, create: true, as: dispatch)
+        // No Relay context rides a hand-off's run, so the rules in force for its target lead the prompt.
+        let ruled = await self.withRules(prompt, profileID: target.id, thread: thread)
+        _ = try await self.agent.dispatch(ruled, into: thread, create: true, as: dispatch)
         // The target's chat now holds the words a marked chat wrote. A mark that cannot be
         // saved stops the run (its hand-off then closes as stopped).
         if record.personal == true, !self.agent.markPersonalRead(thread: thread) {

@@ -533,6 +533,12 @@ import SereinCore
   var memoryOpening: Task<Void, Never>?
   /// The memory block of the turn being sent (`prepareMemory`): `RelayPrompt.volatile` reads it.
   var turnMemory: String?
+  /// The rules in force for the turn being sent (`prepareMemory`, RelayRules.swift): first in `RelayPrompt.volatile`.
+  var turnRules: String?
+  /// The person's correction for the turn being sent (`Rules.correction`), taken from `corrections`.
+  var turnCorrection: String?
+  /// Per chat, words the person sent while a turn ran there (`noteCorrection`): the next turn takes them.
+  var corrections: [String: String] = [:]
   /// The turn now running brought outside text in (a page, a file, a task's reply, an app's data)
   /// or carried a page or a file: a typed remember then stays with its assistant (`MemoryTurn`).
   var turnReadOutside = false
@@ -1413,6 +1419,7 @@ import SereinCore
           agent.hub.steerWire(run), carriesContext: !attachments.isEmpty || trail != nil || page != nil,
           othersWaiting: !pending.isEmpty || approvals.contains { $0.threadID == threadID }, byPerson: userMessage) == .intoTurn
       {
+        if userMessage { noteCorrection(prompt, thread: threadID) }
         agent.hub.steer(run, prompt) { [weak self] unread in self?.keepForNextTurn(unread, inWindow: inWindow) }
         return true
       }
@@ -2234,6 +2241,7 @@ import SereinCore
     let trail = ScreenTrailWatch.enabled ? pendingContext.compactMap(\.trail).last : nil
     pending = []
     pendingContext = []
+    if byPerson { noteCorrection(shown.joined(separator: " "), thread: threadID) }
     // A turn carrying a paired app's request is not held (`holdLimited`).
     turn(next, attached: attached + [trail].compactMap { $0 }, page: page, userMessages: userMessages, windowMessages: windowMessages,
          byPerson: byPerson, request: byPerson ? request : nil, shown: shown)
@@ -2309,6 +2317,8 @@ import SereinCore
       // answer's, a hand-off result's): unread when that chat is not on screen.
       if run.spec.relay, Self.landsWords(run) { noteReplyLanded(profileID: team.activeID, thread: run.spec.threadID) }
       turnMemory = nil
+      turnRules = nil
+      turnCorrection = nil
       // A scheduled turn in another assistant's chat ends in `endOwnerRun`, not here. Its ledger
       // row (a link's too) is finished or failed (`finishWork`).
       let scheduled: ScheduledTurn? = ownerRun == nil ? activeScheduled : nil
@@ -3668,7 +3678,8 @@ import SereinCore
     Task { [weak self] in
       guard let self else { return }
       do {
-        _ = try await self.agent.dispatch(prompt, into: thread, create: true, as: dispatch)
+        let ruled = await self.withRules(prompt, profileID: speaker.id, thread: thread)
+        _ = try await self.agent.dispatch(ruled, into: thread, create: true, as: dispatch)
       } catch {
         self.speakingElsewhere = nil
         self.childOwners[thread] = nil
@@ -4204,6 +4215,8 @@ import SereinCore
     ownerPersona = nil
     turnBrief = nil
     turnMemory = nil
+    turnRules = nil
+    turnCorrection = nil
   }
   /// Whether `turn`'s owner's chat can take it now. The active assistant's chat is free when
   /// Serein is (`working`); another one's while nothing runs or starts in it.
@@ -4228,6 +4241,8 @@ import SereinCore
     ownerRun = nil
     ownerPersona = nil
     turnMemory = nil
+    turnRules = nil
+    turnCorrection = nil
     turnBrief = nil
     turnPage = nil
     activeScheduled = nil

@@ -145,6 +145,7 @@ enum AssistantCoreChecks {
       (ReceiptCopy.deleted(name: "Old notes", entry: "e3", now: now), nil),
       (ReceiptCopy.restored(name: "Old notes"), "Old notes"),
       (ReceiptCopy.remembered("Ana is a client", sharedWithAll: true, entry: "e4"), nil),
+      (ReceiptCopy.ruleSet(whom: "Every assistant", entry: "e7"), nil),
       (ReceiptCopy.forgot(entry: "e5"), nil),
       (ReceiptCopy.shared(with: "Every assistant", entry: "e6"), nil),
       (ReceiptCopy.linkMade(for: "Release", title: "GitHub"), nil),

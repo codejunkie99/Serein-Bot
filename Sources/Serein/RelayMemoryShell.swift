@@ -66,7 +66,7 @@ extension RelayOrchestrator {
   /// the person's own answers. A turn that used only these, with no page or file on the person's
   /// message, is clean (`MemoryTurn.isClean`), so a typed remember is shared with every assistant.
   static let cleanTools: Set<String> = [
-    "remember", "recall", "forget", "memory_share", "reminder_create", "reminder_cancel", "notify",
+    "remember", "recall", "forget", "memory_share", "rule_save", "rule_undo", "reminder_create", "reminder_cancel", "notify",
     "look_get", "look_set", "look_undo", "look_show", "ask_user",
   ]
 
@@ -393,6 +393,8 @@ extension RelayOrchestrator {
   /// journal first: the chat's way in, with no trip through Settings.
   func prepareMemory(request: String, thread: String, profileID: String) async {
     turnMemory = nil
+    turnCorrection = corrections.removeValue(forKey: thread)
+    turnRules = await rulesBlock(profileID: profileID, thread: thread)
     let shown: Bool = !RunMode.automated && profileID == team.activeID && MemoryTools.asksToSeeMemory(typedWords)
     if shown { MemoryJournalWindow.show(self) }
     guard let block = await memoryBlock(request: request, thread: thread, profileID: profileID) else {

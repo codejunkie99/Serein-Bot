@@ -21,7 +21,7 @@ public enum RelayTools {
   public static let names: Set<String> = Set<String>([
     "agent_start", "agent_status", "agent_send", "agent_stop", "agent_wait",
     "sessions_overview", "sessions_list", "session_read",
-    "remember", "recall", "chats_search", "forget", "memory_share", "instructions_propose", "reminder_create", "reminder_list", "reminder_update", "reminder_cancel", "notify",
+    "remember", "recall", "chats_search", "forget", "memory_share", "rule_save", "rule_undo", "instructions_propose", "reminder_create", "reminder_list", "reminder_update", "reminder_cancel", "notify",
     "goal_create", "goal_update",
     "skill_list", "skill_read", "harness_capabilities", "look_get", "look_set", "look_undo", "look_show",
     "watch_create", "watch_list", "watch_cancel",
@@ -105,6 +105,14 @@ public enum RelayTools {
         "forget",
         "Forget saved notes when the user asks: id, or ids (at most 3) from recall. For more, ask the user which ones matter. Forgetting an idea declines it, so it is not proposed again.",
         ["id": string, "ids": ["type": "array", "items": string]], []),
+      tool(
+        "rule_save",
+        "Keep a correction or a way of working the user wants from now on, as a rule every later turn obeys (“don't email suppliers, just list them”). rule: the rule in one plain sentence. quote: the user's own words it came from, copied exactly from a message they typed in this chat; without them nothing is saved. scope: assistant (only you, the default), team (your team) or everyone. It holds at once and Serein shows them a receipt with Undo. For a fact about the user, use remember.",
+        ["rule": string, "quote": string, "scope": string], ["rule", "quote"]),
+      tool(
+        "rule_undo",
+        "Remove a rule when the user asks: id, from the rules in your context. Undo on its receipt brings it back for 10 seconds.",
+        ["id": string], ["id"]),
       tool(
         "memory_share",
         "Change who may use one saved note (id from recall), when the user asks. with: everyone, the name of one of the user's teams, or only you (“keep that to yourself”). A note you learned, or one from a page, mail or an app, stays with you.",
