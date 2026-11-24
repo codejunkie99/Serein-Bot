@@ -102,7 +102,7 @@ struct TalkingSettings: View {
         guidedSetup
         Divider().overlay(p.line)
         microphone
-      }
+      }.onDisappear { meter.stop() }
       inCalls
       SettingsBlock("Privacy") {
         Toggle("Fix likely mishearings and drop fillers with my AI app", isOn: $proofread)
