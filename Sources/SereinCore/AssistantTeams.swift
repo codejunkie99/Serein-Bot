@@ -600,8 +600,8 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   public var result: String?
   /// The stall notice went (once).
   public var stalled: Bool?
-  /// The result reached the asking assistant's chat (once).
-  public var reported: Bool?
+  /// The result reached the asking assistant's chat (once). Only `HandoffLedger.claimReport` sets it.
+  public fileprivate(set) var reported: Bool?
   /// Asked from a chat that read the person's mail, messages or Mac apps: the target is not
   /// offered Serein's computer, and its chat is marked too. nil in older ledgers.
   public var personal: Bool? = nil
@@ -763,12 +763,20 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
       records[i].state = .failed
       records[i].finishedAt = now
       records[i].result = Self.stoppedWords
-      records[i].reported = true
+      _ = claimReport(records[i].id)
       ended.append(records[i])
     }
     return ended
   }
   public static let stoppedWords = "It was stopped."
+  /// The only writer of `reported` (TEAMS-V2 §4.8): a closed hand-off's report is claimed once.
+  /// nil while it is open or once it was claimed, so a replayed delivery or the launch sweep
+  /// (`sweepHandoffs`, first run at launch) delivers nothing twice.
+  public mutating func claimReport(_ id: AssistantHandoff.ID) -> AssistantHandoff? {
+    guard let i = records.firstIndex(where: { $0.id == id }), !records[i].isOpen, records[i].reported != true else { return nil }
+    records[i].reported = true
+    return records[i]
+  }
   /// Open hand-offs kept whole, and every closed one of a task that still has one open (its
   /// count is the limit per root, and its result may be owed to its parent); then the newest
   /// closed ones. Counters only for today.

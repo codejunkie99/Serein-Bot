@@ -204,6 +204,12 @@ extension RelayOrchestrator {
     change(&handoffLedger.records[i])
     saveHandoffs()
   }
+  /// Claims a closed hand-off's report, saved before anything is delivered; nil if it was claimed.
+  private func claimReport(_ id: String) -> AssistantHandoff? {
+    guard let claimed = handoffLedger.claimReport(id) else { return nil }
+    saveHandoffs()
+    return claimed
+  }
   /// A hand-off ends, done or failed, announced once (a failure notifies). `report` false keeps
   /// it from starting a turn in the asking chat (one lost to a relaunch is only announced).
   private func closeHandoff(_ id: String, _ state: AssistantHandoff.State, result: String?, report: Bool = true) {
@@ -212,8 +218,8 @@ extension RelayOrchestrator {
       $0.state = state
       $0.finishedAt = Date()
       $0.result = result.map { String($0.suffix(4_000)) }
-      if !report { $0.reported = true }
     }
+    if !report { _ = claimReport(id) }
     // What its target handed on ends with it: nobody is left to take those results.
     for child in handoffLedger.records where child.isOpen && child.parentID == id {
       if child.state == .running, let run = agent.hub.run(for: child.threadID), run.spec.initiator == .handoff {
@@ -277,7 +283,7 @@ extension RelayOrchestrator {
       }
       $0.progressAt = Date()
     }
-    for result in results { updateHandoff(result.id) { $0.reported = true } }
+    for result in results { _ = claimReport(result.id) }
     handoffsStarting.insert(thread)
     Task { [weak self] in
       guard let self else { return }
@@ -376,13 +382,14 @@ extension RelayOrchestrator {
   func deliverHandoffReports() {
     guard !state.paused else { return }
     deliverChainResults()
+    // The wake turn is keyed by the report: a replay finds it claimed and starts nothing.
     guard !working,
-      let record = handoffLedger.records.first(where: {
+      let due = handoffLedger.records.first(where: {
         ($0.state == .done || $0.state == .failed) && $0.reported != true && $0.parentID == nil
           && $0.from == team.activeID && $0.askedIn == threadID
-      })
+      }),
+      let record = claimReport(due.id)
     else { return }
-    updateHandoff(record.id) { $0.reported = true }
     let name = profileName(record.to)
     // The target's words come back into the asking chat: a marked target marks it too, and its
     // reply is withheld when that mark cannot be saved.
@@ -402,7 +409,7 @@ extension RelayOrchestrator {
     for (parentID, results) in Dictionary(grouping: due, by: { $0.parentID ?? "" }) {
       guard let parent = handoffLedger.records.first(where: { $0.id == parentID && $0.state == .running }) else {
         // The hand-off they were part of has ended: nobody is left to take them.
-        for result in results { updateHandoff(result.id) { $0.reported = true } }
+        for result in results { _ = claimReport(result.id) }
         continue
       }
       guard let target = team.profiles.first(where: { $0.id == parent.to }) else {
