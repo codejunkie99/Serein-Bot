@@ -100,6 +100,7 @@ enum AssistantCoreChecks {
     ("affectMemory", AssistantCoreChecks.affectMemory),
     ("affectSchedules", AssistantCoreChecks.affectSchedules),
     ("handoffChain", AssistantCoreChecks.handoffChain),
+    ("turnFrame", AssistantCoreChecks.turnFrame),
     ("workroom", AssistantCoreChecks.workroom),
     ("packet", AssistantCoreChecks.packet),
     ("reach", AssistantCoreChecks.reach),

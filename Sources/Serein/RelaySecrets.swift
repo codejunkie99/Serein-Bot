@@ -55,7 +55,7 @@ extension RelayToolHost {
   /// `secret_ask {name, hosts, kind}`: the placeholder when it is saved, else the secret card
   /// under this reply. Only in a turn the person started.
   func secretAsk(_ a: [String: Any]) throws -> [String: Any] {
-    switch SecretVault.ask(a, personStarted: relay.startedByPerson, records: relay.desk.secrets) {
+    switch SecretVault.ask(a, personStarted: frame.byPerson, records: relay.desk.secrets) {
     case .refused(let words):
       throw SereinError.invalid(words)
     case .saved(let record):
@@ -68,7 +68,7 @@ extension RelayToolHost {
         throw SereinError.invalid(SecretVault.badName)
       }
       relay.keepSecret(record)
-      let thread = relay.turnThread
+      let thread = frame.thread
       let shown: [ConnectLink] = relay.desk.facts[thread]?.connect ?? []
       if !shown.contains(link) { relay.deliver(receipt: nil, connect: [link], into: thread) }
       return SecretVault.answer(record, saved: false)
@@ -84,12 +84,12 @@ extension RelayToolHost {
     case .failure(let refusal): throw SereinError.invalid(refusal.words)
     case .success(let checked): plan = checked
     }
-    let answer = SecretVault.decision(plan.effect, relay.standing(present: relay.admissionTurn != .unattended))
+    let answer = SecretVault.decision(plan.effect, relay.standing(present: frame.admission != .unattended))
     // A payment goes only on the person's yes to this exact request: the card below is its pay step.
     if try answer == .blocked(.pay(ref: "")) || answer.decision() == .ask {
       let human = await relay.confirmAnswer(
         "Send a request to \(plan.host)?", ApprovalGate.askLine(plan.effect), button: "Send", decline: "Don't send",
-        thread: relay.turnThread, more: plan.shown, moreName: "the request", moreOpen: true, effect: plan.effect)
+        thread: frame.thread, more: plan.shown, moreName: "the request", moreOpen: true, effect: plan.effect)
       relay.note("A request to \(plan.host)", human == .yes ? .allowed : .declined)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? ActionAdmission.declined : ActionAdmission.needsPerson)

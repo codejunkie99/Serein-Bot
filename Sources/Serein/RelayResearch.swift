@@ -133,10 +133,10 @@ extension RelayToolHost {
   func researchTool(_ name: String, _ a: [String: Any]) async throws -> [String: Any] {
     let coordinator = relay.research
     await coordinator.load()
-    let thread = relay.turnThread
+    let thread = frame.thread
     let owner = relay.actingProfile?.id ?? relay.team.activeID
     if name == "research_start" {
-      guard relay.working, relay.startedByPerson, !relay.runsUnattended else {
+      guard relay.working, frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person's request can start research that continues after a restart.")
       }
       guard let question = a["question"] as? String, let raw = a["sources"] as? [[String: Any]],
@@ -163,7 +163,7 @@ extension RelayToolHost {
     }
     switch name {
     case "research_cross_check":
-      guard relay.working, relay.startedByPerson, !relay.runsUnattended else {
+      guard relay.working, frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person can request new comparisons for a saved report.")
       }
       guard let raw = a["sources"] as? [[String: Any]],
@@ -175,7 +175,7 @@ extension RelayToolHost {
       try coordinator.crossCheck(id, sources: sources, provider: route.provider.rawValue, model: route.model)
     case "research_pause": coordinator.pause(id)
     case "research_resume":
-      guard relay.working, relay.startedByPerson, !relay.runsUnattended else {
+      guard relay.working, frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person can continue paused research.")
       }
       try coordinator.resume(id)

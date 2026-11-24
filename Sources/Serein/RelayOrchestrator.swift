@@ -546,6 +546,8 @@ import SereinCore
   /// The turn now running brought outside text in (a page, a file, a task's reply, an app's data)
   /// or carried a page or a file: a typed remember then stays with its assistant (`MemoryTurn`).
   var turnReadOutside = false
+  /// Each running turn's frame (TurnFrame.swift): Serein's tools read the calling turn's.
+  var frames = TurnFrames()
   /// The chat whose Get to know you turn is running: check-ins are offered there when it ends.
   var checkInsAfterTurn: String?
 
@@ -1230,6 +1232,14 @@ import SereinCore
   /// routine runs there (`ownerRun`), else the chat on screen. Cards, the personal-read mark and
   /// receipts follow it.
   var turnThread: String { ownerRun?.thread ?? threadID }
+  /// The frame of the turn on `thread`. shortcut: with none (a check, a click outside any turn)
+  /// it is the turn globals as they stand, until commit 2b removes them.
+  func frame(for thread: String?) -> TurnFrame { frames.frame(for: thread, none: frameNow(thread: turnThread)) }
+  /// The turn globals as they stand, as `thread`'s frame.
+  private func frameNow(thread: String) -> TurnFrame {
+    TurnFrame(thread: thread, serial: turnSerial, admission: admissionTurn, unattended: runsUnattended,
+              personWords: personWords, readOutside: turnReadOutside)
+  }
   /// The assistant whose turn runs now: a routine's owner, else the one Serein's turn acts for,
   /// else Serein (the main assistant) for the person's own requests.
   var turnProfileID: String { ownerRun?.profileID ?? actingProfile?.id ?? team.mainProfileID ?? RelayTeam.mainID }
@@ -2009,6 +2019,8 @@ import SereinCore
     // What the turn brings in from outside, for a new memory's defaults (`MemoryTurn`): a page or
     // a file on the message, or a turn nobody typed (a report, a hand-off's result, a check-in).
     turnReadOutside = !byPerson || page != nil || !attached.isEmpty
+    frames.begin(frameNow(thread: threadID))
+    let serial = turnSerial
     sending = true
     cancelTurn = false
     // The active assistant thinks with its own engine when it has one (its route).
@@ -2059,6 +2071,7 @@ import SereinCore
         }
         cancelTurn = false
       } catch {
+        frames.end(chat, serial: serial)
         turnPage = nil
         turnBrief = nil
         // A check-in that couldn't start is over: left set, the person's next message would count
@@ -2252,6 +2265,8 @@ import SereinCore
          byPerson: byPerson, request: byPerson ? request : nil, shown: shown)
   }
   private func ended(_ run: AgentRun) {
+    // Done, failed or stopped, Serein's turn on that thread is over.
+    if run.spec.relay { frames.end(run.spec.threadID) }
     // Whatever ended, a queued scheduled turn may go now (its owner's chat may be free).
     defer { drainScheduled() }
     noteSecureCard(run)
@@ -4136,6 +4151,8 @@ import SereinCore
     personTurn = false
     // An unattended turn reads what its request names: nothing it learns is the person's words.
     turnReadOutside = true
+    frames.begin(frameNow(thread: thread))
+    let serial = turnSerial
     sending = true
     cancelTurn = false
     var prompt: String
@@ -4172,6 +4189,7 @@ import SereinCore
       let current: Bool = activeScheduled?.reminder.id == scheduled.reminder.id
         && activeScheduled?.ledgerID == scheduled.ledgerID
       guard started, current else {
+        frames.end(thread, serial: serial)
         sending = false
         cancelTurn = false
         if current { endScheduledHandover() }
@@ -4188,6 +4206,7 @@ import SereinCore
         if cancelTurn, let run = agent.hub.run(for: id) { agent.hub.stop(run) }
         cancelTurn = false
       } catch {
+        frames.end(thread, serial: serial)
         sending = false
         cancelTurn = false
         endScheduledHandover()

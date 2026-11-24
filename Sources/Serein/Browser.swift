@@ -1763,7 +1763,7 @@ struct BrowserTask {
       guard task.allowRelay, let relay = RelayOrchestrator.shared else {
         throw SereinError.invalid("Serein’s tools are only available to Serein.")
       }
-      return try await relay.tools.call(raw, request["arguments"] as? [String: Any] ?? [:])
+      return try await relay.tools.call(raw, request["arguments"] as? [String: Any] ?? [:], thread: threadID(forTask: id))
     }
     // Serein's own settings, when the user asks (AgentSettings): no tab and no website action.
     if ToolSchema.settingsToolNames.contains(raw) {

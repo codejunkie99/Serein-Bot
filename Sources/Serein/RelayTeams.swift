@@ -571,7 +571,7 @@ extension RelayToolHost {
     _ effect: ApprovalGate.Effect, title: String, detail: String, button: String, more: String? = nil,
     moreName: String = "the details", proposal: RelayOrchestrator.TeamProposalDraft? = nil
   ) async throws -> ApprovalGate.HumanAnswer {
-    guard relay.startedByPerson, !relay.runsUnattended else { throw SereinError.invalid(Self.lowerTrust) }
+    guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
     return await relay.confirmAnswer(
       title, detail, button: button, thread: relay.threadID, more: more, moreName: moreName, moreOpen: more != nil,
       effect: effect, proposal: proposal)
@@ -593,7 +593,7 @@ extension RelayToolHost {
       }
       sender = target
     } else {
-      guard relay.startedByPerson, !relay.runsUnattended else { throw SereinError.invalid(Self.lowerTrust) }
+      guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
       guard let active = team.active else { throw SereinError.invalid("No assistant is answering.") }
       sender = active
     }
@@ -641,7 +641,7 @@ extension RelayToolHost {
   /// allow is dropped and listed) and the full instructions. Nothing is saved before Create team,
   /// and the card holds only for the roster it showed.
   func proposeTeam(_ a: [String: Any]) async throws -> [String: Any] {
-    guard relay.startedByPerson, !relay.runsUnattended else { throw SereinError.invalid(Self.lowerTrust) }
+    guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
     let shown = relay.team
     let parsed = try TeamProposal.parse(a, person: relay.personPlaces, team: shown)
     // Change… on the card edits the draft; Create team saves what the card held last.

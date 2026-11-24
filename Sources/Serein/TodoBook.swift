@@ -221,7 +221,7 @@ extension RelayToolHost {
   /// is never added silently; Add puts it in Next and starts nothing.
   func proposeTodo(_ a: [String: Any]) async throws -> [String: Any] {
     // A check-in is not the person's turn: like the schedule tools, it proposes no card.
-    if relay.working, !relay.startedByPerson, !relay.runsUnattended { throw SereinError.invalid(Self.lowerTrust) }
+    if relay.working, !frame.byPerson, !frame.unattended { throw SereinError.invalid(Self.lowerTrust) }
     let book = TodoBook.shared
     let title = TodoBoard.cleanTitle(a["title"] as? String ?? "")
     guard !title.isEmpty else { throw SereinError.invalid("title is required: one short line.") }
@@ -248,19 +248,19 @@ extension RelayToolHost {
     // Words from a chat that read the person's mail, messages or Mac apps keep that mark.
     var card = TodoCard(
       title: title, notes: notes, deadline: deadline, assistantID: assistant?.id,
-      personal: relay.agent.readsPersonal(thread: relay.turnThread) ? true : nil)
+      personal: relay.agent.readsPersonal(thread: frame.thread) ? true : nil)
     if a["steps"] != nil || a["kind"] != nil || a["target"] != nil {
       card.goal = try PersonalGoalTools.details(a)
     }
     let copy = TodoBoard.proposal(card, assistant: assistant?.name)
     let human = await relay.confirmAnswer(
-      copy.title, copy.detail, button: "Add", thread: relay.turnThread, more: [notes, card.goal.map { $0.steps.map(\.title).joined(separator: "\n") }].compactMap { $0 }.joined(separator: "\n"), moreName: "the plan", effect: .change)
+      copy.title, copy.detail, button: "Add", thread: frame.thread, more: [notes, card.goal.map { $0.steps.map(\.title).joined(separator: "\n") }].compactMap { $0 }.joined(separator: "\n"), moreName: "the plan", effect: .change)
     guard human == .yes else {
       throw SereinError.invalid(human == .no ? "The user declined the card. Nothing was added." : ActionAdmission.needsPerson)
     }
     try book.add(card)
     relay.note("Added “\(String(title.prefix(60)))” to Goals", .allowed)
-    if card.goal != nil { relay.showSite("goal-" + card.id, into: relay.turnThread) }
+    if card.goal != nil { relay.showSite("goal-" + card.id, into: frame.thread) }
     return ["added": true, "id": card.id, "site_id": "goal-" + card.id, "title": title, "column": TodoCard.Column.next.title]
   }
 }

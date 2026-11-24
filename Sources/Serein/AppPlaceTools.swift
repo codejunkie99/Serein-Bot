@@ -46,7 +46,7 @@ extension RelayToolHost {
 
   /// Moves the window, never data, so it needs no ask; only while the person is answering.
   private func openPlace(_ a: [String: Any]) throws -> [String: Any] {
-    if let refusal = AppPlaces.openRefusal(personStarted: relay.startedByPerson, unattended: relay.runsUnattended) {
+    if let refusal = AppPlaces.openRefusal(personStarted: frame.byPerson, unattended: frame.unattended) {
       throw SereinError.invalid(refusal)
     }
     let place = try requestedPlace(a)
@@ -144,7 +144,7 @@ extension RelayToolHost {
   }
 
   private func markPersonal() throws {
-    guard relay.agent.markPersonalRead(thread: relay.turnThread) else {
+    guard relay.agent.markPersonalRead(thread: frame.thread) else {
       throw SereinError.invalid(BrowserModel.personalMarkWithheld)
     }
   }
@@ -213,7 +213,7 @@ extension RelayToolHost {
     case .ask:
       let human = await relay.confirmAnswer(
         "Move “\(short)” to \(column.title)?", "On your Board. Moving it starts no work.", button: "Move",
-        thread: relay.turnThread, effect: .change)
+        thread: frame.thread, effect: .change)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person kept the card where it is." : ActionAdmission.needsPerson)
       }
@@ -226,7 +226,7 @@ extension RelayToolHost {
     try book.move(id, to: column)
     let entry = "board-" + UUID().uuidString
     relay.desk.undoActions[entry] = .board(card: id, column: card.column, task: card.taskID)
-    relay.deliver(receipt: ReceiptCopy.boardMoved(title: card.title, to: column.title, entry: entry), into: relay.turnThread)
+    relay.deliver(receipt: ReceiptCopy.boardMoved(title: card.title, to: column.title, entry: entry), into: frame.thread)
     relay.note("Moved “\(short)” to \(column.title) in Goals", .allowed)
     return ["moved": true, "id": id, "column": column.title, "undo": entry, "note": HostFacts.receiptNote]
   }

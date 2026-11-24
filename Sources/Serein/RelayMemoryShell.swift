@@ -403,7 +403,10 @@ extension RelayOrchestrator {
     }
     // A note from outside content makes this turn outside too, as `recall` does, so a note the
     // person saves from it stays private (`MemoryTools.carriesOutside`).
-    if block.outside { turnReadOutside = true }
+    if block.outside {
+      turnReadOutside = true
+      frames.noteReadOutside(thread)
+    }
     turnMemory = shown ? block.text + "\n" + Self.journalShown : block.text
   }
 
@@ -448,7 +451,10 @@ extension RelayOrchestrator {
   /// Serein's own turn called `name` (BrowserModel.perform): anything but `cleanTools` may bring
   /// outside text into the turn.
   func noteTurnTool(_ name: String) {
-    if !Self.cleanTools.contains(name) { turnReadOutside = true }
+    if !Self.cleanTools.contains(name) {
+      turnReadOutside = true
+      frames.noteReadOutside(turnThread)
+    }
     #if DEBUG
       toolsCalledForChecks.append(name)
     #endif
@@ -459,7 +465,7 @@ extension RelayOrchestrator {
   /// message), and personal data (the chat's mark).
   func memoryTurn(thread: String) -> MemoryTurn {
     let steps = agent.hub.run(for: thread)?.steps.isEmpty == false
-    return MemoryTurn(readOutside: turnReadOutside || steps, readPersonal: agent.readsPersonal(thread: thread))
+    return MemoryTurn(readOutside: frame(for: thread).readOutside || steps, readPersonal: agent.readsPersonal(thread: thread))
   }
 
   /// Whether the chat behind a task chat read the person's data: the chat on screen (as before),
@@ -554,7 +560,10 @@ extension RelayOrchestrator {
     }
     let chat = turnThread
     let records = read.hits.reveal { self.agent.markPersonalRead(thread: chat) }
-    if MemoryTools.carriesOutside(records) { turnReadOutside = true }
+    if MemoryTools.carriesOutside(records) {
+      turnReadOutside = true
+      frames.noteReadOutside(chat)
+    }
     let names = memoryNames
     var out: [String: Any] = ["notes": records.map { Self.row($0, names: names, team: team) }, "total": records.count]
     if records.isEmpty, read.hits.needsMark { out["withheld"] = BrowserModel.personalMarkWithheld }

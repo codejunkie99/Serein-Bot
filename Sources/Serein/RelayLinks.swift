@@ -214,8 +214,8 @@ extension RelayToolHost {
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
     let owner = relay.profileName(spec.owner)
-    let named = TypedConsent.names(.makeLink, in: relay.typedWords)
-    switch Admission.decide(.makeLink, turn: relay.admissionTurn, wordsNameIt: named) {
+    let named = TypedConsent.names(.makeLink, in: frame.typedWords)
+    switch Admission.decide(.makeLink, turn: frame.admission, wordsNameIt: named) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:
@@ -261,7 +261,7 @@ extension RelayToolHost {
 
   /// `hook_remove {name}`: the person's turn removes it at once, with a 10-second Undo.
   func removeLink(_ a: [String: Any]) throws -> [String: Any] {
-    if case .refuse(let why) = Admission.decide(.ownChange, turn: relay.admissionTurn, wordsNameIt: true) {
+    if case .refuse(let why) = Admission.decide(.ownChange, turn: frame.admission, wordsNameIt: true) {
       throw SereinError.invalid(why)
     }
     try requireReadableLinks()

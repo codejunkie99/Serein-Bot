@@ -365,7 +365,7 @@ extension RelayToolHost {
   func askAssistants(_ a: [String: Any]) async throws -> [String: Any] {
     let team = relay.team
     guard let asker = relay.actingProfile ?? team.main else { throw SereinError.invalid(ActionAdmission.needsPerson) }
-    let turn = relay.admissionTurn
+    let turn = frame.admission
     let request: AskPolicy.Request
     switch AskPolicy.parse(a, askerID: asker.id, team: team, paused: relay.pausedAssistants) {
     case .success(let parsed): request = parsed

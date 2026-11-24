@@ -788,13 +788,13 @@ extension RelayToolHost {
   /// person decides on later; nobody there refuses.
   func makeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
-    let turn = relay.admissionTurn
+    let turn = frame.admission
     let draft: AssistantDraft
     switch AssistantDraft.parse(a, person: relay.personPlaces, team: relay.team) {
     case .success(let parsed): draft = parsed
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
-    let named = TypedConsent.names(.makeAssistant, in: relay.typedWords)
+    let named = TypedConsent.names(.makeAssistant, in: frame.typedWords)
     switch Admission.decide(.makeAssistant, turn: turn, wordsNameIt: named) {
     case .refuse(let why):
       throw SereinError.invalid(why)
@@ -851,8 +851,8 @@ extension RelayToolHost {
     let shown = relay.team
     // New words for an assistant apply at once only when the person's own words name it (safety
     // review 7): else a card, so a page cannot write another assistant's instructions.
-    let named: Bool = ScheduleRequest.wordsName(change.name, in: relay.typedWords)
-    switch change.verdict(turn: relay.admissionTurn, wordsNameIt: named) {
+    let named: Bool = ScheduleRequest.wordsName(change.name, in: frame.typedWords)
+    switch change.verdict(turn: frame.admission, wordsNameIt: named) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:
@@ -889,7 +889,7 @@ extension RelayToolHost {
     guard let target = relay.team.profile(named: wanted) else {
       throw SereinError.invalid(DeletePlan.Refusal.unknown.words)
     }
-    if case .refuse(let why) = Admission.decide(.deleteAssistant, turn: relay.admissionTurn, wordsNameIt: true) {
+    if case .refuse(let why) = Admission.decide(.deleteAssistant, turn: frame.admission, wordsNameIt: true) {
       throw SereinError.invalid(why)
     }
     let plan: DeletePlan
@@ -915,7 +915,7 @@ extension RelayToolHost {
   /// `plan`: draws or moves this turn's plan card (SPEC 2.6). It changes nothing, so any turn may.
   func updatePlan(_ a: [String: Any]) throws -> [String: Any] {
     // The chat whose turn runs: a routine's owner chat while it runs there.
-    let thread = relay.turnThread
+    let thread = frame.thread
     switch PlanCard.parse(a, previous: relay.desk.plans[thread], now: Date()) {
     case .failure(let problem):
       throw SereinError.invalid(problem.words)
@@ -930,7 +930,7 @@ extension RelayToolHost {
   /// Nothing is posted; a post over X's limit comes back to the model to shorten.
   func draftPost(_ a: [String: Any]) throws -> [String: Any] {
     guard let draft = PostDraft.parse(a) else { throw SereinError.invalid("posts: give the post's words, one string per post.") }
-    relay.showPost(draft, into: relay.turnThread)
+    relay.showPost(draft, into: frame.thread)
     var out: [String: Any] = ["shown": draft.posts.count, "note": "The person sees the draft under your reply, with Copy and Open in X. Nothing was posted."]
     let over = draft.over
     if !over.isEmpty {
@@ -948,7 +948,7 @@ extension RelayToolHost {
     switch UITree.parse(a) {
     case .failure(let problem): throw SereinError.invalid(problem.words)
     case .success(let tree):
-      let replaced: Bool = relay.showView(tree, into: relay.turnThread)
+      let replaced: Bool = relay.showView(tree, into: frame.thread)
       // A redrawn view sits above the person's message, so the reply says what changed.
       let place: String = replaced
         ? "It takes the place of the view the person pressed. Say in one short line what changed."
@@ -963,14 +963,14 @@ extension RelayToolHost {
   /// the trip", "update the trip dashboard"). Made in a chat with the personal-read mark, it keeps
   /// the mark.
   func makeDashboard(_ a: [String: Any]) throws -> [String: Any] {
-    guard relay.startedByPerson else { throw SereinError.invalid(Self.dashboardNotHere) }
+    guard frame.byPerson else { throw SereinError.invalid(Self.dashboardNotHere) }
     let built: DashboardDraft.Built
     switch DashboardDraft.parse(a, team: relay.team, actingID: relay.turnProfileID) {
     case .success(let value): built = value
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
     var spec = built.spec
-    let thread = relay.turnThread
+    let thread = frame.thread
     if relay.agent.readsPersonal(thread: thread) { spec.personal = true }
     let site = try SiteBook.shared.dashboard(spec)
     relay.showDashboard(spec, into: thread)
@@ -991,9 +991,9 @@ extension RelayToolHost {
   /// the person's own turn shows one (SPEC 5.4). The model reads one sentence back, never a key,
   /// an address or an account.
   func connectApp(_ a: [String: Any]) throws -> [String: Any] {
-    guard relay.startedByPerson else { throw SereinError.invalid(ConnectCatalog.notHere) }
+    guard frame.byPerson else { throw SereinError.invalid(ConnectCatalog.notHere) }
     let raw: String = (a["app"] as? String) ?? ""
-    let thread = relay.turnThread
+    let thread = frame.thread
     // A cloud computer's key goes in the key card under the reply, straight to Keychain.
     if let link = ConnectLink(app: raw, kind: .key), let account = HostedAccount.forKey(link) {
       if account.hasKey { return ["note": ConnectCatalog.ready(link.name)] }
@@ -1044,7 +1044,7 @@ extension RelayToolHost {
   /// `undo`: the last change made in this chat, or the one `token` names. Only the person's own
   /// turn may undo.
   func undoChange(_ a: [String: Any]) async throws -> [String: Any] {
-    if case .refuse(let why) = Admission.decide(.undo, turn: relay.admissionTurn, wordsNameIt: true) {
+    if case .refuse(let why) = Admission.decide(.undo, turn: frame.admission, wordsNameIt: true) {
       throw SereinError.invalid(why)
     }
     let token = (a["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
