@@ -1015,6 +1015,8 @@ if CommandLine.arguments.contains("--verify-assistant-core") {
   do { try AssistantCoreChecks.run(); exit(0) }
   catch { fputs("FAIL: \(error.localizedDescription)\n", stderr); exit(1) }
 }
+// Bounded model checkers over the team reducers; no window, no files (SereinCore/Formal).
+if CommandLine.arguments.contains("--verify-formal") { exit(FormalCheck.run(CommandLine.arguments) ? 0 : 1) }
 if CommandLine.arguments.contains("--verify-research") {
   app.setActivationPolicy(.prohibited)
   Task { @MainActor in
