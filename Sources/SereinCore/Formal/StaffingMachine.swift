@@ -33,7 +33,7 @@ struct StaffingWorld: Encodable, Equatable {
     // One short of the roster cap with the room's two makes, so the cap binds.
     let fillers = (1...(RelayTeam.maxProfiles - named.count - 1)).map { RelayProfile(id: "f\($0)", name: "Filler \($0)", createdAt: base) }
     let room = Workroom(id: "r1", root: .person(thread: "main-main", message: "m1"), lead: "main", thread: "main-main",
-                        reach: .person(person), now: base)
+                        reach: Reach.person(person), now: base)
     return StaffingWorld(room: room, team: RelayTeam(profiles: named + fillers, activeID: "main"))
   }
 
@@ -96,7 +96,7 @@ struct StaffingWorld: Encodable, Equatable {
     }
     for who in Set(w.room.seats.map(\.who)).sorted() where w.narrowed[who] == nil {
       var n = w
-      n.narrowed[who] = .person(AssistantScope(destinations: [.web], apps: []))
+      n.narrowed[who] = Reach.person(AssistantScope(destinations: [.web], apps: []))
       n.room.renarrow(n.narrowed)
       out.append(("\(who) is narrowed to the Web", n))
     }
