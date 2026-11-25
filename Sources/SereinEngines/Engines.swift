@@ -502,16 +502,25 @@ public actor Engines {
     }
   }
 
-  /// Ticks the stuck watch. CPU and socket readings are not sampled yet, so only the silence
-  /// ceiling can stop a turn.
+  /// Ticks the stuck watch. CPU is not sampled yet, so only the silence ceiling can stop a turn.
   private func watchClock(_ thread: ThreadKey, _ generation: Int) {
     let tickEvery = tickEvery
     Task {
       while self.isCurrent(thread, generation) {
         await self.sleep(tickEvery)
-        self.feed(thread, generation, .tick(self.now(), HarnessStuck.Evidence(cpuPerMinute: nil, openTCP: nil, logGrew: false)))
+        let tcp = Self.openTCP(group: self.slots[thread]?.process?.pgid)
+        self.feed(thread, generation, .tick(self.now(), HarnessStuck.Evidence(cpuPerMinute: nil, openTCP: tcp, logGrew: false)))
       }
     }
+  }
+
+  /// Model connections held by the CLI's process group; nil for a turn with no process.
+  /// shortcut: helpers that call setsid leave the group and are not counted; walk the
+  /// descendants HostedCLI already tracks if one turns out to hold the model connection.
+  static func openTCP(group pgid: pid_t?) -> Int? {
+    guard let pgid else { return nil }
+    let members = KernelProcessTable().members(ofGroup: pgid)
+    return HarnessStuck.modelConnections(pids: members.isEmpty ? [pgid] : members)
   }
 
   private func isCurrent(_ thread: ThreadKey, _ generation: Int) -> Bool {

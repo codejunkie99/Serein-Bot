@@ -112,6 +112,7 @@ enum AssistantCoreChecks {
     ("peers", AssistantCoreChecks.peers),
     ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("swarmWriters", AssistantCoreChecks.swarmWriters),
+    ("stuckLoopback", AssistantCoreChecks.stuckLoopback),
     ("grokEngine", AssistantCoreChecks.grokEngine),
     ("cursorEngine", AssistantCoreChecks.cursorEngine),
     ("geminiEngine", AssistantCoreChecks.geminiEngine),
