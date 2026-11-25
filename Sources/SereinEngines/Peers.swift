@@ -93,6 +93,8 @@ public actor Peers {
     var prompt: String
     var thread: ThreadKey
     var accessOverride: Access? = nil
+    /// A writer in a folder other writers share, with no git worktree. One such writer works there at a time.
+    var shares: URL? = nil
     var state: PeerJobState = .queued
     var work: Task<Void, Never>?
   }
@@ -230,12 +232,12 @@ public actor Peers {
   }
 
   @discardableResult
-  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String, accessOverride: Access? = nil) -> Int {
+  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String, accessOverride: Access? = nil, shares: URL? = nil) -> Int {
     let index = runs[id]!.jobs.count
     runs[id]!.jobs.append(Job(
       agent: agent, role: role, prompt: prompt,
       thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)"),
-      accessOverride: accessOverride))
+      accessOverride: accessOverride, shares: shares))
     return index
   }
 
@@ -244,6 +246,7 @@ public actor Peers {
     for id in order {
       guard let run = runs[id] else { continue }
       for index in run.jobs.indices where runs[id]!.jobs[index].state == .queued {
+        if let folder = runs[id]!.jobs[index].shares, writing(in: folder) { continue }
         if run.owner.depth > 0 {
           guard working(where: { $0.owner.caller.thread == run.owner.caller.thread }) == 0 else { break }
         } else {
@@ -259,6 +262,10 @@ public actor Peers {
 
   private func working(where match: (Run) -> Bool) -> Int {
     runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter { $0.state == .working }.count }
+  }
+
+  private func writing(in folder: URL) -> Bool {
+    runs.values.contains { $0.jobs.contains { $0.state == .working && $0.shares == folder } }
   }
 
   private func run(_ id: String, _ index: Int) async {
@@ -334,6 +341,43 @@ public actor Peers {
     }
   }
 
+  /// The folder a writer with `access` would change, if any.
+  private static func writableFolder(_ access: Access) -> URL? {
+    switch access {
+    case .task(let folder), .project(let folder, _): return folder.standardizedFileURL
+    case .answer, .web, .library, .ownSetup: return nil
+    }
+  }
+
+  /// `access` at the same level, moved to `folder`.
+  private static func access(_ access: Access, in folder: URL) -> Access {
+    switch access {
+    case .task: return .task(folder: folder)
+    case .project(_, let level): return .project(folder: folder, level: level)
+    case .answer, .web, .library, .ownSetup: return access
+    }
+  }
+
+  /// Each writer's diff, for the verifier, whose own folder does not hold the changes yet.
+  private static func changes(_ trees: [(name: String, handle: SwarmWorktree.Handle)]) async -> String {
+    var text = ""
+    for (name, handle) in trees {
+      let diff = await Task.detached { SwarmWorktree.diff(handle) }.value ?? "(git could not read the changes)"
+      let shown = diff.isEmpty ? "(no changes)" : String(diff.prefix(20_000)) + (diff.count > 20_000 ? "\n(cut here; the rest is in the worktree)" : "")
+      text += "\n\n\(name) worked in its own worktree, \(handle.folder.path), and its changes are not in your folder yet. Its diff:\n\(shown)"
+    }
+    return text
+  }
+
+  /// Serein's own line in a swarm's result. It rides as a settled job, the one thing
+  /// `PeerTools.render` lists per run.
+  private func report(_ id: String, _ text: String, failed: Bool) {
+    guard let run = runs[id] else { return }
+    runs[id]!.jobs.append(Job(
+      agent: run.owner.caller.cli, role: "merge into your folder", prompt: "",
+      thread: ThreadKey("\(run.owner.caller.thread.id)>\(id).\(run.jobs.count)"), state: failed ? .failed(text) : .answered(text)))
+  }
+
   /// Runs parallel swarm workers over a shared `SwarmBoard` with an optional read-only verifier
   /// checking `#seq` outputs and requesting targeted revisions.
   private func swarm(_ id: String, spec: PeerSwarmRequest) async {
@@ -361,11 +405,39 @@ public actor Peers {
     runs[id]?.plan = SwarmPlan(goal: .init(title: String(spec.goal.prefix(64)), line: spec.goal), tasks: workerTasks, threads: threads)
     runs[id]?.board = board
 
+    // In a git repo each writer gets its own worktree; elsewhere writers take turns in the folder.
+    let ownerFolder = Self.writableFolder(ownerAccess)
+    let readOnly = Self.readOnlyAccess(ownerAccess)
+    var trees: [(name: String, handle: SwarmWorktree.Handle)] = []
+    if let ownerFolder, let base = await Task.detached(operation: { SwarmWorktree.base(for: ownerFolder, run: id) }).value {
+      for w in spec.workers where w.write {
+        let name = w.name.lowercased()
+        do {
+          if let handle = try await Task.detached(operation: { try SwarmWorktree.create(repo: ownerFolder, name: name, baseDirectory: base) }).value {
+            trees.append((name, handle))
+            board.post(author: "coordinator", text: "@\(name) Your own worktree: \(handle.folder.path)", kind: .update)
+          }
+        } catch {
+          board.post(author: "coordinator", text: "@\(name) No worktree (\(error.localizedDescription)), so you take turns in \(ownerFolder.path).", kind: .update)
+        }
+      }
+      runs[id]?.board = board
+    }
+    func job(_ w: PeerSwarmWorker, _ role: String, _ prompt: String) -> Int {
+      guard w.write else { return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: readOnly) }
+      if let tree = trees.first(where: { $0.name == w.name.lowercased() }) {
+        return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: Self.access(ownerAccess, in: tree.handle.folder))
+      }
+      return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: ownerAccess, shares: ownerFolder)
+    }
+    // Each worker's latest job. Only a writer whose latest turn answered is merged.
+    var latest: [String: Int] = [:]
+
     // Launch all workers in parallel.
     let workerIndices: [(worker: PeerSwarmWorker, index: Int)] = spec.workers.map { w in
-      let access = w.write ? ownerAccess : Self.readOnlyAccess(ownerAccess)
       let prompt = "Swarm Goal: \(spec.goal)\nYou are '\(w.name)'. Your slice: \(w.task)\nPost a concise completion summary."
-      let idx = add(id, agent: w.agent, role: w.name, prompt: prompt, accessOverride: access)
+      let idx = job(w, w.name, prompt)
+      latest[w.name.lowercased()] = idx
       return (w, idx)
     }
     pump()
@@ -386,12 +458,12 @@ public actor Peers {
     }
 
     if let verifierCLI = spec.verifier, runs[id]?.finished == false && !Task.isCancelled {
-      let readOnly = Self.readOnlyAccess(ownerAccess)
       var latestSeqs = workerSeqs
       for round in 1...spec.rounds {
         let refs = latestSeqs.map { "#\($0)" }.joined(separator: ", ")
         let postsText = board.posts(seqs: latestSeqs).map { "#\($0.seq) (\($0.author)): \($0.text)" }.joined(separator: "\n\n")
-        let verifyPrompt = "You are the read-only verifier (round \(round)). Goal: \(spec.goal)\nVerify \(refs):\n\n\(postsText)\n\nIf all claims and outputs are verified, start your reply with \(PeerTools.approved). Otherwise state exact fixes needed."
+        let changes = await Self.changes(trees)
+        let verifyPrompt = "You are the read-only verifier (round \(round)). Goal: \(spec.goal)\nVerify \(refs):\n\n\(postsText)\(changes)\n\nIf all claims and outputs are verified, start your reply with \(PeerTools.approved). Otherwise state exact fixes needed."
         guard case .answered(let verdict) = await turn(id, verifierCLI, "verifier, round \(round)", verifyPrompt, accessOverride: readOnly) else {
           break
         }
@@ -404,9 +476,9 @@ public actor Peers {
         // Ask workers to revise once on the verifier's notes (#vPost.seq).
         var revisedIndices: [(PeerSwarmWorker, Int)] = []
         for w in spec.workers {
-          let access = w.write ? ownerAccess : readOnly
           let revPrompt = "Swarm Goal: \(spec.goal)\nVerifier feedback (#\(vPost.seq)):\n\(verdict)\n\nRevise your slice (\(w.task)) and post the updated result."
-          let idx = add(id, agent: w.agent, role: "\(w.name), rev \(round)", prompt: revPrompt, accessOverride: access)
+          let idx = job(w, "\(w.name), rev \(round)", revPrompt)
+          latest[w.name.lowercased()] = idx
           revisedIndices.append((w, idx))
         }
         pump()
@@ -421,6 +493,50 @@ public actor Peers {
           }
         }
       }
+    }
+
+    // Merge back only what was signed off; anything else stays in its worktree and is named.
+    if let ownerFolder, !trees.isEmpty {
+      // A run already evicted by its caller's end counts as stopped.
+      let stopped = Task.isCancelled || runs[id]?.finished != false
+      let signed = spec.verifier == nil || runs[id]?.approved == true
+      var merged: [String] = []
+      var kept: [String] = []
+      for (name, handle) in trees {
+        guard let diff = await Task.detached(operation: { SwarmWorktree.diff(handle) }).value else {
+          kept.append("\(name)'s changes stay in \(handle.worktreeURL.path) because git could not read them")
+          continue
+        }
+        if diff.isEmpty {
+          await Task.detached { SwarmWorktree.remove(handle) }.value
+          continue
+        }
+        var answered = false
+        if let index = latest[name], case .answered = runs[id]?.jobs[index].state { answered = true }
+        let why: String?
+        if stopped {
+          why = "the swarm was stopped"
+        } else if !signed {
+          why = "the verifier did not approve them"
+        } else if !answered {
+          why = "\(name) did not finish its turn"
+        } else if let refused = await Task.detached(operation: { SwarmWorktree.apply(diff, to: handle) }).value {
+          why = "they do not apply cleanly to \(ownerFolder.path) (\(refused.prefix(200)))"
+        } else {
+          why = nil
+        }
+        if let why {
+          kept.append("\(name)'s changes stay in \(handle.worktreeURL.path) because \(why)")
+        } else {
+          merged.append(name)
+          await Task.detached { SwarmWorktree.remove(handle) }.value
+        }
+      }
+      var lines = merged.isEmpty ? [] : ["Merged the changes of \(merged.joined(separator: ", ")) into \(ownerFolder.path)."]
+      lines += kept.map { $0 + "." }
+      let text = lines.isEmpty ? "No writer changed a file." : lines.joined(separator: " ")
+      board.post(author: "coordinator", text: text, kind: .update)
+      report(id, text, failed: !kept.isEmpty)
     }
 
     board.post(author: "coordinator", text: "[done] Swarm finished.", kind: .done)
