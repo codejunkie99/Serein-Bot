@@ -157,7 +157,7 @@ import SereinCore
     case "current_page":
       if let refusal = relay.placeRefusal(.page) { throw SereinError.invalid(refusal) }
       return try await currentPage(a)
-    // Team changes and hand-offs always ask, and only in a turn the person started (RelayTeams.swift).
+    // Teams and hand-offs need no card, only a turn the person started (RelayTeams.swift).
     case "team_propose": return try await proposeTeam(a)
     case "assistant_handoff": return try await handOff(a)
     // One assistant at a time, judged by the admission rule; each change lands as a receipt

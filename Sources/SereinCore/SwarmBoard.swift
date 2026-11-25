@@ -266,15 +266,16 @@ public enum AutoTeamPolicy {
   ) -> Decision {
     let cleanRole = role.trimmingCharacters(in: .whitespacesAndNewlines)
     let cleanCreator = createdBy.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !cleanRole.isEmpty else { return .reject("Role is required for an autonomous teammate.") }
+    guard !cleanRole.isEmpty else { return .reject("Role is required for an autonomous teammate. Give it one.") }
     guard !cleanCreator.isEmpty else { return .reject("Creator identity (`createdBy`) is required.") }
     if activeChain.contains(id) {
-      return .reject("Cycle detected: \(id) is already in the active chain.")
+      return .reject("Cycle detected: that assistant already holds this task, so it can't join a team made for it.")
     }
     if existing.contains(where: {
       $0.parentTaskID == parentTaskID && $0.role.caseInsensitiveCompare(cleanRole) == .orderedSame
     }) {
-      return .reject("An active teammate already owns the role \(cleanRole) for this task.")
+      return .reject(
+        "An active teammate already owns the role \(cleanRole) for this task. Hand that work to it, or give this member another role.")
     }
     // Newly created autonomous teammates always start with zero connected apps.
     return .admit(BotRecord(

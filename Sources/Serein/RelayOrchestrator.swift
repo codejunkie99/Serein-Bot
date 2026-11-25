@@ -200,6 +200,8 @@ import SereinCore
   /// Hand-offs between assistants and their counters (relay/handoffs.json, 0600): the limits live
   /// here, in host state the model cannot edit, and survive a relaunch.
   @Published var handoffLedger = HandoffLedger()
+  /// Teammates assistants made on their own, with the root task each serves (RelayTeams.swift).
+  var autoTeams = AutoTeams()
   /// Chats waiting on Accessibility, and those whose grant came (relay/mac-access.json, MacAccessCard.swift).
   @Published var macAccess = MacAccessWait()
   /// While a card waits: the 2-second check and the observer of Serein becoming active.
@@ -2297,6 +2299,12 @@ import SereinCore
     if run.spec.relay, run.spec.threadID != threadID {
       agent.amendThread(run.spec.threadID) { Self.landReplyTags(in: &$0) }
     }
+    // Serein's turn ended, in whichever chat: stopped or failed, it ends the root task its teams
+    // were made for; a correction does not.
+    if run.spec.relay {
+      let cancelled = [.stopped, .stuck].contains(run.record.outcome) && !redirecting
+      stopAutoTeams(autoTeams.turnEnded(cancelled: cancelled, handoffs: handoffLedger.records))
+    }
     if run.spec.threadID == threadID {
       turnPage = nil
       turnBrief = nil
@@ -2641,6 +2649,7 @@ import SereinCore
     capture = nil
     if let run { agent.hub.stop(run) }
     for run in childRuns where run.isActive { agent.hub.stop(run) }
+    stopAutoTeams(autoTeams.stopAll(handoffLedger.records))
     stopHandoffs()
     // Light asks stop too (RelayAsks.swift); link turns are scheduled turns, so their ledger
     // rows ended above.

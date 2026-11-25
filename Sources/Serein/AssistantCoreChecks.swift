@@ -113,6 +113,7 @@ enum AssistantCoreChecks {
     ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("swarmWriters", AssistantCoreChecks.swarmWriters),
     ("stuckLoopback", AssistantCoreChecks.stuckLoopback),
+    ("autoTeams", AssistantCoreChecks.autoTeams),
     ("grokEngine", AssistantCoreChecks.grokEngine),
     ("cursorEngine", AssistantCoreChecks.cursorEngine),
     ("geminiEngine", AssistantCoreChecks.geminiEngine),
