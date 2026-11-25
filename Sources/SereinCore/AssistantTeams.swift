@@ -583,7 +583,7 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   public var from: String
   public var to: String
   public var task: String
-  /// The target assistant's Main chat, where the task runs.
+  /// The seat's hidden chat, where the task runs (`seat-<id>`; its target's Main chat in older ledgers).
   public var threadID: String
   /// The chat it was asked in, where its status line and result show.
   public var askedIn: String

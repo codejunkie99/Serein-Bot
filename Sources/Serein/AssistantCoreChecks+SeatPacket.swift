@@ -40,6 +40,12 @@ extension AssistantCoreChecks {
     try check(names(["--room"]).isSuperset(of: RelayTools.roomNames) && names(["--relay", "--team"]).isDisjoint(with: RelayTools.roomNames),
       "Seat packet: room_read, room_note and room_report are offered to a hand-off's run, not to Serein's")
 
+    // Seats: each hand-off runs in a hidden chat of its own, never in an assistant's Main chat
+    // (a Main chat's id is a UUID, `RelayOrchestrator.State`).
+    let seats = ["h1", "h2"].map(RelayOrchestrator.seatThread)
+    try check(seats == ["seat-h1", "seat-h2"] && seats.allSatisfy { UUID(uuidString: $0) == nil && $0.hasPrefix(RelayOrchestrator.seatPrefix) },
+      "Seats: each hand-off gets its own hidden chat, never an assistant's Main chat")
+
     try MainActor.assumeIsolated { try seatPacketRooms(check) }
   }
 

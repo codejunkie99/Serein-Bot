@@ -143,6 +143,7 @@ extension RelayOrchestrator {
     loadLinks()
     loadSecrets()
     loadAsks()
+    loadSeatChats()
     loadRoutineOffers()
   }
   func saveProposals() { persist(desk.proposals, Self.proposalsFile) }

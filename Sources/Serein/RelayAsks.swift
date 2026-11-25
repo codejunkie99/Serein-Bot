@@ -323,7 +323,8 @@ extension RelayOrchestrator {
   }
   func saveAsks() {
     let saved: Set<String> = Set(agent.conversations.map(\.id))
-    let open: [String] = Array(desk.hiddenThreads).filter { saved.contains($0) }.sorted()
+    // Seat chats are the ledger's, kept while it keeps their row (`loadSeatChats`).
+    let open: [String] = Array(desk.hiddenThreads).filter { saved.contains($0) && !$0.hasPrefix(Self.seatPrefix) }.sorted()
     persist(AssistantDesk.AskBook(rate: desk.askRate, threads: open), Self.asksFile)
   }
   /// A target's answer is not in yet.

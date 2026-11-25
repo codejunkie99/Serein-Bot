@@ -49,7 +49,10 @@ struct HandoffWorld: Encodable, Equatable {
   }
 
   static let base = Date(timeIntervalSince1970: 1_800_000_000)
+  /// The chat an assistant's own turns run in: where a root is asked.
   static func thread(_ who: String) -> String { "main-" + who }
+  /// A hand-off's seat chat, its own (`RelayTeams.seatThread`).
+  static func seat(_ id: String) -> String { "seat-" + id }
   var now: Date { dayLater ? Self.base.addingTimeInterval(HandoffLedger.queueExpiry + 3_600) : Self.base }
   func record(_ id: String) -> AssistantHandoff? { ledger.records.first { $0.id == id } }
 
@@ -68,8 +71,9 @@ struct HandoffWorld: Encodable, Equatable {
     if let parent, ledger.chainRefusal(parent: parent, fromName: sender, to: target, toName: target) != nil { return nil }
     guard ledger.refusal(from: sender, fromName: sender, team: "", now: now) == nil else { return nil }
     var next = self
+    let id = "h\(ledger.records.count + 1)"
     let record = AssistantHandoff(
-      id: "h\(ledger.records.count + 1)", from: sender, to: target, task: "task", threadID: Self.thread(target),
+      id: id, from: sender, to: target, task: "task", threadID: Self.seat(id),
       askedIn: parent?.threadID ?? Self.thread(sender), team: "", teamName: "All assistants", createdAt: now, parent: parent)
     next.ledger.admit(record, now: now)
     return next

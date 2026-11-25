@@ -172,8 +172,8 @@ extension RelayOrchestrator {
 
   // MARK: hand-offs
 
-  /// A hand-off: recorded and counted, then started as soon as the target's Main chat and a task
-  /// slot are free.
+  /// A hand-off: recorded and counted, then started in a hidden chat of its own as soon as a task
+  /// slot is free.
   /// `personal`: the words come from a hand-off that was already personal (Send again).
   /// `parent`: the hand-off whose own run asks, as part of its task, from the chat it holds.
   func sendHandoff(from sender: RelayProfile, to target: RelayProfile, task: String, team key: String, teamName: String,
@@ -181,8 +181,8 @@ extension RelayOrchestrator {
   {
     let chat = parent?.threadID ?? threadID
     var record = AssistantHandoff(
-      from: sender.id, to: target.id, task: task, threadID: mainThread(of: target.id), askedIn: chat,
-      team: key, teamName: teamName, parent: parent)
+      from: sender.id, to: target.id, task: task, threadID: "", askedIn: chat, team: key, teamName: teamName, parent: parent)
+    record.threadID = Self.seatThread(record.id)
     // Asked from a chat that read personal data (or sent again with words that one wrote), or
     // as part of a hand-off that was.
     if personal || parent?.personal == true || agent.readsPersonal(thread: chat)
@@ -267,8 +267,37 @@ extension RelayOrchestrator {
     agent.hub.run(for: thread) == nil && !handoffsStarting.contains(thread) && !(thread == threadID && working)
       && speakingElsewhere?.thread != thread && ownerRun?.thread != thread
   }
-  /// Starts a run for `record` in its target's chat: on the task, or, with `results` (hand-offs
-  /// its target sent that ended), on those results as its next turn there.
+  /// The hidden chat a hand-off's seat runs in, one per hand-off. A row from before seats keeps
+  /// its target's Main chat.
+  static let seatPrefix = "seat-"
+  static func seatThread(_ handoff: AssistantHandoff.ID) -> String { seatPrefix + handoff }
+
+  /// The seat's hidden chat, made before its first run as one of Serein's own chats, so the mark
+  /// can go on before the run starts. It stays while the ledger keeps its row (`loadSeatChats`).
+  private func openSeatChat(_ record: AssistantHandoff, target: RelayProfile, mode: TaskMode, provider: Provider) {
+    guard record.threadID.hasPrefix(Self.seatPrefix) else { return }
+    desk.hiddenThreads.insert(record.threadID)
+    guard !agent.conversations.contains(where: { $0.id == record.threadID }) else { return }
+    var chat = Conversation(
+      id: record.threadID, title: "\(target.name) on “\(String(record.task.prefix(40)))”", messages: [], provider: provider,
+      mode: mode, projectID: nil, remoteID: nil, scope: "", updatedAt: Date())
+    chat.serein = true
+    agent.conversations.append(chat)
+  }
+
+  /// At launch: seat chats stay hidden while the ledger keeps their row, and go with it.
+  func loadSeatChats() {
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let kept = Set(self.handoffLedger.records.map(\.threadID))
+      for chat in self.agent.conversations where chat.id.hasPrefix(Self.seatPrefix) {
+        if kept.contains(chat.id) { self.desk.hiddenThreads.insert(chat.id) } else { self.agent.deleteThread(chat.id) }
+      }
+    }
+  }
+
+  /// Starts a run for `record` in its seat's hidden chat: on the task, or, with `results`
+  /// (hand-offs its target sent that ended), on those results as its next turn there.
   private func launch(_ record: AssistantHandoff, target: RelayProfile, results: [AssistantHandoff] = []) {
     let scope = effectiveScope(target) ?? personScope
     let places = scope.destinations
@@ -312,6 +341,7 @@ extension RelayOrchestrator {
         }
         // Stop Everything, or the end of the task it was part of, closed it before this ran.
         guard self.handoffLedger.running(thread: thread)?.id == record.id else { throw CancellationError() }
+        self.openSeatChat(record, target: target, mode: mode, provider: engine.provider)
         // The first turn carries its packet beside a short message; the rules in force for its
         // target are in the packet. A later turn, or a hand-off with no packet, leads with them.
         var dispatch = dispatch
