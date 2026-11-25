@@ -111,6 +111,7 @@ enum AssistantCoreChecks {
     ("harnessRules", AssistantCoreChecks.harnessRules),
     ("engines", AssistantCoreChecks.engines),
     ("peers", AssistantCoreChecks.peers),
+    ("peerQuota", AssistantCoreChecks.peerQuota),
     ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("swarmWriters", AssistantCoreChecks.swarmWriters),
     ("stuckLoopback", AssistantCoreChecks.stuckLoopback),

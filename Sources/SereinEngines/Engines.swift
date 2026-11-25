@@ -90,12 +90,13 @@ public actor Engines {
   }
 
   /// A pure answer: sends the turn and returns its text. Cancelling the calling task stops it.
-  /// Throws the `StopReason` of any turn that did not complete.
-  public func ask(_ request: TurnRequest) async throws -> String {
+  /// Throws the `StopReason` of any turn that did not complete. `seen` gets each event first, in order.
+  public func ask(_ request: TurnRequest, seen: @escaping @Sendable (EngineEvent) async -> Void = { _ in }) async throws -> String {
     let handle = try await send(request)
     return try await withTaskCancellationHandler {
       var text = ""
       for await event in handle.events {
+        await seen(event)
         switch event {
         case .text(let part): text += part
         case .newMessage: text = ""

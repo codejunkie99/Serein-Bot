@@ -108,6 +108,52 @@ extension AssistantCoreChecks {
     }
   }
 
+  /// A CLI that reaches its usage or rate limit holds its queued jobs until the reset, then they start by themselves.
+  static func peerQuota(_ check: Check) throws {
+    let top = PeerCaller(thread: ThreadKey("top"), cli: .grok, access: .task(folder: URL(fileURLWithPath: "/tmp/peer-checks")))
+    try peerWorld(check) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+      func settles(_ task: String, _ text: String) async -> Bool {
+        for _ in 0..<25 {
+          if await peers.handle(.wait(runs: [], seconds: 1), task: task).text.contains(text) { return true }
+        }
+        return false
+      }
+
+      _ = await peers.handle(.ask(agents: [.codex], question: "HOLD and ask others"), task: "top")
+      guard let codex = world.host.task(of: .codex) else { return notes.check(false, "Quota: the callee got a browser task") }
+      let burst = await peers.handle(.burst([PeerJob(agent: .claude, prompt: "LIMIT AT"), PeerJob(agent: .claude, prompt: "after")]), task: codex)
+      notes.check(started(.claude) == 1 && burst.text.contains("claude: waiting for its limit to reset, starts by itself at"),
+        "Quota: the queued job for that CLI stays unstarted and tells its caller it waits for the reset")
+      notes.check(burst.text.contains("claude: failed: Claude Code reached its usage limit. Its next jobs start by themselves at"),
+        "Quota: a callee that reaches its usage limit fails with when its CLI's jobs start again")
+
+      let other = await peers.handle(.ask(agents: [.opencode], question: "hi"), task: "top")
+      notes.check(other.text.contains("opencode: answered"), "Quota: other CLIs keep running while one is held")
+      let later = await peers.handle(.ask(agents: [.claude], question: "q"), task: "top")
+      notes.check(started(.claude) == 1 && later.text.contains("claude: waiting for its limit to reset"),
+        "Quota: a new call to the held CLI waits for the reset too")
+      let resumed = await settles(codex, "claude says: after")
+      let allThree = await eventually { started(.claude) == 3 }
+      notes.check(resumed && allThree,
+        "Quota: at the reset time the CLI named, the held jobs start by themselves and answer")
+
+      _ = await peers.handle(.ask(agents: [.opencode], question: "BUSY"), task: "top")
+      let paced = await peers.handle(.ask(agents: [.opencode], question: "next"), task: "top")
+      notes.check(paced.text.contains("opencode: waiting for its limit to reset") && !paced.text.contains("opencode says: next"),
+        "Quota: a rate limit (429) holds the CLI's next job")
+
+      _ = await peers.handle(.ask(agents: [.claude], question: "LIMIT"), task: "top")
+      let unnamed = await peers.handle(.ask(agents: [.claude], question: "unnamed"), task: "top")
+      try? await Task.sleep(for: .milliseconds(2_500))
+      notes.check(unnamed.text.contains("claude: waiting for its limit to reset") && started(.claude) == 4,
+        "Quota: a limit with no reset time named still holds the CLI's next job, past a named reset's wait")
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+  }
+
   private struct PeerWorld: Sendable {
     let peers: Peers
     let host: FakePeerHost
@@ -213,6 +259,9 @@ private final class PeerSession: EngineSession, @unchecked Sendable {
     continuation.yield(.accepted)
     if asked.contains("HOLD") { continuation.yield(.text("working on it")); return }
     if asked.contains("FAIL"), cli == .opencode { continuation.yield(.turnDone(.failed("boom"))); return }
+    if asked.contains("LIMIT AT") { continuation.yield(.limitReached(UsageLimit(resetsAt: Date().addingTimeInterval(2)))) }
+    if asked.contains("LIMIT") { continuation.yield(.failed("You've hit your session limit")); return }
+    if asked.contains("BUSY") { continuation.yield(.failed("429 Too Many Requests")); return }
     let reply: String
     if asked.hasPrefix("Review this draft") {
       reply = asked.contains("draft v2") ? "APPROVED, ship it." : "Add the rollback step."

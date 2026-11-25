@@ -69,6 +69,10 @@ public actor Peers {
     public var inlineCap: Duration = .seconds(100)
     public var inlineMargin: Duration = .seconds(5)
     public var inlineUnknown: Duration = .seconds(20)
+    /// How long a CLI's jobs wait after its usage limit when it named no reset time...
+    public var limitWait: TimeInterval = 15 * 60
+    /// ...and after a rate limit (HTTP 429), which clears in about a minute.
+    public var rateWait: TimeInterval = 60
     public init() {}
   }
 
@@ -97,6 +101,8 @@ public actor Peers {
     var shares: URL? = nil
     var state: PeerJobState = .queued
     var work: Task<Void, Never>?
+    /// The CLI's own word on when its limit resets, seen during the turn.
+    var limit: UsageLimit? = nil
   }
 
   private enum Kind { case ask, bridge, burst, swarm }
@@ -121,6 +127,8 @@ public actor Peers {
   private var order: [String] = []
   private var made = 0
   private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+  /// Each CLI that reached its usage or rate limit, and when its jobs may start again.
+  private var limitedUntil: [HarnessDriver: Date] = [:]
 
   public init(engines: Engines, host: (any PeerHost)? = nil, limits: Limits = Limits()) {
     self.engines = engines
@@ -241,11 +249,17 @@ public actor Peers {
     return index
   }
 
-  /// Starts queued jobs, oldest first, while the caps allow.
+  /// Starts queued jobs, oldest first, while the caps allow. A CLI past its limit starts none until it resets.
   private func pump() {
+    let now = Date()
     for id in order {
       guard let run = runs[id] else { continue }
-      for index in run.jobs.indices where runs[id]!.jobs[index].state == .queued {
+      for index in run.jobs.indices where runs[id]!.jobs[index].state.unstarted {
+        if let until = limitedUntil[runs[id]!.jobs[index].agent], until > now {
+          runs[id]!.jobs[index].state = .limited(until: until)
+          continue
+        }
+        runs[id]!.jobs[index].state = .queued
         if let folder = runs[id]!.jobs[index].shares, writing(in: folder) { continue }
         if run.owner.depth > 0 {
           guard working(where: { $0.owner.caller.thread == run.owner.caller.thread }) == 0 else { break }
@@ -290,18 +304,23 @@ public actor Peers {
         caller: PeerCaller(thread: job.thread, cli: job.agent, access: request.access), root: owner.root,
         rootTask: owner.rootTask, chain: owner.chain + [job.agent], depth: owner.depth + 1)
       try Task.checkCancellation()
-      var answer = try await engines.ask(request)
+      let seen: @Sendable (EngineEvent) async -> Void = { await self.saw($0, id, index) }
+      var answer = try await engines.ask(request, seen: seen)
       if keepGoing, let question = RelayMarks.after(RelayUnattended.inputMark, in: answer) {
         var next = request
         next.prompt.message = Self.keepGoing(question: question, work: job.prompt)
         try Task.checkCancellation()
-        answer = try await engines.ask(next)
+        answer = try await engines.ask(next, seen: seen)
       }
       state = await host.holdsCard(task: request.taskID) ? .parked : .answered(answer)
     } catch StopReason.stopped {
       state = .stopped
     } catch is CancellationError {
       state = .stopped
+    } catch StopReason.usageLimit(let words) {
+      state = limited(job.agent, "usage limit", words: words, reported: runs[id]?.jobs[index].limit, wait: limits.limitWait)
+    } catch StopReason.failed(let why) where HarnessRetry.classify(.message(why)) == .transient(.rateLimited) {
+      state = limited(job.agent, "rate limit", words: why, reported: nil, wait: limits.rateWait)
     } catch StopReason.failed(let why) {
       state = .failed(why)
     } catch {
@@ -312,6 +331,23 @@ public actor Peers {
     if let task { await host.release(task: task) }
     if runs[id]?.jobs[index].state.settled == false { runs[id]!.jobs[index].state = state }
     changed()
+  }
+
+  private func saw(_ event: EngineEvent, _ id: String, _ index: Int) {
+    if case .limitReached(let limit) = event { runs[id]?.jobs[index].limit = limit }
+  }
+
+  /// `cli` reached its limit: its jobs wait for the reset it named, else for `wait`, then start by themselves.
+  private func limited(_ cli: HarnessDriver, _ what: String, words: String, reported: UsageLimit?, wait: TimeInterval) -> PeerJobState {
+    let now = Date()
+    let reset = reported?.resetsAt ?? UsageLimit.text(words, harness: cli, now: now)?.resetsAt ?? now.addingTimeInterval(wait)
+    let until = max(reset, limitedUntil[cli] ?? reset)
+    limitedUntil[cli] = until
+    Task {
+      try? await Task.sleep(for: .seconds(max(0, until.timeIntervalSinceNow)))
+      self.changed()
+    }
+    return .failed("\(cli.displayName) reached its \(what). Its next jobs start by themselves at \(UsageLimit.when(until, now: now)).")
   }
 
   /// At Allow all the caller does not stop to answer: a callee marks a question so Serein can
@@ -617,5 +653,13 @@ public actor Peers {
         id: run.id, kind: kind, jobs: run.jobs.map { PeerJobReport(agent: $0.agent, role: $0.role, state: $0.state) },
         settled: run.settled)
     }
+  }
+}
+
+extension PeerJobState {
+  /// Not started yet: queued, or held for its CLI's limit.
+  fileprivate var unstarted: Bool {
+    if case .limited = self { return true }
+    return self == .queued
   }
 }

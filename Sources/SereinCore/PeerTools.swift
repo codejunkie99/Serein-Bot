@@ -222,6 +222,7 @@ public enum PeerTools {
     switch state {
     case .queued: return "queued, not started yet"
     case .working: return "working"
+    case .limited(let until): return "waiting for its limit to reset, starts by itself at \(UsageLimit.when(until, now: Date()))"
     case .parked: return "waiting on the person: a secure card is open in the chat"
     case .answered: return "answered"
     case .failed(let why): return "failed: \(why)"
@@ -317,6 +318,8 @@ public enum PeerCall: Sendable, Equatable {
 
 public enum PeerJobState: Sendable, Equatable {
   case queued, working
+  /// Not started: the CLI reached its usage or rate limit, so its jobs start by themselves at this time.
+  case limited(until: Date)
   case answered(String)
   case failed(String)
   /// A secure card outlasted the callee's tool call; the person's answer starts its next turn.
@@ -325,7 +328,7 @@ public enum PeerJobState: Sendable, Equatable {
 
   public var settled: Bool {
     switch self {
-    case .queued, .working: return false
+    case .queued, .working, .limited: return false
     case .answered, .failed, .parked, .stopped: return true
     }
   }
