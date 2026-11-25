@@ -196,6 +196,76 @@ extension AssistantCoreChecks {
       "Room: a normal start adds no measurable delay (gate \(show(gate)) ms median of 200; send to end \(show(on)) ms with it, \(show(off)) ms without, median of 9 each, ranges \(show(timing.on.min()!))-\(show(timing.on.max()!)) and \(show(timing.off.min()!))-\(show(timing.off.max()!)) ms)")
   }
 
+  /// A caller blocked on its own callee never holds that callee out of the room, and callees of
+  /// running callers start ahead of new top-level starts.
+  static func roomCallee(_ check: Check) throws {
+    let records = RunRecords(root: FileManager.default.temporaryDirectory.appendingPathComponent("room-callee-\(UUID().uuidString)"))
+    defer { try? FileManager.default.removeItem(at: records.root) }
+    let reading = RoomReading(nil)
+    let plenty = RoomSnapshot(totalBytes: 8 * gb, availableBytes: 4 * gb)
+    let short = RoomSnapshot(totalBytes: 8 * gb, availableBytes: gb)
+    func world() -> (Engines, RoomHost) {
+      let host = RoomHost()
+      let room = EngineRoom(sample: { reading.value }, footprint: { _ in nil }, tick: .milliseconds(5), giveUp: 60)
+      let engines = Engines(
+        drivers: [RoomDriver()], host: host, records: records, sleep: { try? await Task.sleep(for: min($0, .milliseconds(20))) },
+        tickEvery: .seconds(3_600), room: room)
+      return (engines, host)
+    }
+    @Sendable func request(_ thread: String, _ message: String) -> TurnRequest {
+      TurnRequest(
+        thread: ThreadKey(thread), cli: .codex, executable: URL(fileURLWithPath: "/usr/bin/true"), access: .answer,
+        prompt: TurnPrompt(stable: thread, volatile: "v", message: message, recovery: nil), model: nil, effort: nil, resume: nil,
+        browser: nil, taskID: "task")
+    }
+    @Sendable func until(_ done: @Sendable () async -> Bool) async -> Bool {
+      let deadline = Date().addingTimeInterval(3)
+      while Date() < deadline { if await done() { return true }; try? await Task.sleep(for: .milliseconds(5)) }
+      return false
+    }
+    @Sendable func watch(_ handle: TurnHandle) -> TurnLog {
+      let log = TurnLog()
+      Task { for await event in handle.events { log.append(event) } }
+      return log
+    }
+    func waits(_ log: TurnLog) -> Bool { log.events.contains { if case .waiting = $0 { return true } else { return false } } }
+
+    let crossed = try blocking { () async throws -> Bool in
+      reading.value = plenty
+      let (engines, host) = world()
+      _ = try await engines.send(request("a", "HOLD"))
+      _ = try await engines.send(request("b", "HOLD"))
+      _ = await until { host.count == 2 }
+      reading.value = short
+      let first = watch(try await engines.send(request("b>run.0", "hi")))
+      _ = await until { waits(first) || first.events.last == .ended(TurnEnd(.endTurn)) }
+      _ = watch(try await engines.send(request("a>run.0", "hi")))
+      let ended = await until { first.events.last == .ended(TurnEnd(.endTurn)) }
+      await engines.shutdown()
+      return ended
+    }
+    try check(crossed, "Room: two callers each blocked on their own waiting callee never hold those callees out")
+
+    let ordered = try blocking { () async throws -> [String] in
+      reading.value = plenty
+      let (engines, host) = world()
+      _ = try await engines.send(request("busy", "HOLD"))
+      _ = try await engines.send(request("a", "HOLD"))
+      _ = await until { host.count == 2 }
+      reading.value = short
+      let top = watch(try await engines.send(request("c", "hi")))
+      _ = await until { waits(top) }
+      let callee = watch(try await engines.send(request("a>run.0", "hi")))
+      _ = await until { waits(callee) }
+      // Room for one more start beside the two just let in: floor 819 MB, two held shares, one share.
+      reading.value = RoomSnapshot(totalBytes: 8 * gb, availableBytes: 3_000 * EngineRoom.mb)
+      _ = await until { host.count == 4 }
+      await engines.shutdown()
+      return host.order
+    }
+    try check(ordered == ["busy", "a", "a>run.0", "c"], "Room: a running caller's callee starts ahead of a top-level start that came first (\(ordered))")
+  }
+
   private static func roomSampler(_ check: Check) throws {
     let memory = EngineRoom.macMemory()
     try check(
@@ -268,12 +338,18 @@ private final class RoomSession: EngineSession, @unchecked Sendable {
 private final class RoomHost: ProcessHosting, @unchecked Sendable {
   private let lock = NSLock()
   private var started: [RoomProcess] = []
+  private var names: [String] = []
   var count: Int { lock.withLock { started.count } }
+  /// Each start's stable prompt, in start order.
+  var order: [String] { lock.withLock { names } }
   var first: RoomProcess? { lock.withLock { started.first } }
 
   func spawn(_ contract: LaunchContract) throws -> any HostedProcess {
     let process = RoomProcess()
-    lock.withLock { started.append(process) }
+    lock.withLock {
+      started.append(process)
+      names.append(contract.stablePrompt)
+    }
     return process
   }
 }

@@ -15,7 +15,8 @@ struct RoomOccupant: Sendable, Equatable {
     case idle
     /// Running a turn, or opening: its end gives room.
     case working
-    /// A caller whose team tool waits on this start (Peers names callees `caller>run.index`).
+    /// A caller whose team tool waits on this start, or on another start still in the room's queue
+    /// (Peers names callees `caller>run.index`): its turn cannot end before that start, so it gives no room.
     case waitsOnThis
   }
 
@@ -48,7 +49,8 @@ struct EngineRoom: Sendable {
   var giveUp: TimeInterval = 60
   /// When each thread's CLI was let in.
   var admitted: [ThreadKey: Date] = [:]
-  /// Waiting starts by generation, first come first started.
+  /// Waiting starts by generation, first come first started, except that a callee of a running
+  /// caller goes ahead of every other start: its caller holds memory until it answers.
   var queue: [Int] = []
 
   static let mb: Int64 = 1 << 20
@@ -115,7 +117,9 @@ extension Engines {
   func waitForRoom(_ thread: ThreadKey, _ generation: Int) async -> StopReason? {
     let began = Date()
     var told: Date?
-    room.queue.append(generation)
+    func calleeStart(_ queued: Int) -> Bool { slots.contains { $0.value.generation == queued && callerWaits(on: $0.key) } }
+    let ahead = callerWaits(on: thread) ? room.queue.firstIndex { !calleeStart($0) } : nil
+    room.queue.insert(generation, at: ahead ?? room.queue.endIndex)
     defer { room.queue.removeAll { $0 == generation } }
     while let slot = slots[thread], slot.generation == generation, !slot.stopAsked {
       let others = roomOccupants(except: thread)
@@ -147,10 +151,17 @@ extension Engines {
     return nil
   }
 
+  /// A team tool's callee whose caller's CLI is mid-turn: that turn cannot end before this one starts.
+  private func callerWaits(on thread: ThreadKey) -> Bool {
+    slots.contains { thread.id.hasPrefix($0.key.id + ">") && $0.value.process != nil && !$0.value.idle }
+  }
+
   private func roomOccupants(except thread: ThreadKey) -> [RoomOccupant] {
-    slots.compactMap { key, slot in
+    let starting = slots.filter { room.queue.contains($0.value.generation) }.map(\.key)
+    return slots.compactMap { key, slot in
       guard key != thread, let process = slot.process else { return nil }
-      let state: RoomOccupant.State = thread.id.hasPrefix(key.id + ">") ? .waitsOnThis : slot.idle ? .idle : .working
+      let blocked = starting.contains { $0.id.hasPrefix(key.id + ">") }
+      let state: RoomOccupant.State = blocked ? .waitsOnThis : slot.idle ? .idle : .working
       let recent = room.admitted[key].map { Date().timeIntervalSince($0) < EngineRoom.reserve } ?? false
       return RoomOccupant(thread: key, state: state, footprint: room.footprint(process.pgid), recent: recent, lastUsed: slot.lastUsed)
     }
