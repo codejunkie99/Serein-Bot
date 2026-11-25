@@ -138,10 +138,10 @@ extension AssistantCoreChecks {
     let plain = TurnPrompt(stable: "STABLE", volatile: "now: 9:00", message: "hi", recovery: nil)
     var carried = plain
     carried.registry = "SLICE"
-    let moved = carried.registryInVolatile
+    let moved = carried.contextInVolatile
     try check(moved.stable == plain.stable && moved.volatile == "SLICE\n\nnow: 9:00" && moved.registry == nil && moved.message == plain.message,
       "Registry prompt: the slice rides ahead of the volatile part and the stable part is byte-identical")
-    try check(plain.registryInVolatile == plain, "Registry prompt: a turn with no slice is unchanged")
+    try check(plain.contextInVolatile == plain, "Registry prompt: a turn with no slice is unchanged")
     let rig = try ACPCheckRig(GeminiDriver(), name: "gemini")
     defer { try? rig.finish() }
     var cold = rig.request("hello", thread: "reg")

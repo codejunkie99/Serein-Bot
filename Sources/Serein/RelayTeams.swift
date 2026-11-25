@@ -277,7 +277,6 @@ extension RelayOrchestrator {
     let dispatch = AgentModel.DispatchTarget(
       mode: mode, provider: engine.provider, model: engine.model, effort: engine.effort,
       actions: mode != .answer && places.contains(.web), mac: places.contains(.mac), relay: false, initiator: .handoff)
-    let prompt = results.isEmpty ? handoffPrompt(record, target: target, scope: scope) : resultsPrompt(record, results)
     let thread = record.threadID
     // A row from before rooms, or one a relaunch left waiting: packed now, reusing what it has.
     let packed = results.isEmpty
@@ -313,9 +312,22 @@ extension RelayOrchestrator {
         }
         // Stop Everything, or the end of the task it was part of, closed it before this ran.
         guard self.handoffLedger.running(thread: thread)?.id == record.id else { throw CancellationError() }
-        // No Relay context rides a hand-off's run, so the rules in force for its target lead the prompt.
-        let ruled = await self.withRules(prompt, profileID: target.id, thread: thread)
-        _ = try await self.agent.dispatch(ruled, into: thread, create: true, as: dispatch)
+        // The first turn carries its packet beside a short message; the rules in force for its
+        // target are in the packet. A later turn, or a hand-off with no packet, leads with them.
+        var dispatch = dispatch
+        let packet = results.isEmpty ? packed.room.flatMap { room in
+          packed.packet.flatMap { self.rooms.packet(record.id, room: room, n: $0, takesPrivate: true) }
+        } : nil
+        let prompt: String
+        if let packet {
+          dispatch.packet = .init(uri: "serein-room://\(packet.room)/packets/\(packet.n)", text: packet.brief())
+          prompt = self.handoffPrompt(record, target: target, scope: scope, briefed: true)
+        } else {
+          let plain = results.isEmpty ? self.handoffPrompt(record, target: target, scope: scope, briefed: false) : self.resultsPrompt(record, results)
+          // No Relay context rides a hand-off's run, so the rules in force for its target lead the prompt.
+          prompt = await self.withRules(plain, profileID: target.id, thread: thread)
+        }
+        _ = try await self.agent.dispatch(prompt, into: thread, create: true, as: dispatch)
         // The target's chat now holds the words a marked chat wrote. A mark that cannot be
         // saved stops the run (its hand-off then closes as stopped).
         if record.personal == true, !self.agent.markPersonalRead(thread: thread) {
@@ -334,9 +346,9 @@ extension RelayOrchestrator {
     }
   }
   /// What the target reads: who asked down the chain, who it is, what it may use, who it may
-  /// hand a part to, then the exact task. Its persona and instructions are advice; the scope is
-  /// enforced by the host.
-  private func handoffPrompt(_ record: AssistantHandoff, target: RelayProfile, scope: AssistantScope) -> String {
+  /// hand a part to, then the exact task, or, `briefed`, where its packet holds it. Its persona
+  /// and instructions are advice; the scope is enforced by the host.
+  private func handoffPrompt(_ record: AssistantHandoff, target: RelayProfile, scope: AssistantScope, briefed: Bool) -> String {
     let sender = profileName(record.from)
     let chain = (record.chain ?? [record.from]).map(profileName)
     let persona = browser.library.load(RelayPersona.self, from: team.folder(target.id) + "/persona.json")?.prompt() ?? ""
@@ -353,6 +365,10 @@ extension RelayOrchestrator {
       lines.append(
         "You may hand a part of this task to a teammate whose job fits it better than yours, with assistant_handoff, except anyone already in that chain (\(chain.joined(separator: ", "))). Its result comes back to this chat and you finish from there. Your teammates, each with its job:\n"
           + teammateLines(mates))
+    }
+    guard !briefed else {
+      lines.append("Your task, the person's own words and what the team knows so far are in the packet with this message. When you are done, call room_report; it goes back to \(sender).")
+      return lines.joined(separator: "\n\n")
     }
     lines.append("When you are done, reply with the result in a few sentences; it goes back to \(sender).")
     lines.append("The task:\n" + record.task)
@@ -385,14 +401,30 @@ extension RelayOrchestrator {
     guard run.spec.initiator == .handoff else { return false }
     // Its hand-off ended before its run did (Stop Everything): nothing is left to close or tell.
     guard let record = handoffLedger.running(thread: run.spec.threadID) else { return true }
-    let reply = run.reportedSummary ?? run.transcript.last(where: { $0.role == "assistant" && !$0.text.isEmpty })?.text ?? ""
-    switch run.record.outcome {
+    let lastReply = run.reportedSummary ?? run.transcript.last(where: { $0.role == "assistant" && !$0.text.isEmpty })?.text ?? ""
+    let outcome = run.record.outcome
     // Something its target handed on is still out, or its result has yet to reach this chat: it
     // stays open and ends with the turn those results start (`deliverChainResults`).
-    case .done where !handoffLedger.closable(record.id): break
-    case .done: closeHandoff(record.id, .done, result: reply)
-    case .stopped: closeHandoff(record.id, .failed, result: HandoffLedger.stoppedWords)
-    case .waiting: closeHandoff(record.id, .failed, result: "It stopped for the user: " + (reply.isEmpty ? "it needs you." : reply))
+    if outcome == .done && !handoffLedger.closable(record.id) {
+      deliverHandoffReports()
+      startWaitingHandoffs()
+      return true
+    }
+    // Its room_report stands; without one the host writes it from the last reply (`byHost`).
+    let state: HandoffReport.State = switch outcome {
+    case .done: .done
+    case .stopped: .stopped
+    case .waiting: .waiting
+    default: .failed
+    }
+    let report = record.packet.map {
+      reportOnce(HandoffReport(handoff: record.id, packet: $0, state: state, summary: lastReply, byHost: true), record: record)
+    }
+    let reply = report.map { $0.byHost ? lastReply : $0.summary } ?? lastReply
+    switch (outcome, report?.state ?? state) {
+    case (.done, .done): closeHandoff(record.id, .done, result: reply)
+    case (.stopped, _): closeHandoff(record.id, .failed, result: HandoffLedger.stoppedWords)
+    case (.waiting, _), (_, .waiting): closeHandoff(record.id, .failed, result: "It stopped for the user: " + (reply.isEmpty ? "it needs you." : reply))
     default: closeHandoff(record.id, .failed, result: run.error ?? (reply.isEmpty ? "It could not finish." : reply))
     }
     deliverHandoffReports()

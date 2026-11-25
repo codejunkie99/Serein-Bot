@@ -162,20 +162,32 @@ public struct TurnPrompt: Hashable, Sendable {
   /// session only.
   public var command: String? = nil
   /// The chat registry's slice for a cold session (ChatRegistry.slice). ACP takes it as an
-  /// embedded resource; every other engine reads it ahead of `volatile` (`registryInVolatile`).
+  /// embedded resource; every other engine reads it ahead of `volatile` (`contextInVolatile`).
   public var registry: String? = nil
+  /// A seat's hand-off packet (HandoffPacket.brief) on its first turn. ACP takes it as an
+  /// embedded resource on every turn it rides; every other engine reads it ahead of `volatile`.
+  public var packet: Embedded? = nil
+  public struct Embedded: Hashable, Sendable {
+    public var uri: String
+    public var text: String
+    public init(uri: String, text: String) {
+      self.uri = uri
+      self.text = text
+    }
+  }
   public init(stable: String, volatile: String, message: String, recovery: String?) {
     self.stable = stable
     self.volatile = volatile
     self.message = message
     self.recovery = recovery
   }
-  /// The slice moved into `volatile`; `stable` is never touched, so the warm key holds.
-  public var registryInVolatile: TurnPrompt {
-    guard let registry else { return self }
+  /// The slice and the packet moved into `volatile`; `stable` is never touched, so the warm key holds.
+  public var contextInVolatile: TurnPrompt {
+    guard registry != nil || packet != nil else { return self }
     var moved = self
-    moved.volatile = [registry, volatile].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    moved.volatile = [registry ?? "", packet?.text ?? "", volatile].filter { !$0.isEmpty }.joined(separator: "\n\n")
     moved.registry = nil
+    moved.packet = nil
     return moved
   }
 }

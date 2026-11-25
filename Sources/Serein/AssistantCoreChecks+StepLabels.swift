@@ -36,7 +36,7 @@ extension AssistantCoreChecks {
     try check(changes?.label == "Edited prices.py and 1 more", "Several changed files read as the first and how many more")
     try check(RunNow.toolName("mcp__linear__create_issue") == "create_issue in linear", "A plain server name stays as it is")
     try check(RunNow.toolName("Bash") == "Bash", "A tool that is not a connected app's keeps its name")
-    let own = RelayTools.names.union(RelayTools.teamNames).union(PeerTools.names).sorted()
+    let own = RelayTools.names.union(RelayTools.teamNames).union(RelayTools.roomNames).union(PeerTools.names).sorted()
     let raw = own.filter { AgentStep.label(tool: $0, arguments: [:]) == "Used a tool" }
     try check(raw.isEmpty, "Each of Serein's own tools reads in words in its steps [no words for: \(raw.joined(separator: ", "))]")
     let finding = RunNow.claudeTool("mcp__serein_browser__files_find", input: ["query": "posts"], folder: nil)

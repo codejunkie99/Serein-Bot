@@ -3,14 +3,20 @@ import SereinCore
 
 /// The app side of rooms (TEAMS-V2-BASE 2.7), and the only code that reads or writes under
 /// relay/rooms/ (scripts/check_room_owner.py). One folder per room, 0700, in Serein's private
-/// store: room.json, notes.md and packets/<nnn>.md, each 0600. Every write runs off the main
-/// actor, in the order it was asked for, so a turn never waits on the disk.
+/// store: room.json, notes.md, seats/<seat>.jsonl, packets/<nnn>.json with its markdown copy
+/// <nnn>.md, and reports/<nnn>.md, each 0600. Every write runs off the main actor, in the order
+/// it was asked for, so a turn never waits on the disk.
 @MainActor final class Rooms {
   static let path = "relay/rooms"
   let folder: URL
   private var rooms: [Workroom.ID: Workroom] = [:]
-  /// This launch's packets, for readers (`packet(_:takesPrivate:)`).
+  /// Packets by hand-off, for readers (`packet(_:takesPrivate:)`): this launch's, or read back
+  /// from their sealed JSON.
   private var packets: [AssistantHandoff.ID: HandoffPacket] = [:]
+  /// Each room's notes from every seat's log, read on first use.
+  private var notes: [Workroom.ID: [RoomNote]] = [:]
+  /// The report each seat gave (room_report), or the host wrote at its run's end.
+  private var reports: [AssistantHandoff.ID: HandoffReport] = [:]
   private var seals: [AssistantHandoff.ID: Task<Bool, Never>] = [:]
   private var lastWrite: Task<Bool, Never>?
 
@@ -43,22 +49,30 @@ import SereinCore
     return n
   }
 
-  /// Seals packet `n` of room `id` for `handoff`, once, with room.json and notes.md beside it. A
-  /// packet file already there (a launch after a crash) is kept as it is, and `build` never runs.
+  /// Seals packet `n` of room `id` for `handoff`, once, with room.json and notes.md beside it:
+  /// its JSON first, then the markdown copy. A packet already sealed (a launch after a crash) is
+  /// read back as it is, and `build` never runs.
   func seal(_ handoff: AssistantHandoff.ID, room id: Workroom.ID, n: Int,
             build: @escaping (Workroom) async -> HandoffPacket) {
     guard seals[handoff] == nil, let room = rooms[id] else { return }
-    let dir = folder, file = packetFile(id, n)
+    let dir = folder, file = packetFile(id, n), json = jsonFile(id, n)
     let before = lastWrite
     let task = Task { [weak self] () -> Bool in
       _ = await before?.value
-      let kept = await Task.detached { FileManager.default.fileExists(atPath: file.path) }.value
-      let packet = kept ? nil : await build(room)
+      let (sealed, markdownOnly) = await Task.detached {
+        (Library.load(HandoffPacket.self, at: json), FileManager.default.fileExists(atPath: file.path))
+      }.value
+      // A packet sealed before its JSON was kept has no way back in: it stays as it is.
+      var packet = sealed
+      if sealed == nil, !markdownOnly { packet = await build(room) }
       if let packet { self?.packets[handoff] = packet }
       return await Task.detached {
         do {
           try RoomFiles.save(room, in: dir)
-          if let packet { try RoomFiles.write(packet.markdown(), to: file, seal: true) }
+          if let packet {
+            if sealed == nil { try RoomFiles.write(RoomFiles.json(packet), to: json, seal: true) }
+            try RoomFiles.write(packet.markdown(), to: file, seal: true)
+          }
           return true
         } catch { return false }
       }.value
@@ -82,12 +96,79 @@ import SereinCore
   }
 
   /// What a reader of `handoff`'s packet gets: the whole packet only when it takes private chats.
-  func packet(_ handoff: AssistantHandoff.ID, takesPrivate: Bool) -> HandoffPacket? {
-    packets[handoff].map { takesPrivate ? $0 : $0.withheld() }
+  /// `room` and `n` read a packet this launch did not seal back from its JSON.
+  func packet(_ handoff: AssistantHandoff.ID, room: Workroom.ID? = nil, n: Int? = nil, takesPrivate: Bool) -> HandoffPacket? {
+    if packets[handoff] == nil, let room, let n, let sealed = Library.load(HandoffPacket.self, at: jsonFile(room, n)),
+      sealed.handoff == handoff
+    {
+      packets[handoff] = sealed
+    }
+    return packets[handoff].map { takesPrivate ? $0 : $0.withheld() }
   }
 
   func packetFile(_ room: Workroom.ID, _ n: Int) -> URL {
     folder.appendingPathComponent(room + "/packets/" + String(format: "%03d", n) + ".md")
+  }
+  func jsonFile(_ room: Workroom.ID, _ n: Int) -> URL {
+    folder.appendingPathComponent(room + "/packets/" + String(format: "%03d", n) + ".json")
+  }
+
+  /// Room `id`'s notes, every seat's, in `seq` order.
+  func notes(in id: Workroom.ID) -> [RoomNote] {
+    if let kept = notes[id] { return kept }
+    let logs = (try? FileManager.default.contentsOfDirectory(at: folder.appendingPathComponent(id + "/seats"), includingPropertiesForKeys: nil)) ?? []
+    let read = logs.filter { $0.pathExtension == "jsonl" }.flatMap { RoomFiles.notes(in: $0) }.sorted { $0.seq < $1.seq }
+    notes[id] = read
+    return read
+  }
+
+  /// Appends a note to `seat`'s own log, then rewrites notes.md from every seat's. `names` reads
+  /// a seat as its assistant's name.
+  @discardableResult
+  func note(_ kind: RoomNote.Kind, _ text: String, seat: Workroom.Seat.ID, in id: Workroom.ID, at: Date = Date(),
+            names: [Workroom.Seat.ID: String]) -> RoomNote {
+    var all = notes(in: id)
+    let note = RoomNote(seq: (all.map(\.seq).max() ?? 0) + 1, seat: seat, kind: kind, text: text, at: at)
+    all.append(note)
+    notes[id] = all
+    let own = all.filter { $0.seat == seat }, notesMD = RoomNotes.render(all, names: names)
+    let dir = folder.appendingPathComponent(id), before = lastWrite
+    lastWrite = Task {
+      _ = await before?.value
+      return await Task.detached {
+        do {
+          try RoomFiles.make(dir.appendingPathComponent("seats"))
+          try RoomFiles.write(own.map(RoomFiles.json).joined(separator: "\n") + "\n", to: dir.appendingPathComponent("seats/\(seat).jsonl"))
+          try RoomFiles.write(notesMD, to: dir.appendingPathComponent("notes.md"))
+          return true
+        } catch { return false }
+      }.value
+    }
+    return note
+  }
+
+  /// The report of `handoff`, once it has one.
+  func report(_ handoff: AssistantHandoff.ID) -> HandoffReport? { reports[handoff] }
+
+  /// Keeps a seat's first report (a second room_report changes nothing) and seals it as
+  /// reports/<nnn>.md. Returns the report that stands.
+  @discardableResult
+  func report(_ report: HandoffReport, room id: Workroom.ID) -> HandoffReport {
+    if let kept = reports[report.handoff] { return kept }
+    reports[report.handoff] = report
+    let dir = folder.appendingPathComponent(id), before = lastWrite
+    let file = dir.appendingPathComponent("reports/" + String(format: "%03d", report.packet) + ".md")
+    lastWrite = Task {
+      _ = await before?.value
+      return await Task.detached {
+        do {
+          try RoomFiles.make(dir.appendingPathComponent("reports"))
+          try RoomFiles.write(report.markdown(), to: file, seal: true)
+          return true
+        } catch { return false }
+      }.value
+    }
+    return report
   }
 
   private func save(_ room: Workroom) {
@@ -125,7 +206,22 @@ enum RoomFiles {
     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
   }
 
-  private static func make(_ url: URL) throws {
+  static func json<T: Encodable>(_ value: T) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    return (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+  }
+
+  /// A seat's log, one note per line; a line that does not read is skipped.
+  static func notes(in log: URL) -> [RoomNote] {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n")
+      .compactMap { try? decoder.decode(RoomNote.self, from: Data($0.utf8)) }
+  }
+
+  static func make(_ url: URL) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
   }
@@ -158,15 +254,95 @@ extension RelayOrchestrator {
     for file in steps.compactMap(Self.file) where !files.contains(file) { files.append(file) }
     let words = personWords(room.root, record)
     let (from, to, chain) = (profileName(record.from), profileName(record.to), record.holders.map(profileName))
+    // What the team settled and still asks so far: the room's notes, as the packet is sealed now.
+    let noted = rooms.notes(in: id)
+    let decisions = noted.filter { $0.kind == .decision }.map(\.text)
+    let asks = noted.filter { $0.kind == .ask }.map { HandoffPacket.OpenAsk(text: $0.text) }
     let parentPacket = parent?.packet, sent = record
     rooms.seal(record.id, room: id, n: n) { [weak self] room in
       let rules = await self?.rulesBlock(profileID: sent.to, thread: sent.threadID) ?? ""
       return HandoffPacket(
         in: room, n: n, handoff: sent.id, parent: parentPacket, from: from, to: to, chain: chain, createdAt: sent.createdAt,
         rules: rules, contract: .init(task: sent.task), personWords: words, summary: sent.task,
-        decisions: [], openAsks: [], files: files, trail: trail)
+        decisions: decisions, openAsks: asks, files: files, trail: trail)
     }
     return record
+  }
+
+  /// room_read, room_note and room_report from the run of the hand-off that holds `seatThread`.
+  func roomTool(_ name: String, _ a: [String: Any], seatThread: String) throws -> [String: Any] {
+    guard let record = handoffLedger.running(thread: seatThread), let id = record.room, let n = record.packet else {
+      throw SereinError.invalid("That hand-off is no longer open, so its room is closed.")
+    }
+    let (seat, names) = seatOf(record, in: id)
+    func words(_ key: String) -> String { (a[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+    func refuseSecret(_ texts: [String]) throws {
+      guard texts.allSatisfy({ AgentPrivacy.redact($0) == $0 }) else {
+        throw SereinError.invalid("That looks like a key or password. Leave the value out; say where it is kept.")
+      }
+    }
+    switch name {
+    case "room_read":
+      let part = words("part")
+      let text = part == "notes" ? RoomNotes.render(rooms.notes(in: id), names: names)
+        : rooms.packet(record.id, room: id, n: n, takesPrivate: true)?.read(part)
+      guard let text else { throw SereinError.invalid("Nothing to read there: part is packet, notes, trail or files.") }
+      let offset = max(0, a["offset"] as? Int ?? 0)
+      let page = String(text.dropFirst(offset).prefix(HandoffPacket.Cap.brief))
+      let next = offset + page.count
+      return ["result": UntrustedText.wrap("room_read", UntrustedText.escape(page), ref: "\(id)/\(part)")
+        + (next < text.count ? "\n… (more: room_read part=\(part) offset=\(next))" : "")]
+    case "room_note":
+      let text = words("text")
+      guard let kind = RoomNote.Kind(rawValue: words("kind")), kind != .done, !text.isEmpty else {
+        throw SereinError.invalid("A note needs kind (fact, decision, file or ask) and text.")
+      }
+      try refuseSecret([text])
+      rooms.note(kind, text, seat: seat, in: id, names: names)
+      return ["result": "Noted for the team."]
+    case "room_report":
+      let summary = words("summary")
+      let state: HandoffReport.State? = switch words("state") {
+      case "done": .done
+      case "failed": .failed
+      case "waiting": .waiting
+      default: nil
+      }
+      guard let state, !summary.isEmpty else { throw SereinError.invalid("A report needs state (done, failed or waiting) and a summary.") }
+      let list = { (key: String) in (a[key] as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+      try refuseSecret([summary] + list("decisions") + list("files") + list("open"))
+      let filed = reportOnce(HandoffReport(
+        handoff: record.id, packet: n, state: state, summary: summary, decisions: list("decisions"),
+        files: list("files").map { HandoffPacket.FileRef(path: $0) }, open: list("open").map { HandoffPacket.OpenAsk(text: $0) },
+        byHost: false), record: record)
+      return ["result": filed.byHost ? "Your report was already written." : "Reported to \(profileName(record.from)). End your turn now."]
+    default:
+      throw SereinError.invalid("Serein has no tool \(name).")
+    }
+  }
+
+  /// A seat's report, kept once with its trace in the room's notes: a `.done` note with the
+  /// summary and a `.file` note per file. The first report stands.
+  @discardableResult
+  func reportOnce(_ report: HandoffReport, record: AssistantHandoff) -> HandoffReport {
+    guard let id = record.room else { return report }
+    if let kept = rooms.report(record.id) { return kept }
+    let filed = rooms.report(report, room: id)
+    let (seat, names) = seatOf(record, in: id)
+    if !filed.summary.isEmpty { rooms.note(.done, filed.summary, seat: seat, in: id, names: names) }
+    for file in filed.files { rooms.note(.file, file.path, seat: seat, in: id, names: names) }
+    return filed
+  }
+
+  /// `record`'s seat in room `id` (a stand-in id before its launch recorded one) and each seat's
+  /// assistant name, for notes.
+  private func seatOf(_ record: AssistantHandoff, in id: Workroom.ID) -> (Workroom.Seat.ID, [Workroom.Seat.ID: String]) {
+    let room = rooms.room(id) {
+      Workroom(id: id, root: .person(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)),
+               lead: record.chain?.first ?? record.from, thread: record.askedIn, reach: Reach.person(personScope), now: record.createdAt)
+    }
+    let seat = room.seats.first { $0.handoff == record.id }?.id ?? "h-" + record.id
+    return (seat, Dictionary(room.seats.map { ($0.id, profileName($0.who)) }, uniquingKeysWith: { a, _ in a }))
   }
 
   /// The seat a launching hand-off takes: under the seat that sent it (the lead for a root), at

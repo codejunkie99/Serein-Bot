@@ -336,7 +336,7 @@ public actor Engines {
       guard let session = slot.session else { return }
       let request = slot.request
       Task {
-        do { try await session.send(session.takesRegistry ? prompt : prompt.registryInVolatile, request: request) } catch {
+        do { try await session.send(session.takesRegistry ? prompt : prompt.contextInVolatile, request: request) } catch {
           self.feed(thread, generation, .wire(.failed(String(describing: error)), at: self.now()))
         }
       }

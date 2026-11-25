@@ -383,6 +383,8 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
   /// The person's messages of the turn being dispatched (`DispatchTarget.written`), during its
   /// `send` only.
   private var writtenMessages: [AgentMessage]?
+  /// The dispatched seat's packet (`DispatchTarget.packet`), during its `send` only.
+  private var dispatchedPacket: TurnPrompt.Embedded?
   private let providerDiscoveryEnabled: Bool
   /// The chats file of the Library at `root`, started at launch before anything else reads it.
   static var launchThreads: (root: URL, chats: BackgroundRead<[Conversation]>)?
@@ -972,6 +974,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
       helperList.append("--settings")
       if relay { helperList.append("--relay") }
       if offersHandoff { helperList.append("--team") }
+      if initiator == .handoff && !relay { helperList.append("--room") }
       // Team tools (PeerTools) for every project run, task or chat; Peers answers them while its
       // run lasts, at most at the caller's level (AppPeerHost.access). Other modes have no folder to share.
       if engineRuns && mode == .project && !grant.ownSetup { helperList.append(PeerTools.flag) }
@@ -1079,6 +1082,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           self, thread: conversationID, provider: provider.rawValue, project: project?.name,
           personal: readsPersonal(thread: conversationID),
           query: (conversations.first { $0.id == conversationID }?.title ?? "") + "\n" + turn.prompt, cold: remoteID == nil)
+        engineRequest?.prompt.packet = dispatchedPacket
         if direct != nil, engineRequest?.directHTTP == nil { throw SereinError.invalid("The provider connection changed. Select it again.") }
         if let nativeCommand {
           guard remoteID == commandSession, remoteID != nil else {
@@ -2111,6 +2115,8 @@ extension AgentModel {
     var page: SereinPage? = nil
     /// Rechecked after provider preparation, before the capability is granted.
     var pageIsCurrent: (() -> Bool)? = nil
+    /// A seat's hand-off packet, carried by its first turn beside the prompt (`TurnPrompt.packet`).
+    var packet: TurnPrompt.Embedded? = nil
   }
   /// The tab a page task reads and acts in: the pinned one while dispatch sends, else the active.
   private var pageTab: BrowserTab? {
@@ -2213,7 +2219,11 @@ extension AgentModel {
     let documents = ComposerContext.Chips(
       pictures: target.attached.compactMap(\.picture), documents: target.attached.compactMap(\.document))
     writtenMessages = target.written
-    defer { writtenMessages = nil }
+    dispatchedPacket = target.packet
+    defer {
+      writtenMessages = nil
+      dispatchedPacket = nil
+    }
     send(prompt, chips: documents, plan: false, waitedForCodex: true, waitedForRegistry: true, linkChecked: true, relay: target.relay, initiator: target.initiator, attached: target.attached)
     pinnedPageTab = nil
     delegatedByPerson = false

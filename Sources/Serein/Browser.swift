@@ -1758,6 +1758,13 @@ struct BrowserTask {
     {
       return try await relay.tools.handOff(request["arguments"] as? [String: Any] ?? [:], handoffChat: run.spec.threadID)
     }
+    // A hand-off's own run and its team room: the host finds the seat from the run (Rooms).
+    if RelayTools.roomNames.contains(raw) {
+      guard let relay = RelayOrchestrator.shared,
+        let run = relay.agent.hub.runs.first(where: { $0.taskID == id }), run.spec.initiator == .handoff
+      else { throw SereinError.invalid("Only an assistant working on a hand-off has a team room.") }
+      return try relay.roomTool(raw, request["arguments"] as? [String: Any] ?? [:], seatThread: run.spec.threadID)
+    }
     // Relay's orchestration tools: only its own run holds them (RelayToolHost).
     if RelayTools.names.contains(raw) || RelayTools.teamNames.contains(raw) {
       guard task.allowRelay, let relay = RelayOrchestrator.shared else {

@@ -195,6 +195,16 @@ public struct HandoffPacket: Codable, Equatable, Sendable {
     return AgentPrivacy.clipped(text, limit: Cap.file)
   }
 
+  /// What room_read gives for `part`: the whole packet, its trail or its files; nil for any other.
+  public func read(_ part: String) -> String? {
+    switch part {
+    case "packet": return markdown()
+    case "trail": return list(trail.map(Self.trailLine)).joined(separator: "\n")
+    case "files": return list(files.map(Self.fileLine)).joined(separator: "\n")
+    default: return nil
+    }
+  }
+
   var contractLines: [String] {
     [contract.task]
       + (contract.constraints.isEmpty ? [] : ["Constraints: " + contract.constraints.joined(separator: "; ")])

@@ -269,8 +269,9 @@ private actor ACPLink {
         return
       }
       do {
-        let resource = fresh && acceptsResources ? prompt.registry.map { [Self.resource($0, thread: request.thread.id)] } ?? [] : []
-        blocks = resource + [Self.text(compose(prompt, schema: request.schema))] + (try request.images.map(Self.image))
+        let registry = fresh && acceptsResources ? prompt.registry.map { [Self.resource($0, uri: Self.registryURI(request.thread.id))] } ?? [] : []
+        let packet = acceptsResources ? prompt.packet.map { [Self.resource($0.text, uri: $0.uri)] } ?? [] : []
+        blocks = registry + packet + [Self.text(compose(prompt, schema: request.schema))] + (try request.images.map(Self.image))
       } catch {
         events.yield(.turnDone(.failed("Could not read the image: \(error.localizedDescription)")))
         return
@@ -344,9 +345,10 @@ private actor ACPLink {
     let message = rebuilt ? prompt.recovery ?? prompt.message : prompt.message
     let stable = fresh && !dialect.stableElsewhere ? prompt.stable : ""
     let registry = fresh && !acceptsResources ? prompt.registry ?? "" : ""
+    let packet = acceptsResources ? "" : prompt.packet?.text ?? ""
     // ACP has no output schema: a pure-answer caller's schema rides in the message.
     let schema = schema.map { "Reply with only JSON that matches this JSON Schema, and nothing else:\n" + $0 } ?? ""
-    return [stable, registry, prompt.volatile, message, schema].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    return [stable, registry, packet, prompt.volatile, message, schema].filter { !$0.isEmpty }.joined(separator: "\n\n")
   }
 
   /// Some CLIs count cache reads inside `inputTokens`, OpenCode beside it: beside when the total
@@ -545,12 +547,14 @@ private actor ACPLink {
 
   static func text(_ text: String) -> JSON { .object(["type": .string("text"), "text": .string(text)]) }
 
-  /// ACP has no history field: the slice rides in the first prompt as embedded context.
-  static func resource(_ text: String, thread: String) -> JSON {
+  /// ACP has no history field: the slice and a seat's packet ride in the prompt as embedded context.
+  static func resource(_ text: String, uri: String) -> JSON {
     .object(["type": .string("resource"), "resource": .object([
-      "uri": .string("serein-registry://" + (thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "thread")),
-      "mimeType": .string("text/markdown"), "text": .string(text),
+      "uri": .string(uri), "mimeType": .string("text/markdown"), "text": .string(text),
     ])])
+  }
+  static func registryURI(_ thread: String) -> String {
+    "serein-registry://" + (thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "thread")
   }
 
   static func image(_ url: URL) throws -> JSON {
