@@ -8,8 +8,8 @@ import SereinCore
 /// provider's prompt cache hits on it for every turn on every provider; `volatile` rides at the
 /// tail of the turn that changed it and says plainly that it replaces any earlier copy.
 @MainActor enum RelayPrompt {
-  static func text(browser: BrowserModel, request: String = "") -> String {
-    stable(browser: browser) + "\n" + volatile(request: request)
+  static func text(browser: BrowserModel, request: String = "", thread: String?) -> String {
+    stable(browser: browser) + "\n" + volatile(request: request, thread: thread)
   }
 
   /// Everything that does not change between turns of a thread.
@@ -64,27 +64,30 @@ import SereinCore
       """
   }
 
-  /// What changed since the last turn, at the tail so the stable prefix stays identical.
-  static func volatile(request: String) -> String {
+  /// What changed since the last turn, at the tail so the stable prefix stays identical. `thread`:
+  /// the chat whose turn it is; what the turn knows comes from its frame there.
+  static func volatile(request: String, thread: String?) -> String {
     let relay = RelayOrchestrator.shared
+    let frame = thread.flatMap { relay?.frames[$0] }
+    let acting = frame?.acting.flatMap { id in relay?.profile(id: id) }
     let now = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withInternetDateTime])
     var lines = "Context updated since this conversation started; it replaces any earlier copy:"
     // The rules the person set go first: they outrank the task (`prepareMemory` builds them).
     if let rules = relay?.turnRules { lines += "\n" + rules }
     if let correction = relay?.turnCorrection { lines += "\n" + correction }
     lines += "\nThe time now is \(now)."
-    if RelayController.shared?.callMode == true, relay?.turnThread == relay?.threadID {
+    if RelayController.shared?.callMode == true, thread == relay?.threadID {
       lines += "\n" + SpeechDelivery.callGuidance
     }
     let hostControls = MacAccess.state(.accessibility) == .granted ? "allowed" : "off; still call mac_observe when a task needs a Mac app, and Serein shows the person how to turn it on"
     let hostPictures = MacAccess.state(.screen) == .granted ? "allowed" : "needs the person's macOS approval"
     lines += "\nActual Mac computer use: Accessibility \(hostControls); window pictures \(hostPictures). These permission states do not replace this task's own grants."
-    if let profile = relay?.actingProfile {
+    if let profile = acting {
       let computer = ComputerHost.shared.computer(for: profile.id)
       if computer.place == .macOS {
         // A chat that read the person's private things never reaches the separate Mac
         // (RelayOrchestrator.offeredComputer): say so, rather than a state it cannot use.
-        let marked = (relay.map { $0.agent.readsPersonal(thread: $0.turnThread) } ?? false)
+        let marked = (thread.flatMap { thread in relay?.agent.readsPersonal(thread: thread) } ?? false)
           && !ComputerHost.shared.takesPrivateChats(computer)
         let state = marked ? Self.closedToMarkedChat : Self.virtualMacState(computer.state, setup: computer.macSetup.message)
         lines += "\nSerein's separate virtual Mac: \(state). Its setup and text connection belong to Serein's app, not to a delegated coding agent."
@@ -103,7 +106,7 @@ import SereinCore
     if relay?.ownerRun == nil, let team = relay?.handoffContext() { lines += "\n" + team }
     // The tab the user's message carried (its page chip): the title and the site only, never the
     // path or the text (current_page reads those, on request). A private tab never appears.
-    if let line = relay?.turnPage?.line {
+    if let line = frame?.page?.line {
       lines += "\n" + line + ". Call current_page only when the question needs what the page says."
     }
     // The brief's “Waiting on you”: Serein's own list of open cards, repeated as given. Titles can
@@ -122,7 +125,7 @@ import SereinCore
     }
     // The person's notes for the computer this turn may use (the inspector's Computer tab): theirs
     // alone to write, read here as fenced data. They change between turns, so they ride here.
-    if let relay, let profile = relay.actingProfile, relay.offeredComputer(thread: relay.turnThread, relay: true, initiator: nil) != nil,
+    if let relay, let profile = acting, let thread, relay.offeredComputer(thread: thread, relay: true, initiator: nil) != nil,
       let block = ComputerNotes.prompt(ComputerHost.shared.notesText(profile.id), assistant: profile.name)
     {
       lines += "\n" + block

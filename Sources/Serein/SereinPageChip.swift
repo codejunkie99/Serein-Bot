@@ -3,18 +3,6 @@ import Combine
 import SereinCore
 import SwiftUI
 
-/// The tab a message to Serein carries: the page chip's tab. Only its title and site go into the
-/// turn (`CurrentPageContext.line`); the path and the text come back only through `current_page`.
-struct SereinPage: Equatable {
-  var tabID: String
-  var title: String
-  var url: String
-  var isPrivate = false
-  /// The line the turn's context gets, or nil (a private tab, anything but a web page).
-  var line: String? { CurrentPageContext.line(title: AgentPrivacy.redact(title), url: url, isPrivate: isPrivate) }
-  var host: String { CurrentPageContext.host(url) ?? "" }
-}
-
 /// What the chip slot on Serein's composer shows.
 enum SereinChipSlot: Equatable {
   case none

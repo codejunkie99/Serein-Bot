@@ -94,6 +94,36 @@ extension AssistantCoreChecks {
           && tags(say.post).map(\.to) == [scout.id] && tags(say.post).first?.parentID == writing.id,
         "group turn: channel_say posts with from, re and mentions, and the tagged bot takes a turn that reports back [post: \(sayPost != nil), refused: \(say.refused.map(\.words))]")
 
+      // A side seat and the front turn in the same chat: the seat's run posts as its own target
+      // with no frame read (Browser routes it with `handoffChat`), the front turn's call posts as
+      // the front turn's assistant, and a call from the seat's chat finds no frame to borrow.
+      let frontFrame = TurnFrame(thread: chat, serial: 9201, admission: .person, unattended: false,
+                                 personWords: "plan the trip", readOutside: false, profile: lead, acting: lead)
+      relay.frames.begin(frontFrame)
+      var posted: [String: String] = [:]
+      Task { @MainActor in
+        do { posted["seat"] = try await relay.tools.channelSay(["text": "seat note"], handoffChat: writing.threadID)["posted"] as? String } catch {
+          posted["seat"] = "error: " + error.localizedDescription
+        }
+      }
+      Task { @MainActor in
+        do { posted["front"] = try await relay.tools.call("channel_say", ["text": "front note"], thread: chat)["posted"] as? String } catch {
+          posted["front"] = "error: " + error.localizedDescription
+        }
+      }
+      Task { @MainActor in
+        do { _ = try await relay.tools.call("channel_say", ["text": "borrowed note"], thread: writing.threadID) } catch {
+          posted["borrow"] = error.localizedDescription
+        }
+      }
+      let seatEnd = Date().addingTimeInterval(10)
+      while posted.count < 3, Date() < seatEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+      relay.frames.end(chat, serial: frontFrame.serial)
+      let seatPost = messages().first { $0.id == posted["seat"] }
+      let frontPost = messages().first { $0.id == posted["front"] }
+      try check(seatPost?.from == writer.id && frontPost?.from == lead && posted["borrow"] == RelayToolHost.noTurn,
+        "group turn: a side seat and the front turn in one chat each post as their own assistant, and the seat never borrows the front frame [\(posted)]")
+
       // 5. A text mention in a bot's reply routes; a thank-you does not.
       let thanks = relay.channelSay("Thanks @Writer.", from: scout, parent: scouting, chat: scouting.threadID, readOutside: false, addressed: true)
       let ask = relay.channelSay("@Editor can you polish it", from: scout, parent: scouting, chat: scouting.threadID, readOutside: false, addressed: true)

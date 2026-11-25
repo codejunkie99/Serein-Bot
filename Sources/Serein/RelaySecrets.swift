@@ -84,7 +84,7 @@ extension RelayToolHost {
     case .failure(let refusal): throw SereinError.invalid(refusal.words)
     case .success(let checked): plan = checked
     }
-    let answer = SecretVault.decision(plan.effect, relay.standing(present: frame.admission != .unattended))
+    let answer = SecretVault.decision(plan.effect, standing(present: frame.admission != .unattended))
     // A payment goes only on the person's yes to this exact request: the card below is its pay step.
     if try answer == .blocked(.pay(ref: "")) || answer.decision() == .ask {
       let human = await relay.confirmAnswer(

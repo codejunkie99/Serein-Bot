@@ -54,7 +54,7 @@ extension RelayOrchestrator {
       SideSeat.moves(startedAt: run.record.startedAt, now: now, moved: handoffLedger.records.contains {
         $0.side == .background && $0.mention?.post == asked.id
       }),
-      !(turnThread == chat && turnPage != nil),
+      frames[chat]?.page == nil,
       !approvals.contains(where: { ($0.threadID ?? turnThread) == chat }),
       !questionForms.contains(where: { ($0.threadID ?? turnThread) == chat }),
       sideSeatFree

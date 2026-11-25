@@ -98,7 +98,7 @@ extension RelayToolHost {
     // "Ask me before you send mail": a rule every assistant obeys, with its own receipt and Undo.
     if name == ChatSettings.askBefore {
       try admit(narrows: true)
-      let saved = try await relay.saveRule("Ask the person before \(value).", scope: "everyone", quote: quote)
+      let saved = try await relay.saveRule("Ask the person before \(value).", scope: "everyone", quote: quote, frame: frame)
       return ["rule": saved.record.text, "done": saved.receipt?.line ?? "That rule is already in force."]
     }
 
@@ -132,7 +132,7 @@ extension RelayToolHost {
   /// a move that could change who pays stays the person's pick in the model list.
   private func changeModel(_ a: [String: Any], value: String, admit: (Bool) throws -> Void) async throws -> [String: Any] {
     let named = ((a["assistant"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    let fallback = relay.actingProfile ?? relay.team.profiles.first { $0.id == relay.team.activeID }
+    let fallback = acting ?? relay.team.profiles.first { $0.id == relay.team.activeID }
     guard let who = named.isEmpty ? fallback : relay.team.profile(named: named) else {
       throw SereinError.invalid(DeletePlan.Refusal.unknown.words)
     }

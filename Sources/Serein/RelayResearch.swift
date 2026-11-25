@@ -83,7 +83,7 @@ extension RelayOrchestrator {
 
   private func deliverResearch(_ job: ResearchJob) -> Bool {
     guard researchRefusal(job, source: nil) == nil, agent.hub.run(for: job.thread) == nil,
-      !(sending && turnThread == job.thread),
+      frames[job.thread] == nil,
       let index = agent.conversations.firstIndex(where: { $0.id == job.thread }) else { return false }
     // One stable message id closes the crash window between saving the reply and acknowledging
     // delivery in the notebook. Save first, then update the visible transcript.
@@ -134,9 +134,9 @@ extension RelayToolHost {
     let coordinator = relay.research
     await coordinator.load()
     let thread = frame.thread
-    let owner = relay.actingProfile?.id ?? relay.team.activeID
+    let owner = frame.acting ?? relay.team.activeID
     if name == "research_start" {
-      guard relay.working, frame.byPerson, !frame.unattended else {
+      guard frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person's request can start research that continues after a restart.")
       }
       guard let question = a["question"] as? String, let raw = a["sources"] as? [[String: Any]],
@@ -144,7 +144,7 @@ extension RelayToolHost {
         throw SereinError.invalid("Give a research question and each source's URL and question.")
       }
       let sources = raw.map { ResearchJob.Source(url: $0["url"] as! String, question: $0["question"] as! String) }
-      let route = relay.assistantEngine(relay.actingProfile)
+      let route = relay.assistantEngine(acting)
       let request = relay.transcript.last(where: { $0.role == "you" })
       let findMore = (a["find_more_sources"] as? Bool ?? true) && !ResearchFollowUp.fixedSources(request?.text ?? "")
       let job = try ResearchJob(question: AgentPrivacy.redact(question), sources: sources, thread: thread, owner: owner,
@@ -163,7 +163,7 @@ extension RelayToolHost {
     }
     switch name {
     case "research_cross_check":
-      guard relay.working, frame.byPerson, !frame.unattended else {
+      guard frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person can request new comparisons for a saved report.")
       }
       guard let raw = a["sources"] as? [[String: Any]],
@@ -171,11 +171,11 @@ extension RelayToolHost {
         throw SereinError.invalid("Give each new comparison source's URL and question.")
       }
       let sources = raw.map { ResearchJob.Source(url: $0["url"] as! String, question: $0["question"] as! String) }
-      let route = relay.assistantEngine(relay.actingProfile)
+      let route = relay.assistantEngine(acting)
       try coordinator.crossCheck(id, sources: sources, provider: route.provider.rawValue, model: route.model)
     case "research_pause": coordinator.pause(id)
     case "research_resume":
-      guard relay.working, frame.byPerson, !frame.unattended else {
+      guard frame.byPerson, !frame.unattended else {
         throw SereinError.invalid("Only the person can continue paused research.")
       }
       try coordinator.resume(id)

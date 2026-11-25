@@ -85,7 +85,7 @@ struct SettingsWorld: Encodable, Equatable {
             $0.serials[t] = serial + 1
             $0.frames.begin(TurnFrame(
               thread: t, serial: serial + 1, admission: person ? .person : .assistant, unattended: false,
-              personWords: person ? words(t, serial + 1) : nil, readOutside: false))
+              personWords: person ? words(t, serial + 1) : nil, readOutside: false, profile: "main", acting: "main"))
           }
         }
       }
@@ -96,8 +96,10 @@ struct SettingsWorld: Encodable, Equatable {
           for from in threads {
             guard let said = w.frames[from], said.byPerson else { continue }
             add("\(t): setting_change \(name) \(value), quoting \(from)") { n in
-              let frame = n.frames.frame(for: t, none: TurnFrame(
-                thread: "", serial: 0, admission: .unattended, unattended: true, personWords: nil, readOutside: false))
+              // RelayToolHost.call binds the entry frame of `t`; the host's `frame` reads it back.
+              let frame = n.frames.frame(for: n.frames[t]) ?? TurnFrame(
+                thread: "", serial: 0, admission: .unattended, unattended: true, personWords: nil, readOutside: false,
+                profile: "", acting: nil)
               let narrows = name == ChatSettings.approvalLevel
                 ? ChatSettings.level(value).map { ChatSettings.asks($0) >= ChatSettings.asks(ChatSettings.level(n.values[name] ?? "") ?? .everyStep) } ?? false
                 : value == "off"

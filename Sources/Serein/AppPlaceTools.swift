@@ -207,7 +207,7 @@ extension RelayToolHost {
     guard let card = book.cards.first(where: { $0.id == id }) else { throw TodoBook.gone }
     guard card.column != column else { return ["moved": false, "column": column.title, "note": "It is in \(column.title) already."] }
     let short = String(card.title.prefix(60))
-    switch relay.admission(.board) {
+    switch frame.admission(.board) {
     case .refuse(let why): throw SereinError.invalid(why)
     case .apply: break
     case .ask where relay.level == .proactive: break

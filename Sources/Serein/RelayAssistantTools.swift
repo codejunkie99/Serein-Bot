@@ -207,11 +207,11 @@ extension RelayOrchestrator {
   /// whose button started the turn (true), or lands on the turn's reply when the turn ends
   /// (`land`); outside a turn, it is a host message now.
   @discardableResult
-  func showView(_ tree: UITree, into thread: String) -> Bool {
+  func showView(_ tree: UITree, into thread: String, byPerson: Bool) -> Bool {
     let run: AgentRun? = agent.hub.run(for: thread)
     if run != nil || (thread == threadID && sending) {
       // Only the person's own press: a scheduled or proactive turn never redraws a view.
-      if startedByPerson, let run, AgentMessage.redraw(tree, kept: &UITreeValues.shared.kept, in: &run.transcript) {
+      if byPerson, let run, AgentMessage.redraw(tree, kept: &UITreeValues.shared.kept, in: &run.transcript) {
         return true
       }
       var facts: AssistantDesk.Facts = desk.facts[thread] ?? AssistantDesk.Facts()
@@ -737,8 +737,8 @@ extension RelayToolHost {
     case .success(let parsed): draft = parsed
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
-    let maker = relay.profile(id: relay.turnProfileID)
-    let chat = relay.threadID
+    let maker = relay.profile(id: frame.profile)
+    let chat = frame.thread
     let staffed = relay.staff(.newAssistant(draft), sender: maker, parent: nil, chat: chat, readOutside: frame.readOutside)
     guard case .make(let reach, let lineage) = staffed.verdict else { return Self.staffingRefusal(staffed.verdict) }
     switch relay.makeAssistant(draft, actor: "relay", chat: chat, staffed: .init(reach: reach, lineage: lineage)) {
@@ -762,7 +762,7 @@ extension RelayToolHost {
   /// receipt's Undo; other turns are refused.
   func changeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
-    let actingID: String = relay.actingProfile?.id ?? relay.team.activeID
+    let actingID: String = frame.acting ?? relay.team.activeID
     let parsed = AssistantChange.parse(
       a, actingID: actingID, team: relay.team, person: relay.personScope, global: relay.proactiveLevel)
     let change: AssistantChange
@@ -784,7 +784,7 @@ extension RelayToolHost {
       let effect: ApprovalGate.Effect = change.widens ? .widening : .settings
       let human = await relay.confirmAnswer(
         change.cardTitle, change.cardDetail, button: AssistantChange.allow, decline: AssistantChange.keep,
-        thread: relay.threadID, effect: effect)
+        thread: frame.thread, effect: effect)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person said not now. Nothing changed." : ActionAdmission.needsPerson)
       }
@@ -796,7 +796,7 @@ extension RelayToolHost {
     case .failure(let refusal):
       throw SereinError.invalid(refusal.words)
     case .success(let receipt):
-      relay.deliver(receipt: receipt, into: relay.threadID)
+      relay.deliver(receipt: receipt, into: frame.thread)
       var out: [String: Any] = ["changed": change.shownName, "undo": receipt.undo?.entry ?? "", "note": HostFacts.receiptNote]
       if !change.dropped.isEmpty { out["left_out"] = change.dropped }
       return out
@@ -825,7 +825,7 @@ extension RelayToolHost {
     let archives = verdict == .apply && relay.level == .proactive
     if !archives {
       let human = await relay.confirmAnswer(
-        plan.title, plan.detail, button: DeletePlan.confirm, decline: DeletePlan.keep, thread: relay.threadID, effect: .delete)
+        plan.title, plan.detail, button: DeletePlan.confirm, decline: DeletePlan.keep, thread: frame.thread, effect: .delete)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person kept \(target.name). Nothing was deleted." : ActionAdmission.needsPerson)
       }
@@ -835,7 +835,7 @@ extension RelayToolHost {
     }
     let entry = deleted.undo?.entry ?? ""
     let receipt = archives ? ReceiptCopy.archived(name: target.name, entry: entry) : deleted
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     let way = archives ? "The person can bring it back with Undo on the receipt, or by asking. " : "The person can undo it for 10 seconds on the toast, or by asking. "
     return [archives ? "archived" : "deleted": target.name, "undo": entry, "note": way + HostFacts.receiptNote]
   }
@@ -876,7 +876,7 @@ extension RelayToolHost {
     switch UITree.parse(a) {
     case .failure(let problem): throw SereinError.invalid(problem.words)
     case .success(let tree):
-      let replaced: Bool = relay.showView(tree, into: frame.thread)
+      let replaced: Bool = relay.showView(tree, into: frame.thread, byPerson: frame.byPerson)
       // A redrawn view sits above the person's message, so the reply says what changed.
       let place: String = replaced
         ? "It takes the place of the view the person pressed. Say in one short line what changed."
@@ -893,7 +893,7 @@ extension RelayToolHost {
   func makeDashboard(_ a: [String: Any]) throws -> [String: Any] {
     guard frame.byPerson else { throw SereinError.invalid(Self.dashboardNotHere) }
     let built: DashboardDraft.Built
-    switch DashboardDraft.parse(a, team: relay.team, actingID: relay.turnProfileID) {
+    switch DashboardDraft.parse(a, team: relay.team, actingID: frame.profile) {
     case .success(let value): built = value
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
@@ -985,22 +985,22 @@ extension RelayToolHost {
       entry = found
     }
     // A memory change goes back off the main thread (RelayMemoryShell.swift).
-    if let token = relay.desk.undo.find(entry: entry, thread: relay.threadID),
+    if let token = relay.desk.undo.find(entry: entry, thread: frame.thread),
       token.entry.hasPrefix(RelayOrchestrator.memoryUndoPrefix)
     {
       switch await relay.revertMemory(token) {
       case .failure(let refusal):
         throw SereinError.invalid(refusal.words)
       case .success(let receipt):
-        relay.deliver(receipt: receipt, into: relay.threadID)
+        relay.deliver(receipt: receipt, into: frame.thread)
         return ["undone": true, "note": HostFacts.receiptNote]
       }
     }
-    switch relay.revert(entry: entry, chat: relay.threadID) {
+    switch relay.revert(entry: entry, chat: frame.thread) {
     case .failure(let refusal):
       throw SereinError.invalid(refusal.words)
     case .success(let receipt):
-      relay.deliver(receipt: receipt, into: relay.threadID)
+      relay.deliver(receipt: receipt, into: frame.thread)
       return ["undone": true, "note": HostFacts.receiptNote]
     }
   }

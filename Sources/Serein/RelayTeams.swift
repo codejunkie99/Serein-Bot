@@ -738,7 +738,7 @@ extension RelayToolHost {
       // A seat run read outside text once any step ran, as `memoryTurn` reads it.
       readOutside = relay.agent.hub.run(for: handoffChat)?.steps.isEmpty == false
     } else {
-      sender = relay.profile(id: relay.turnProfileID)
+      sender = relay.profile(id: frame.profile)
       readOutside = frame.readOutside
     }
     guard let task = (a["task"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !task.isEmpty else {
@@ -760,7 +760,7 @@ extension RelayToolHost {
       let id = team.profiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id ?? ""
       wanted = .teammate(id)
     }
-    let chat = parent?.threadID ?? relay.threadID
+    let chat = parent?.threadID ?? frame.thread
     let staffed = relay.staff(wanted, sender: sender, parent: parent, chat: chat, readOutside: readOutside)
     let target: RelayProfile
     switch (staffed.verdict, wanted) {
@@ -768,7 +768,7 @@ extension RelayToolHost {
       target = relay.profile(id: id)
     case (.make(let reach, let lineage), .newAssistant(let draft)):
       // Its receipt and Undo go to the chat the person sees: the root's, for a hand-off's run.
-      let origin = parent.flatMap { p in relay.handoffLedger.records.first { $0.id == (p.rootID ?? p.id) }?.askedIn } ?? relay.threadID
+      let origin = parent.flatMap { p in relay.handoffLedger.records.first { $0.id == (p.rootID ?? p.id) }?.askedIn } ?? frame.thread
       switch relay.makeAssistant(draft, actor: "relay", chat: origin, staffed: .init(reach: reach, lineage: lineage)) {
       case .failure(let problem): throw SereinError.invalid(problem.words)
       case .success(let made): target = made.plan.profile
@@ -804,8 +804,8 @@ extension RelayToolHost {
     }
     let members = try (a["members"] as? [String] ?? []).map(id)
     let lead = try (a["lead"] as? String).flatMap { $0.isEmpty ? nil : try id($0) }
-    let sender = relay.profile(id: relay.turnProfileID)
-    let staffed = relay.staff(.team, sender: sender, parent: nil, chat: relay.threadID, readOutside: frame.readOutside)
+    let sender = relay.profile(id: frame.profile)
+    let staffed = relay.staff(.team, sender: sender, parent: nil, chat: frame.thread, readOutside: frame.readOutside)
     guard staffed.verdict == .makeTeam else { return Self.staffingRefusal(staffed.verdict) }
     let group = AssistantGroup(name: name, memberIDs: members, leadID: lead)
     guard relay.changeTeam(actor: "relay", "Created team \(name)", { $0.addingGroup(group) }) else {
@@ -816,7 +816,7 @@ extension RelayToolHost {
     relay.desk.undoActions[entry] = .team
     let names = members.map(relay.profileName)
     let receipt = ReceiptCopy.changed(name: name, what: "is saved as a team: " + names.joined(separator: ", "), entry: entry)
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     return ["team": name, "members": names, "lead": lead.map(relay.profileName) ?? "", "undo": entry, "note": HostFacts.receiptNote]
   }
 }

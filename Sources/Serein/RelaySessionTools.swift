@@ -34,7 +34,7 @@ extension RelayToolHost {
   func sessionTool(_ name: String, _ a: [String: Any]) async throws -> [String: Any] {
     guard SessionReading.allowed else { throw SereinError.invalid(SessionReading.off) }
     // The person said yes to Serein reading their chats, not to every assistant they make.
-    guard relay.turnProfileID == relay.team.mainProfileID else { throw SereinError.invalid(SessionReading.mainOnly) }
+    guard frame.profile == relay.team.mainProfileID else { throw SereinError.invalid(SessionReading.mainOnly) }
     switch name {
     case "sessions_overview": return await sessionsOverview()
     case "sessions_list": return sessionsList(a)

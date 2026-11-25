@@ -1454,7 +1454,7 @@ struct BrowserTask {
     var task = task
     let raw = request["name"] as? String ?? ""
     // What Serein's own turn uses, so a note it keeps knows whether the turn read outside text.
-    if task.allowRelay { RelayOrchestrator.shared?.noteTurnTool(raw) }
+    if task.allowRelay { RelayOrchestrator.shared?.noteTurnTool(raw, thread: threadID(forTask: id)) }
     // Serein's own assistant has no built-in tabs (AssistantWeb): it works on websites through a Mac.
     if task.allowRelay && (AssistantWeb.tabTools.contains(raw)
       || raw == "person_step" && (request["arguments"] as? [String: Any])?["kind"] as? String != "confirm") {

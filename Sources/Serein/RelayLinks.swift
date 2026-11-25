@@ -206,7 +206,7 @@ extension RelayToolHost {
   /// with the receipt's Undo; other turns are refused.
   func makeLink(_ a: [String: Any]) async throws -> [String: Any] {
     try requireReadableLinks()
-    let actingID: String = relay.actingProfile?.id ?? relay.team.activeID
+    let actingID: String = frame.acting ?? relay.team.activeID
     let parsed = LinkDraft.parse(
       a, actingID: actingID, team: relay.team, existing: relay.desk.links.count, id: LinkAddress.newID(), now: Date())
     let spec: HookSpec
@@ -225,7 +225,7 @@ extension RelayToolHost {
     case .ask:
       let human = await relay.confirmAnswer(
         LinkDraft.cardTitle(owner: owner), LinkDraft.cardDetail(owner: owner, instruction: spec.instruction),
-        button: LinkDraft.confirm, decline: LinkDraft.decline, thread: relay.threadID, effect: .settings)
+        button: LinkDraft.confirm, decline: LinkDraft.decline, thread: frame.thread, effect: .settings)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person said not now. No link was made." : ActionAdmission.needsPerson)
       }
@@ -233,7 +233,7 @@ extension RelayToolHost {
     guard let receipt = await relay.addOwnedLink(spec) else {
       throw SereinError.invalid("Serein could not make and keep a secure secret, so no link was made. Try again.")
     }
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     return [
       "made": spec.name, "wakes": owner, "undo": receipt.undo?.entry ?? "",
       "note": HostFacts.receiptNote
@@ -274,7 +274,7 @@ extension RelayToolHost {
     guard let link = found, let receipt = relay.removeLinkForUndo(link.id) else {
       throw SereinError.invalid("No link is called \(String(wanted.prefix(80))). hook_list lists them.")
     }
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     return ["removed": link.spec.name, "undo": receipt.undo?.entry ?? "", "note": HostFacts.receiptNote]
   }
 }

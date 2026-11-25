@@ -36,10 +36,12 @@ extension RelayOrchestrator {
   /// What `rule_save` keeps: `text` in `scope` ("assistant", the default; "team", the team the
   /// person has open or this assistant's only team; "everyone"), saved at once when `quote` is
   /// the person's own words from this turn (`Rules.admit`). An equal rule is not saved twice.
-  func saveRule(_ text: String, scope raw: String?, quote: String) async throws -> (record: MemoryRecord, receipt: Receipt?) {
+  func saveRule(_ text: String, scope raw: String?, quote: String, frame: TurnFrame) async throws
+    -> (record: MemoryRecord, receipt: Receipt?)
+  {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     if let why = SavedText.problem(text) { throw SereinError.invalid(why) }
-    let owner = turnProfileID
+    let owner = frame.profile
     let scope: MemoryScope
     switch (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
     case "", "assistant": scope = .assistant(owner)
@@ -51,9 +53,9 @@ extension RelayOrchestrator {
     }
     let reader = memoryReader(owner)
     let teams = ruleTeams(owner)
-    let said = [typedWords]
-    let chat = turnThread
-    let personal = memoryTurn(thread: chat).readPersonal
+    let said = [frame.typedWords]
+    let chat = frame.thread
+    let personal = memoryTurn(frame).readPersonal
     let result = try await memory.run { (store: MemoryStore) -> (verdict: Rules.Admit, write: MemoryWrite?) in
       let existing = Rules.inForce(for: owner, teams: teams, all: try store.rules(reader: reader))
       let verdict = Rules.admit(
@@ -71,7 +73,7 @@ extension RelayOrchestrator {
         throw SereinError.invalid(result.write?.words ?? "I could not save that rule.")
       }
       let receipt = ReceiptCopy.ruleSet(whom: MemoryTools.whom(scope, in: team), entry: Self.memoryUndoPrefix + entry)
-      noteReceipt(receipt)
+      deliver(receipt: receipt, into: chat)
       return (record: record, receipt: receipt)
     }
   }

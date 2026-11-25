@@ -148,7 +148,7 @@ import SwiftUI
     let started: String
     // One reading of the turn for the child and the launch, so they stand alike even if a turn
     // starts or ends while the dispatch waits.
-    let child = relay.newChild(thread, edits: false)
+    let child = relay.newChild(thread, edits: false, frame: relay.clickFrame)
     target.byPerson = child.child.byPerson == true
     do {
       started = try await agent.dispatch(prompt, into: thread, create: true, as: target)
@@ -221,7 +221,7 @@ extension RelayToolHost {
   /// silently; at Allow all it is added with no ask. Either way it lands in Next and starts nothing.
   func proposeTodo(_ a: [String: Any]) async throws -> [String: Any] {
     // A check-in is not the person's turn: like the schedule tools, it proposes no card.
-    if relay.working, !frame.byPerson, !frame.unattended { throw SereinError.invalid(Self.lowerTrust) }
+    if !frame.byPerson, !frame.unattended { throw SereinError.invalid(Self.lowerTrust) }
     let book = TodoBook.shared
     let title = TodoBoard.cleanTitle(a["title"] as? String ?? "")
     guard !title.isEmpty else { throw SereinError.invalid("title is required: one short line.") }

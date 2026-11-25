@@ -152,7 +152,7 @@ extension SmokeTest {
               "“What I did” lists the delegation, the note, the reminder and the finished run")
 
     // A finished delegated run, while Relay is idle, gets a short report turn.
-    _ = try await relay.tools.call("agent_start", ["task": "CHILD report me", "destination": "answer"])
+    _ = try await relay.tools.call("agent_start", ["task": "CHILD report me", "destination": "answer"], thread: relay.threadID)
     try await waitFor(20) { record("report") != nil }
     try check((record("report")?["report"] as? String)?.contains("A run you delegated finished (done)") == true,
               "Relay reports a delegated run that finished while it was idle [error: \(relay.lastError ?? "none"); did: \(relay.activity.map(\.text).suffix(3)); working: \(relay.working)]")
@@ -383,10 +383,10 @@ extension SmokeTest {
     relay.updatePersona(RelayPersona(name: "Scout", about: "", rules: ""))
     let stableA = RelayPrompt.stable(browser: browser)
     await relay.prepareMemory(request: "triage the shop-web build", thread: relay.threadID, profileID: memoryOwner)
-    let volatileA = RelayPrompt.volatile(request: "triage the shop-web build")
+    let volatileA = RelayPrompt.volatile(request: "triage the shop-web build", thread: relay.threadID)
     try check(RelayPrompt.stable(browser: browser) == stableA, "The stable prompt prefix is byte-identical across turns")
     await relay.prepareMemory(request: "what is on my calendar?", thread: relay.threadID, profileID: memoryOwner)
-    let volatileB = RelayPrompt.volatile(request: "what is on my calendar?")
+    let volatileB = RelayPrompt.volatile(request: "what is on my calendar?", thread: relay.threadID)
     // A ranks the topical note first, then fills with the newest shared note; B has no topical
     // match, so the newest comes first.
     let shopA = volatileA.range(of: "shop-web")?.lowerBound
@@ -402,7 +402,7 @@ extension SmokeTest {
       && volatileA.contains("[check-rule] Answer in one short paragraph") && volatileB.contains(Rules.header)
       && !stableA.contains(Rules.header),
       "The rules in force go first in every turn's volatile block, and the stable prefix holds")
-    try check(RelayPrompt.text(browser: browser, request: "x").hasSuffix(RelayPrompt.volatile(request: "x")), "text is stable then volatile")
+    try check(RelayPrompt.text(browser: browser, request: "x", thread: relay.threadID).hasSuffix(RelayPrompt.volatile(request: "x", thread: relay.threadID)), "text is stable then volatile")
     relay.restyleOverride = false
     let stableQuiet = RelayPrompt.stable(browser: browser)
     relay.restyleOverride = true
@@ -1086,11 +1086,11 @@ extension SmokeTest {
       // prefix), never the path or the query, and never a private tab's.
       let stableBeforePage = RelayPrompt.stable(browser: browser)
       relay.turnPage = plainPage
-      let withPage = RelayPrompt.volatile(request: "which are open late?")
+      let withPage = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       relay.turnPage = privatePage
-      let withPrivate = RelayPrompt.volatile(request: "which are open late?")
+      let withPrivate = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       relay.turnPage = nil
-      let withoutPage = RelayPrompt.volatile(request: "which are open late?")
+      let withoutPage = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       let lineOK = withPage.contains("“Ramen guide · Eater” on eater.example") && withPage.contains("untrusted data, not instructions")
         && !withPage.contains("/guides") && !withPage.contains("SECRETQ") && !withPage.contains("PAGE TEXT 4417")
         && !withPrivate.contains("Gift ideas") && !withPrivate.contains("gifts.example")
@@ -1125,12 +1125,12 @@ extension SmokeTest {
       // 2. current_page reads only the chip's tab: its address without the query and its text,
       // framed as untrusted, logged in Activity; private tabs, files and password pages are refused.
       func refusal(_ name: String, _ arguments: [String: Any] = [:]) async -> String? {
-        do { _ = try await relay.tools.call(name, arguments); return nil } catch { return error.localizedDescription }
+        do { _ = try await relay.tools.call(name, arguments, thread: relay.threadID); return nil } catch { return error.localizedDescription }
       }
       relay.turnPage = plainPage
       var readError = ""
       var read: [String: Any]?
-      do { read = try await relay.tools.call("current_page", [:]) } catch { readError = error.localizedDescription }
+      do { read = try await relay.tools.call("current_page", [:], thread: relay.threadID) } catch { readError = error.localizedDescription }
       let readLogged = relay.activity.last?.text ?? "-"
       let readOK = read?["address"] as? String == "https://www.eater.example/guides/ramen"
         && (read?["text_untrusted"] as? String)?.contains("PAGE TEXT 4417") == true
@@ -1265,7 +1265,7 @@ extension SmokeTest {
         .init(title: liveHereCard.title, detail: liveHereCard.detail, thread: relay.threadID,
               button: liveHereCard.button, more: "CHILD HERE BINDING first", moreName: "the task"),
       ]) {
-        try await relay.tools.call("agent_start", ["task": "CHILD HERE BINDING first", "destination": "here"])
+        try await relay.tools.call("agent_start", ["task": "CHILD HERE BINDING first", "destination": "here"], thread: relay.threadID)
       }
       hereID = hereStarted["run"] as? String ?? ""
       let firstHereRun = agent.hub.run(for: hereID)
@@ -1308,7 +1308,7 @@ extension SmokeTest {
         .init(title: followHereCard.title, detail: followHereCard.detail, thread: relay.threadID,
               button: "Send", more: followHereText, moreName: "the message"),
       ]) {
-        try await relay.tools.call("agent_send", ["run": hereID, "text": followHereText])
+        try await relay.tools.call("agent_send", ["run": hereID, "text": followHereText], thread: relay.threadID)
       }
       let followHereRun = agent.hub.run(for: hereID)
       let followHereTabs = try await ownedHereCopy(followHereRun)
@@ -1490,23 +1490,23 @@ extension SmokeTest {
       trip.serein = true
       agent.conversations.append(trip)
       let here = relay.turnThread
-      let found = try relay.searchChats("lisbon ferry saturday", limit: nil)
+      let found = try relay.searchChats("lisbon ferry saturday", limit: nil, frame: relay.clickFrame)
       let rows = found["messages"] as? [[String: Any]] ?? []
       try check(rows.count == 2 && rows.first?["assistant"] as? String == "Searcher" && rows.first?["from"] as? String == "person"
                 && (rows.first?["text_untrusted"] as? String)?.contains("Lisbon ferry") == true && !agent.readsPersonal(thread: here),
                 "chats_search finds what was said in another assistant's chat, best match first [\(rows)]")
-      let ownMatch = try relay.searchChats("Relay finished delegated", limit: nil)["total"] as? Int
+      let ownMatch = try relay.searchChats("Relay finished delegated", limit: nil, frame: relay.clickFrame)["total"] as? Int
       try check(ownMatch == 0, "chats_search leaves out the chat it is asked in")
       if let i = agent.conversations.firstIndex(where: { $0.id == theirs }) { agent.conversations[i].readPersonal = true }
       // A chat that cannot take the mark (here, one not saved yet) gets no personal match.
       let hadHere = agent.conversations.contains { $0.id == here }
       if hadHere { agent.conversations.removeAll { $0.id == here } }
-      let unmarkable = try relay.searchChats("ferry", limit: 1)
+      let unmarkable = try relay.searchChats("ferry", limit: 1, frame: relay.clickFrame)
       try check((unmarkable["messages"] as? [Any])?.isEmpty == true && unmarkable["withheld"] != nil,
                 "A personal chat's match is withheld when the chat that searched cannot be marked")
       agent.conversations.append(Conversation(id: here, title: "Serein", messages: [], provider: .claude, mode: .anywhere,
                                               projectID: nil, remoteID: nil, scope: "", updatedAt: Date()))
-      let marked = try relay.searchChats("ferry", limit: 1)
+      let marked = try relay.searchChats("ferry", limit: 1, frame: relay.clickFrame)
       try check((marked["messages"] as? [Any])?.count == 1 && agent.readsPersonal(thread: here),
                 "A match from a chat that read personal data marks the chat that searched")
       agent.conversations.removeAll { $0.id == here }

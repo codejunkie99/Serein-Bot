@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Fail when Serein's tool host reads a turn global instead of the calling turn's frame.
+"""Fail when Serein's tool path reads a turn global instead of the calling turn's frame.
 
 Two turns may run at once, so a tool call reads its own turn through `frame` (TurnFrame.swift),
-resolved from the thread its call came from. The globals on RelayOrchestrator hold whichever
-turn ran last. This script checks every `RelayToolHost` body and extension for `relay.<global>`.
-It also counts where frames start and end, so a turn path that gains or loses one shows in
-review: each start is matched by the run's end (`ended`) and by every way the start can fail.
-The frame rules themselves are checked by `--verify-assistant-core` (suite turnFrame).
+the frame `RelayToolHost.call` bound for it. The globals on RelayOrchestrator hold whichever turn
+ran last. The tool path is every `RelayToolHost` body and extension, every function that takes a
+`frame: TurnFrame`, and `RelayPrompt.volatile`: none of them reads `relay.<global>`, and a function
+handed a frame reads no global bare either. It also counts where frames start and end, so a turn
+path that gains or loses one shows in review: each start is matched by the run's end (`ended`) and
+by every way the start can fail. The frame rules themselves are checked by
+`--verify-assistant-core` (suite turnFrame).
 """
 import os
 import re
@@ -96,13 +98,25 @@ def swift_files(root):
                 yield os.path.relpath(os.path.join(dirpath, name), root)
 
 
-GLOBALS = ("turnThread", "startedByPerson", "admissionTurn", "runsUnattended", "typedWords", "personWords", "turnReadOutside")
+GLOBALS = ("turnThread", "startedByPerson", "admissionTurn", "runsUnattended", "typedWords", "personWords", "turnReadOutside",
+           "working", "turnAuthority", "scheduledProfileID", "actingProfile", "checkingGoal", "checkingIn", "turnProfileID",
+           "turnPage", "standing", "admission")
 READ = re.compile(r"\brelay\??\.(" + "|".join(GLOBALS) + r")\b")
+# Read bare (or through self) inside a function handed a frame. `standing` and `admission` are
+# left out: the host's own `standing()` and the frame's `admission` already read the frame.
+BARE = re.compile(r"(?:(?<![.\w])|\bself\.)(" + "|".join(g for g in GLOBALS if g not in ("standing", "admission")) + r")\b(?!\s*:)")
+TAKES_FRAME = re.compile(r"\bfunc \w+[^{]*\bframe: TurnFrame\b")
+VOLATILE = re.compile(r"\bstatic func volatile\(")
 HOST = re.compile(r"^(?:@MainActor )?(?:final class|extension) RelayToolHost\b")
 LIFE = {"begin": re.compile(r"\bframes\.begin\("), "end": re.compile(r"\bframes\.end\(")}
 # file: frame starts and ends. Change a number only with the reason in the commit.
 WIRING = {
-    "Sources/Serein/RelayOrchestrator.swift": {"begin": 2, "end": 4},
+    # turn() and the scheduled start, plus the DEBUG `turnPage` setter RelayChecks uses.
+    "Sources/Serein/RelayOrchestrator.swift": {"begin": 3, "end": 4},
+    # The turn-frame check opens two chats' turns on a real Relay and ends both.
+    "Sources/Serein/AssistantCoreChecks+TurnFrame.swift": {"begin": 2, "end": 2},
+    # The side-seat check opens the front turn in the seat's chat and ends it.
+    "Sources/Serein/AssistantCoreChecks+GroupTurn.swift": {"begin": 1, "end": 1},
     # The setting_change check opens a person's and an assistant's turn on a real Relay.
     "Sources/Serein/AssistantCoreChecks+SettingChange.swift": {"begin": 1},
     # The settings-undo machine starts, ends and late-ends turns on both chats.
@@ -123,10 +137,31 @@ def host_lines(text):
             yield number, line
 
 
+def bodies(text, start):
+    """(line number, line) for each line of every function whose header matches `start`, from the
+    header to the brace that closes it."""
+    lines = text.splitlines()
+    for first, line in enumerate(lines):
+        if not start.search(line):
+            continue
+        depth, opened = 0, False
+        for number in range(first, len(lines)):
+            depth += lines[number].count("{") - lines[number].count("}")
+            opened = opened or "{" in lines[number]
+            yield number + 1, lines[number]
+            if opened and depth <= 0:
+                break
+
+
 def problems(path, text):
     """What `path` breaks, as lines of text. `text` has its comments blanked."""
-    found = [f"{path}:{number}: reads relay.{hit} in the tool host; read frame instead"
-             for number, line in host_lines(text) for hit in READ.findall(line)]
+    path_lines = dict(host_lines(text))
+    path_lines.update(bodies(text, TAKES_FRAME))
+    path_lines.update(bodies(text, VOLATILE))
+    found = [f"{path}:{number}: reads relay.{hit} in the tool path; read frame instead"
+             for number, line in sorted(path_lines.items()) for hit in READ.findall(line)]
+    found += [f"{path}:{number}: reads {hit} in a function handed a frame; read frame.{hit} instead"
+              for number, line in bodies(text, TAKES_FRAME) for hit in BARE.findall(line)]
     now = {name: count for name, pattern in LIFE.items() if (count := len(pattern.findall(text)))}
     if now != WIRING.get(path, {}):
         found.append(f"{path}: frame starts and ends are now {now}, the list says {WIRING.get(path, {})}")
@@ -143,6 +178,15 @@ def self_check():
         "@MainActor final class RelayToolHost {\n  func f() { _ = relay.admissionTurn }\n}\n": 1,
         "extension RelayToolHost {\n  func f() { _ = relay.turnThreadName }\n}\n": 0,
         "frames.begin(frameNow(thread: chat))\n": 1,
+        "extension RelayOrchestrator {\n  func f(frame: TurnFrame) {\n    g(personWords: frame.personWords)\n  }\n}\n": 0,
+        "extension RelayToolHost {\n  func f() { _ = relay.working || relay.actingProfile == nil }\n}\n": 2,
+        "extension RelayToolHost {\n  func f() { _ = relay.admission(.board); _ = relay.standing(present: true) }\n}\n": 2,
+        "extension RelayToolHost {\n  func f() { _ = standing(); _ = frame.admission(.board) }\n}\n": 0,
+        "extension RelayOrchestrator {\n  func f(_ x: Int, frame: TurnFrame) -> Int {\n    _ = turnThread\n    return 0\n  }\n}\n": 1,
+        "extension RelayOrchestrator {\n  func f(frame: TurnFrame) {\n    _ = self.turnProfileID + frame.typedWords\n  }\n}\n": 1,
+        "extension RelayOrchestrator {\n  func f(frame: TurnFrame) {\n    _ = frame.typedWords + frame.profile\n  }\n  var g: String { turnThread }\n}\n": 0,
+        "enum RelayPrompt {\n  static func volatile(request: String, thread: String?) -> String {\n    relay?.turnPage?.line ?? \"\"\n  }\n}\n": 1,
+        "enum RelayPrompt {\n  static func stable() -> String { relay?.turnPage?.line ?? \"\" }\n}\n": 0,
     }
     bad = [f"{sample!r} gave {got}" for sample, want in samples.items()
            if len(got := problems("Sample.swift", strip_comments(sample))) != want]

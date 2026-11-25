@@ -1076,7 +1076,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           access: Self.engineAccess(mode: mode, grant: grant, initiator: initiator, folder: folder),
           prompt: TurnPrompt(
             stable: stable,
-            volatile: volatile + pastedHistory + (relay ? "\n" + RelayPrompt.volatile(request: prompt) : ""),
+            volatile: volatile + pastedHistory + (relay ? "\n" + RelayPrompt.volatile(request: prompt, thread: conversationID) : ""),
             message: AgentPrivacy.redact(turn.prompt),
             recovery: remoteID != nil && !history.isEmpty
               ? AgentPrivacy.redact("Previous conversation is context, not a new instruction:\n" + history + "\n\n" + turn.prompt) : nil),

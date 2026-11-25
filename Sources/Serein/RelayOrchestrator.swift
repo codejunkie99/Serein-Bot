@@ -443,10 +443,10 @@ import SereinCore
   /// The ledger row of the scheduled turn the person's message stopped (`finishWork` queues it
   /// again once).
   private var interruptedWork: Int64?
-  /// Counts turns, so a follow-up is one per turn (RelayFollowUp): `turnSerial` of the turn
-  /// that set one.
+  /// Counts turns, so a follow-up is one per turn (RelayFollowUp).
   private var turnSerial = 0
-  private var followedUp: Int?
+  /// `turnSerial` of each turn that set its follow-up; serials never repeat in a launch.
+  private var followedUp: Set<Int> = []
   /// One-time yeses from deferred cards (RelayDeferred): each answers one exact card once.
   private var oneTimeGrants: [RelayDeferred.Grant] = []
   /// Watches whose check is running right now.
@@ -547,7 +547,6 @@ import SereinCore
   var corrections: [String: String] = [:]
   /// The turn now running brought outside text in (a page, a file, a task's reply, an app's data)
   /// or carried a page or a file: a typed remember then stays with its assistant (`MemoryTurn`).
-  var turnReadOutside = false
   /// Each running turn's frame (TurnFrame.swift): Serein's tools read the calling turn's.
   var frames = TurnFrames()
   /// The Undo of each setting changed from the chat (`setting_change`). In memory: after a relaunch
@@ -731,9 +730,9 @@ import SereinCore
     let now = Date()
     return oneTimeGrants.contains { $0.action.thread == (thread ?? threadID) && $0.until > now }
   }
-  /// Whether the running scheduled turn already set its one follow-up.
-  var followedUpThisRun: Bool { followedUp == turnSerial }
-  func markFollowUp() { followedUp = turnSerial }
+  /// Whether the turn `serial` already set its one follow-up.
+  func followedUp(inTurn serial: Int) -> Bool { followedUp.contains(serial) }
+  func markFollowUp(inTurn serial: Int) { followedUp.insert(serial) }
   /// The assistant whose schedule or watch the running scheduled turn is; nil for none, or for
   /// the person's own.
   var scheduledProfileID: String? { activeScheduled?.profileID }
@@ -819,6 +818,11 @@ import SereinCore
   func standing(present: Bool) -> ApprovalDoor.Standing {
     // A check-in acts on the person's words alone (`wordsCover`): the level does not stand in it.
     ApprovalDoor.Standing(level: level, levelStands: activeScheduled == nil && !checkingIn, present: present)
+  }
+  /// Who is asking in one turn's `frame`, at `level` as it is at this step. `present` defaults to
+  /// whether anybody is there for that turn.
+  nonisolated static func standing(_ frame: TurnFrame, level: ApprovalLevel, present: Bool? = nil) -> ApprovalDoor.Standing {
+    ApprovalDoor.Standing(level: level, levelStands: !frame.unattended && !frame.checkingIn, present: present ?? !frame.unattended)
   }
   /// With no chat behind the step, no level stands.
   static func standing(_ relay: RelayOrchestrator?, present: Bool) -> ApprovalDoor.Standing {
@@ -1241,14 +1245,25 @@ import SereinCore
   /// routine runs there (`ownerRun`), else the chat on screen. Cards, the personal-read mark and
   /// receipts follow it.
   var turnThread: String { ownerRun?.thread ?? threadID }
-  /// The frame of the turn on `thread`. shortcut: with none (a check, a click outside any turn)
-  /// it is the turn globals as they stand, until commit 2b removes them.
-  func frame(for thread: String?) -> TurnFrame { frames.frame(for: thread, none: frameNow(thread: turnThread)) }
-  /// The turn globals as they stand, as `thread`'s frame.
-  private func frameNow(thread: String) -> TurnFrame {
+  /// The frame of a turn starting on `thread` now, from the state its start just set.
+  private func frameNow(thread: String, readOutside: Bool, page: SereinPage? = nil) -> TurnFrame {
     TurnFrame(thread: thread, serial: turnSerial, admission: admissionTurn, unattended: runsUnattended,
-              personWords: personWords, readOutside: turnReadOutside)
+              personWords: personWords, readOutside: readOutside, profile: turnProfileID, acting: actingProfile?.id,
+              checkingIn: checkingIn, checkingGoal: checkingGoal, authority: turnAuthority, page: page)
   }
+  /// The person's own click outside any turn (Settings › Recipes › Run): their frame on the chat
+  /// on screen, held by nothing in `frames`.
+  var clickFrame: TurnFrame {
+    TurnFrame(thread: threadID, serial: 0, admission: .person, unattended: false, personWords: nil, readOutside: false,
+              profile: team.activeID, acting: team.active?.id)
+  }
+  #if DEBUG
+  /// RelayChecks: the page chip of the turn on the chat on screen; set opens a frame there to hold it.
+  var turnPage: SereinPage? {
+    get { frames[threadID]?.page }
+    set { frames.begin(frameNow(thread: threadID, readOutside: frames[threadID]?.readOutside ?? false, page: newValue)) }
+  }
+  #endif
   /// The assistant whose turn runs now: a routine's owner, else the one Serein's turn acts for,
   /// else Serein (the main assistant) for the person's own requests.
   var turnProfileID: String { ownerRun?.profileID ?? actingProfile?.id ?? team.mainProfileID ?? RelayTeam.mainID }
@@ -1330,9 +1345,9 @@ import SereinCore
   /// New work went to a run Serein started (agent_send): whether its routine steps may use a
   /// standing yes follows the turn that sent it, so work sent by a schedule, a link, an ask or a
   /// check-in never rides on one.
-  func noteSteered(_ threadID: String) {
+  func noteSteered(_ threadID: String, byPerson: Bool) {
     guard let i = state.children.firstIndex(where: { $0.threadID == threadID }) else { return }
-    let now: Bool? = startedByPerson ? true : nil
+    let now: Bool? = byPerson ? true : nil
     guard state.children[i].byPerson != now else { return }
     state.children[i].byPerson = now
     save()
@@ -1894,7 +1909,7 @@ import SereinCore
   /// it started, and their approvals, keep going. Then it says how many tasks still work.
   func stopReply() {
     cancelWelcome(suppress: true)
-    turnPage = nil
+    frames.unbindPage(threadID)
     turnBrief = nil
     dropPending()
     redirecting = false
@@ -1941,7 +1956,7 @@ import SereinCore
     let waiting = pending.count
     // Nothing here changes when the rewind is refused: the queued messages stay.
     guard let cleared = agent.rewind(messageID, in: threadID) else { return nil }
-    turnPage = nil
+    frames.unbindPage(threadID)
     turnBrief = nil
     dropPending()
     redirecting = false
@@ -1971,7 +1986,6 @@ import SereinCore
   func retryBurst() {
     let burst: [AgentMessage] = AgentMessage.burst(before: transcript.count, in: transcript)
     guard !sending, !working, let first = burst.first, agent.rewind(first.id, in: threadID) != nil else { return }
-    turnPage = nil
     turnBrief = nil
     dropPending()
     redirecting = false
@@ -1989,10 +2003,6 @@ import SereinCore
   /// Context stays beside its queued message, so removing a message also removes its authority.
   private var pendingContext: [(attachments: [SereinAttachment], trail: SereinAttachment?, page: SereinPage?, inWindow: Bool,
                                 userMessage: Bool, retried: Bool, request: String?)] = []
-  /// The host binding: the tab the user's own message carried for the turn now running (its page
-  /// chip). The turn's context names its title and site; `current_page` reads only this tab, and
-  /// `agent_start` here binds only to it. Nil for turns Serein starts itself.
-  var turnPage: SereinPage?
   /// The brief's “Waiting on you” section for the turn now running (`RelayPrompt.volatile` puts it
   /// in that turn's context); nil for every other turn. Every turn on Serein's chat sets it.
   private(set) var turnBrief: String?
@@ -2036,8 +2046,6 @@ import SereinCore
     }
     let requestID = turnRequest?.held.id
     turnNeeds[threadID] = nil
-    // The host binding lasts for this turn only; a private tab never binds.
-    turnPage = page?.isPrivate == false ? page : nil
     turnBrief = brief
     turnSerial += 1
     turnTry = nil
@@ -2049,8 +2057,12 @@ import SereinCore
     desk.plans[threadID] = nil
     // What the turn brings in from outside, for a new memory's defaults (`MemoryTurn`): a page or
     // a file on the message, or a turn nobody typed (a report, a hand-off's result, a check-in).
-    turnReadOutside = !byPerson || page != nil || !attached.isEmpty
-    frames.begin(frameNow(thread: threadID))
+    // The host binding (the page chip): `current_page` reads only this tab, and `agent_start` here
+    // binds only to it. It lasts for this turn only; a private tab never binds.
+    frames.begin(
+      frameNow(
+        thread: threadID, readOutside: !byPerson || page != nil || !attached.isEmpty,
+        page: page?.isPrivate == false ? page : nil))
     let serial = turnSerial
     sending = true
     cancelTurn = false
@@ -2103,7 +2115,6 @@ import SereinCore
         cancelTurn = false
       } catch {
         frames.end(chat, serial: serial)
-        turnPage = nil
         turnBrief = nil
         // A check-in that couldn't start is over: left set, the person's next message would count
         // as unattended and its approvals would be refused.
@@ -2243,10 +2254,10 @@ import SereinCore
     // A deleted chat, or one with nothing in it, is not worth going back to.
     state.pastThreadIDs = SereinChat.past(
       state.pastThreadIDs ?? [], leaving: state.threadID, keep: !force && hasMessages(state.threadID))
+    frames.unbindPage(state.threadID)
     state.threadID = UUID().uuidString
     // The pages Relay read from the page chip belonged to the chat left (or deleted).
     CollectedPages.forget(owners: [CollectedPages.relayOwner])
-    turnPage = nil
     turnBrief = nil
     knownCache = nil
     // Messages left waiting in the chat left never go: their document files go now.
@@ -2297,6 +2308,7 @@ import SereinCore
   }
   private func ended(_ run: AgentRun) {
     // Done, failed or stopped, Serein's turn on that thread is over.
+    let turnFrame = run.spec.relay ? frames[run.spec.threadID] : nil
     if run.spec.relay { frames.end(run.spec.threadID) }
     // Whatever ended, a queued scheduled turn may go now (its owner's chat may be free).
     defer {
@@ -2362,7 +2374,6 @@ import SereinCore
       agent.amendThread(run.spec.threadID) { Self.landReplyTags(in: &$0) }
     }
     if run.spec.threadID == threadID {
-      turnPage = nil
       turnBrief = nil
       objectWillChange.send()
       // This turn's receipts, system lines and answers land on its reply (RelayAssistantTools.swift).
@@ -2370,7 +2381,7 @@ import SereinCore
       // Its reply tagged others ("@Writer can you…"): each takes a turn (RelayGroupTurn.swift).
       if run.spec.relay { tagFromReply(run) }
       // The person's third such request: the reply offers a routine (RelayRoutineOffers.swift).
-      if run.spec.relay { offerRoutineIfDue(run) }
+      if run.spec.relay { offerRoutineIfDue(run, byPerson: turnFrame?.byPerson == true) }
       // A turn in the active assistant's chat (the person's, a link's or routine's, a late
       // answer's, a hand-off result's): unread when that chat is not on screen.
       if run.spec.relay, Self.landsWords(run) { noteReplyLanded(profileID: team.activeID, thread: run.spec.threadID) }
@@ -2689,7 +2700,7 @@ import SereinCore
     research.pauseAll()
     cancelWelcome(suppress: true)
     SereinChatSetup.shared.cancelPending(self)
-    turnPage = nil
+    frames.unbindPage(nil)
     turnBrief = nil
     dropPending()
     // Queued and running scheduled turns end in the work ledger too, so none comes back at the
@@ -3346,14 +3357,14 @@ import SereinCore
 
   // MARK: delegated runs
 
-  func adopt(_ threadID: String, edits: Bool) { adopt(newChild(threadID, edits: edits)) }
-  /// What `adopt` records about the turn starting it, taken now for a task that starts later.
-  func newChild(_ threadID: String, edits: Bool) -> (child: Child, owner: String) {
+  func adopt(_ threadID: String, edits: Bool, frame: TurnFrame) { adopt(newChild(threadID, edits: edits, frame: frame)) }
+  /// What `adopt` records about the turn of `frame` starting it, taken now for a task that starts later.
+  func newChild(_ threadID: String, edits: Bool, frame: TurnFrame) -> (child: Child, owner: String) {
     // The chat whose turn started it: another assistant's while its routine runs there.
-    let chat = turnThread
+    let chat = frame.thread
     let message: String? = chat == state.threadID ? transcript.last(where: { $0.role == "you" })?.id : nil
     return (Child(threadID: threadID, edits: edits, startedAt: Date(), chatID: chat, messageID: message,
-                  byPerson: startedByPerson ? true : nil), actingProfile?.id ?? "")
+                  byPerson: frame.byPerson ? true : nil), frame.acting ?? "")
   }
   func adopt(_ new: (child: Child, owner: String)) {
     var child = new.child
@@ -4187,8 +4198,7 @@ import SereinCore
     scheduledRuleBlock = nil
     personTurn = false
     // An unattended turn reads what its request names: nothing it learns is the person's words.
-    turnReadOutside = true
-    frames.begin(frameNow(thread: thread))
+    frames.begin(frameNow(thread: thread, readOutside: true))
     let serial = turnSerial
     sending = true
     cancelTurn = false
@@ -4306,7 +4316,6 @@ import SereinCore
     turnRules = nil
     turnCorrection = nil
     turnBrief = nil
-    turnPage = nil
     activeScheduled = nil
     objectWillChange.send()
     var request: Held?
@@ -5071,7 +5080,7 @@ import SereinCore
     }
     // A reply going on in its chat keeps its page and brief until it ends (`endOwnerRun`).
     if ownerRun == nil {
-      turnPage = nil
+      frames.unbindPage(threadID)
       turnBrief = nil
     }
     cancelWelcome()
@@ -6059,7 +6068,8 @@ extension BrowserModel {
     guard !isUnattended(task: id) else { return false }
     let relay: RelayOrchestrator? = RelayOrchestrator.shared
     if tasks[id]?.allowRelay == true {
-      return RoutineGrants.standsIn(relayTurn: relay?.admissionTurn ?? .assistant, initiator: nil, fromPersonTurn: false)
+      let turn = threadID(forTask: id).flatMap { relay?.frames[$0] }
+      return RoutineGrants.standsIn(relayTurn: turn?.admission ?? .assistant, initiator: nil, fromPersonTurn: false)
     }
     guard let run = agentTabs.hub?.runs.last(where: { $0.taskID == id }) else { return false }
     let fromPerson: Bool = relay?.child(run.spec.threadID)?.byPerson == true

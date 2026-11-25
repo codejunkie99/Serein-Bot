@@ -54,12 +54,12 @@ extension RelayOrchestrator {
   /// Starts one run per target of `request`, after the checks: the system line "Asked Planner"
   /// goes to this chat, and the moving line ("Asking Planner…") shows while they work. The
   /// hidden chats' ids, in the order named.
-  func startAsk(_ request: AskPolicy.Request, asker: RelayProfile, turn: Admission.Turn) -> [String] {
-    // The chat whose turn asks: a routine's owner chat while it runs there, else the chat on
-    // screen. The mark, the line, the answer and a late turn all follow it.
-    let askerChat = turnThread
+  func startAsk(_ request: AskPolicy.Request, asker: RelayProfile, frame: TurnFrame) -> [String] {
+    // The chat whose turn asks: the mark, the line, the answer and a late turn all follow it.
+    let askerChat = frame.thread
     let askerMarked = agent.readsPersonal(thread: askerChat)
-    let words: String? = startedByPerson ? personWords : nil
+    let turn = frame.admission
+    let words: String? = frame.byPerson ? frame.personWords : nil
     let now = Date()
     var threads: [String] = []
     var names: [String] = []
@@ -354,7 +354,7 @@ extension RelayToolHost {
   /// itself asked (depth 1), past the limits, for a paused target, or when no task slot is free.
   func askAssistants(_ a: [String: Any]) async throws -> [String: Any] {
     let team = relay.team
-    guard let asker = relay.actingProfile ?? team.main else { throw SereinError.invalid(ActionAdmission.needsPerson) }
+    guard let asker = acting ?? team.main else { throw SereinError.invalid(ActionAdmission.needsPerson) }
     let turn = frame.admission
     let request: AskPolicy.Request
     switch AskPolicy.parse(a, askerID: asker.id, team: team, paused: relay.pausedAssistants) {
@@ -372,7 +372,7 @@ extension RelayToolHost {
         throw SereinError.invalid("\(name) is not on \(asker.name)'s team. Ask Serein to ask \(name).")
       }
     }
-    let threads = relay.startAsk(request, asker: asker, turn: turn)
+    let threads = relay.startAsk(request, asker: asker, frame: frame)
     let deadline = Date().addingTimeInterval(AskPolicy.inlineWait)
     // A stopped turn stops the wait only: the answers still land, later, as their own turn.
     while Date() < deadline, !Task.isCancelled, threads.contains(where: { relay.askWaits($0) }) {

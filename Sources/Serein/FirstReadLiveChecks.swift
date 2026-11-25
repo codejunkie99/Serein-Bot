@@ -35,7 +35,7 @@ extension SmokeTest {
 
     SessionReading.allowed = false
     do {
-      _ = try await relay.tools.call("sessions_list", [:])
+      _ = try await relay.tools.call("sessions_list", [:], thread: relay.threadID)
       try check(false, "Reading chats is refused once the person turns it off")
     } catch let error as SereinError {
       try check(error.localizedDescription.contains("Read your AI chats"), "Reading chats is refused once the person turns it off")

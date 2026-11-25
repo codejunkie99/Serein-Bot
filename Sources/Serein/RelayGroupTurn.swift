@@ -123,13 +123,13 @@ extension RelayToolHost {
       sender = target
       readOutside = relay.agent.hub.run(for: handoffChat)?.steps.isEmpty == false
     } else {
-      sender = relay.profile(id: relay.turnProfileID)
+      sender = relay.profile(id: frame.profile)
       readOutside = frame.readOutside
     }
     guard let text = (a["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
       throw SereinError.invalid("text is required: the message to post.")
     }
-    let said = relay.channelSay(text, from: sender, parent: parent, chat: parent?.threadID ?? relay.threadID, readOutside: readOutside)
+    let said = relay.channelSay(text, from: sender, parent: parent, chat: parent?.threadID ?? frame.thread, readOutside: readOutside)
     var out: [String: Any] = ["posted": said.post, "tagged": said.seated.map(relay.profileName)]
     if !said.refused.isEmpty {
       out["not_tagged"] = Dictionary(said.refused.map { (relay.profileName($0.id), $0.words) }, uniquingKeysWith: { a, _ in a })

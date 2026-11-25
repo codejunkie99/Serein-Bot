@@ -395,7 +395,7 @@ extension RelayOrchestrator {
     turnMemory = nil
     turnCorrection = corrections.removeValue(forKey: thread)
     turnRules = await rulesBlock(profileID: profileID, thread: thread)
-    let shown: Bool = !RunMode.automated && profileID == team.activeID && MemoryTools.asksToSeeMemory(typedWords)
+    let shown: Bool = !RunMode.automated && profileID == team.activeID && MemoryTools.asksToSeeMemory(frames[thread]?.typedWords ?? "")
     if shown { MemoryJournalWindow.show(self) }
     guard let block = await memoryBlock(request: request, thread: thread, profileID: profileID) else {
       if shown { turnMemory = Self.journalShown }
@@ -403,10 +403,7 @@ extension RelayOrchestrator {
     }
     // A note from outside content makes this turn outside too, as `recall` does, so a note the
     // person saves from it stays private (`MemoryTools.carriesOutside`).
-    if block.outside {
-      turnReadOutside = true
-      frames.noteReadOutside(thread)
-    }
+    if block.outside { frames.noteReadOutside(thread) }
     turnMemory = shown ? block.text + "\n" + Self.journalShown : block.text
   }
 
@@ -442,30 +439,22 @@ extension RelayOrchestrator {
     return (text: block.text, outside: MemoryTools.carriesOutside(rendered))
   }
 
-  /// Shows `receipt` under the reply of the turn now running, with its Undo kept for the chat
-  /// (`deliver`, RelayAssistantTools.swift: it lands on the reply when the turn ends).
-  func noteReceipt(_ receipt: Receipt) {
-    deliver(receipt: receipt, into: turnThread)
-  }
-
-  /// Serein's own turn called `name` (BrowserModel.perform): anything but `cleanTools` may bring
-  /// outside text into the turn.
-  func noteTurnTool(_ name: String) {
-    if !Self.cleanTools.contains(name) {
-      turnReadOutside = true
-      frames.noteReadOutside(turnThread)
-    }
+  /// Serein's own turn on `thread` called `name` (BrowserModel.perform): anything but
+  /// `cleanTools` may bring outside text into the turn.
+  func noteTurnTool(_ name: String, thread: String?) {
+    if !Self.cleanTools.contains(name), let thread { frames.noteReadOutside(thread) }
     #if DEBUG
       toolsCalledForChecks.append(name)
     #endif
   }
 
-  /// What the turn now running on `thread` has read, for a new record's defaults (`MemoryDefaults`):
-  /// outside text (a tool beyond `cleanTools`, a step of the AI app's own, a page or a file on the
+  /// What the turn of `frame` has read, for a new record's defaults (`MemoryDefaults`): outside
+  /// text (a tool beyond `cleanTools`, a step of the AI app's own, a page or a file on the
   /// message), and personal data (the chat's mark).
-  func memoryTurn(thread: String) -> MemoryTurn {
+  func memoryTurn(_ frame: TurnFrame) -> MemoryTurn {
+    let thread = frame.thread
     let steps = agent.hub.run(for: thread)?.steps.isEmpty == false
-    return MemoryTurn(readOutside: frame(for: thread).readOutside || steps, readPersonal: agent.readsPersonal(thread: thread))
+    return MemoryTurn(readOutside: frame.readOutside || steps, readPersonal: agent.readsPersonal(thread: thread))
   }
 
   /// Whether the chat behind a task chat read the person's data: the chat on screen (as before),
@@ -483,20 +472,22 @@ extension RelayOrchestrator {
   /// scope `wanted` names; with a receipt. Otherwise it is this assistant's own idea
   /// (`MemoryDefaults.learned`): private and unreviewed until the person keeps it, with no receipt.
   /// An equal note that is there already is not saved twice.
-  func rememberFact(_ text: String, quote: String?, scope wanted: MemoryScope?, expires: Date?) async throws
+  func rememberFact(_ text: String, quote: String?, scope wanted: MemoryScope?, expires: Date?, frame: TurnFrame)
+    async throws
     -> (record: MemoryRecord, receipt: Receipt?)
   {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     if let why = SavedText.problem(text) { throw SereinError.invalid(why) }
-    let owner = turnProfileID
-    let chat = turnThread
-    let facts = memoryTurn(thread: chat)
-    let asked = MemoryTools.asksToRemember(typedWords)
+    let owner = frame.profile
+    let chat = frame.thread
+    let facts = memoryTurn(frame)
+    let typed = frame.typedWords
+    let asked = MemoryTools.asksToRemember(typed)
     var record: MemoryRecord
     if asked {
       // What the person asked to keep carries their own words: the quote when they typed it,
       // else their message (`MemoryTools.verbatim`), never words the model made up.
-      let said: String? = MemoryTools.verbatim(quote, said: typedWords)
+      let said: String? = MemoryTools.verbatim(quote, said: typed)
       record = try MemoryDefaults.remembered(text, quote: said, by: owner, chat: chat, turn: facts, expires: expires)
       if let wanted, wanted != record.scope {
         if record.outside, wanted != .assistant(owner) { throw SereinError.invalid(Self.outsideStays) }
@@ -522,7 +513,7 @@ extension RelayOrchestrator {
       guard asked else { return (record: same, receipt: nil) }
       var receipt = ReceiptCopy.remembered(same.text, sharedWithAll: same.scope == .person, entry: "")
       receipt.undo = nil
-      noteReceipt(receipt)
+      deliver(receipt: receipt, into: chat)
       return (record: same, receipt: receipt)
     }
     guard case .done(let entry) = outcome.write else {
@@ -531,7 +522,7 @@ extension RelayOrchestrator {
     await refreshNotes(journal: "relay")
     guard asked else { return (record: ready, receipt: nil) }
     let receipt = ReceiptCopy.remembered(ready.text, sharedWithAll: ready.scope == .person, entry: Self.memoryUndoPrefix + entry)
-    noteReceipt(receipt)
+    deliver(receipt: receipt, into: chat)
     return (record: ready, receipt: receipt)
   }
 
@@ -540,13 +531,13 @@ extension RelayOrchestrator {
   /// marked; when the mark cannot be saved they are withheld. In the person's turn it also names
   /// who else knows something (never the text) and, as a separate list, at most three of its
   /// proposals the person could keep (SPEC 4.6). Text from a learned record is marked untrusted.
-  func recallFacts(_ query: String?, limit: Int) async throws -> [String: Any] {
+  func recallFacts(_ query: String?, limit: Int, frame: TurnFrame) async throws -> [String: Any] {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
-    let owner = turnProfileID
+    let owner = frame.profile
     let reader = memoryReader(owner)
     let words = query ?? ""
     let cap = min(max(limit, 1), MemoryStore.recallLimit)
-    let person = startedByPerson
+    let person = frame.byPerson
     let read = try await memory.run {
       (store: MemoryStore) -> (hits: MemoryHits, who: [String: Int], ideas: [MemoryRecord]) in
       let hits = try store.search(words, reader: reader, limit: cap)
@@ -558,12 +549,9 @@ extension RelayOrchestrator {
       }
       return (hits: hits, who: who, ideas: ideas)
     }
-    let chat = turnThread
+    let chat = frame.thread
     let records = read.hits.reveal { self.agent.markPersonalRead(thread: chat) }
-    if MemoryTools.carriesOutside(records) {
-      turnReadOutside = true
-      frames.noteReadOutside(chat)
-    }
+    if MemoryTools.carriesOutside(records) { frames.noteReadOutside(chat) }
     let names = memoryNames
     var out: [String: Any] = ["notes": records.map { Self.row($0, names: names, team: team) }, "total": records.count]
     if records.isEmpty, read.hits.needsMark { out["withheld"] = BrowserModel.personalMarkWithheld }
@@ -597,10 +585,10 @@ extension RelayOrchestrator {
 
   /// One record by id that the turn's assistant may change: one it may recall, or its own
   /// proposal. Throws "No note has that id" otherwise.
-  func memoryRecord(_ id: String) async throws -> MemoryRecord {
+  func memoryRecord(_ id: String, owner: String) async throws -> MemoryRecord {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     let found: MemoryRecord? = try await memory.run { (store: MemoryStore) -> MemoryRecord? in try store.record(id: id) }
-    let reader = memoryReader(turnProfileID)
+    let reader = memoryReader(owner)
     guard let found,
       MemoryRecall.eligible(found, for: reader) || (found.review == .unreviewed && found.owner == reader.assistant)
     else { throw SereinError.invalid("No note has that id. Use recall to find it.") }
@@ -609,7 +597,7 @@ extension RelayOrchestrator {
 
   /// Forgets `records` (at most three, SPEC 4.3): each leaves a digest (`declined` for a
   /// proposal), and the receipt's Undo brings them back for 10 seconds.
-  func forgetFacts(_ records: [MemoryRecord]) async throws -> Receipt {
+  func forgetFacts(_ records: [MemoryRecord], into chat: String) async throws -> Receipt {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     let targets: [(id: String, idea: Bool)] = records.map { (id: $0.id, idea: $0.review == .unreviewed) }
     let entries: [String] = try await memory.run { (store: MemoryStore) -> [String] in
@@ -623,14 +611,14 @@ extension RelayOrchestrator {
     guard !entries.isEmpty else { throw SereinError.invalid("I cannot find that note.") }
     await refreshNotes(journal: "relay")
     let receipt = ReceiptCopy.forgot(entry: Self.memoryUndoPrefix + entries.joined(separator: ","))
-    noteReceipt(receipt)
+    deliver(receipt: receipt, into: chat)
     return receipt
   }
 
   /// Moves `record` to `scope` (SPEC 4.3): wider for a share, or back to its assistant ("keep
   /// that to yourself"). A learned record never goes wider (`MemoryRecord.edited`), nor one from
   /// outside content.
-  func shareFact(_ record: MemoryRecord, with scope: MemoryScope) async throws -> Receipt {
+  func shareFact(_ record: MemoryRecord, with scope: MemoryScope, into chat: String) async throws -> Receipt {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     let own = MemoryScope.assistant(record.owner)
     if record.outside, scope != own { throw SereinError.invalid(Self.outsideStays) }
@@ -650,13 +638,13 @@ extension RelayOrchestrator {
     } else {
       receipt = ReceiptCopy.shared(with: MemoryTools.whom(scope, in: team), entry: token)
     }
-    noteReceipt(receipt)
+    deliver(receipt: receipt, into: chat)
     return receipt
   }
 
   /// The person said yes to keeping a proposal (`remember` with `keep`): it is confirmed and stays
   /// private to its assistant.
-  func keepIdea(_ record: MemoryRecord) async throws -> Receipt {
+  func keepIdea(_ record: MemoryRecord, into chat: String) async throws -> Receipt {
     guard let memory = await memoryStore() else { throw SereinError.invalid(Self.memoryClosed) }
     guard record.review == .unreviewed else { throw SereinError.invalid("That note is kept already.") }
     let id = record.id
@@ -667,7 +655,7 @@ extension RelayOrchestrator {
     guard case .done(let entry) = write else { throw SereinError.invalid(write.words ?? "That note changed. Try again.") }
     await refreshNotes(journal: "learning")
     let receipt = ReceiptCopy.remembered(record.text, sharedWithAll: false, entry: Self.memoryUndoPrefix + entry)
-    noteReceipt(receipt)
+    deliver(receipt: receipt, into: chat)
     return receipt
   }
 
@@ -677,7 +665,7 @@ extension RelayOrchestrator {
   /// its schedule change, shown under the turn's reply.
   @discardableResult
   func scheduleReceipt(
-    for reminder: RelayReminder, owner: String?, connect: [ConnectLink] = [], into chat: String? = nil
+    for reminder: RelayReminder, owner: String?, connect: [ConnectLink] = [], into chat: String
   ) -> Receipt {
     var receipt = ScheduleRequest.receipt(for: reminder, owner: owner)
     // An app it needs is not connected yet: the line says so, and the pill rides under it.
@@ -685,7 +673,7 @@ extension RelayOrchestrator {
     if let change = scheduleChanges.last(where: { $0.itemID == reminder.id }) {
       receipt.undo = UndoToken(entry: Self.scheduleUndoPrefix + change.id.uuidString, kind: receipt.kind)
     }
-    deliver(receipt: receipt, connect: connect, into: chat ?? turnThread)
+    deliver(receipt: receipt, connect: connect, into: chat)
     return receipt
   }
 

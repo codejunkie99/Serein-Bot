@@ -121,7 +121,8 @@ extension AssistantCoreChecks {
       serial += 1
       relay.frames.begin(TurnFrame(
         thread: chat, serial: serial, admission: admission, unattended: false,
-        personWords: admission == .person ? words : nil, readOutside: readOutside))
+        personWords: admission == .person ? words : nil, readOutside: readOutside, profile: relay.turnProfileID,
+        acting: relay.team.active?.id))
     }
     func call(_ name: String, _ a: [String: Any]) -> (out: [String: Any], error: String) {
       var result: Result<[String: Any], Error>?
