@@ -2345,37 +2345,46 @@ struct RelayPanelView: View {
     if docked, let to = mentions.recipientName() { return "Send to \(to.name)" }
     return "Send to \(relay.team.activeName)"
   }
-  /// The message bar (the boards' `ai-input`): one bar from end to end with no card around it,
-  /// 44 high on the `overlay` plane with a 1-point `line` edge and the soft lift; the + menu, the
-  /// field with its words and placeholder centred in the 44 points, the model it thinks with, its
-  /// effort and what Serein asks before, the microphone and Send. A longer draft grows the bar to
-  /// six lines, then it scrolls; the buttons stay at its foot.
+  /// The message bar (the boards' `ai-input`; docs/demos/composer-bar.decision.md): one line in a
+  /// card with a hairline edge and the soft lift, ＋, the field, Send (the return arrow) and the
+  /// microphone. A longer draft grows the field to six lines, then it scrolls; the buttons stay at
+  /// its foot. What Serein thinks with sits under the bar's trailing end as quiet words, each its
+  /// own menu: the model, its effort, what Serein asks before, and how full the chat's context is.
   private var composerRow: some View {
     let shape = RoundedRectangle(cornerRadius: AssistantMetrics.barHeight / 2, style: .continuous)
-    return HStack(alignment: .bottom, spacing: 8) {
-      plusMenu.frame(height: AssistantMetrics.barHeight)
-      messageField
-      // The model, by what you type, once an AI app is set up; beside a page or floating, its logo
-      // tile alone. Its effort and what Serein asks before sit beside it.
-      if SereinSurface.connected(agent) {
-        ActiveAssistantModelPill(relay: relay, compact: !docked || side).frame(height: AssistantMetrics.barHeight)
-        ComposerEffortChip(relay: relay).frame(height: AssistantMetrics.barHeight)
-        ComposerPermissionChip(relay: relay, controller: controller).frame(height: AssistantMetrics.barHeight)
+    let rowHeight: CGFloat = AssistantMetrics.barHeight
+    return VStack(alignment: .trailing, spacing: 6) {
+      HStack(alignment: .bottom, spacing: 6) {
+        plusMenu.frame(height: rowHeight)
+        messageField
+        sendButton.frame(height: rowHeight)
+        micButton.frame(height: rowHeight)
+        // In the window (full or beside) the speaker is in ⋯ (Read Replies Aloud).
+        if !docked { speakerButton.frame(height: rowHeight) }
       }
-      micButton.frame(height: AssistantMetrics.barHeight)
-      // In the window (full or beside) the speaker is in ⋯ (Read Replies Aloud).
-      if !docked { speakerButton.frame(height: AssistantMetrics.barHeight) }
-      sendButton.frame(height: AssistantMetrics.barHeight)
+      .padding(.leading, 12).padding(.trailing, 8)
+      .frame(minHeight: AssistantMetrics.barHeight)
+      // Grok's composer: the pane with a hairline, a soft drop in light only.
+      .background(p.panel, in: shape)
+      .overlay(shape.strokeBorder(p.line, lineWidth: UIStyle.hairline))
+      .shadow(color: p.cardShadow, radius: 4, y: 2)
+      .background { barKeys }
+      // The "+" list takes the bar's width and place (ComposerAddList.swift), in the window only.
+      .composerAddListAnchor(docked)
+      engineLine.padding(.trailing, 10)
     }
-    .padding(.leading, 12).padding(.trailing, 8)
-    .frame(minHeight: AssistantMetrics.barHeight)
-    // Grok's composer: the pane with a hairline, a soft drop in light only.
-    .background(p.panel, in: shape)
-    .overlay(shape.strokeBorder(p.line, lineWidth: UIStyle.hairline))
-    .shadow(color: p.cardShadow, radius: 4, y: 2)
-    .background { barKeys }
-    // The "+" list takes the bar's width and place (ComposerAddList.swift), in the window only.
-    .composerAddListAnchor(docked)
+  }
+  /// Under the bar, once an AI app is set up: the model, its effort and what Serein asks before as
+  /// words, each opening its own list, then the context ring once the chat has used some.
+  @ViewBuilder private var engineLine: some View {
+    if SereinSurface.connected(agent) {
+      HStack(spacing: 4) {
+        ActiveAssistantModelPill(relay: relay, quiet: true).layoutPriority(-1)
+        ComposerEffortChip(relay: relay, quiet: true)
+        ComposerPermissionChip(relay: relay, controller: controller, quiet: true)
+        if let meter = hub.latest(for: relay.threadID)?.contextMeter { ContextRing(meter: meter).padding(.leading, 4) }
+      }
+    }
   }
   /// ⌘Return and ⌘Z with the bar empty (SPEC.md 2.0 keys): the newest waiting card's primary
   /// button (`ChatCardKeys`; an approval card keeps its own keys), and the live Undo of the newest
@@ -2463,7 +2472,7 @@ struct RelayPanelView: View {
     }.buttonStyle(GlyphButtonStyle()).help(speak ? "Serein reads replies aloud" : "Read replies aloud")
       .accessibilityLabel(speak ? "Stop reading replies aloud" : "Read replies aloud")
   }
-  /// The 28-point `solid` circle in four states (`TurnActivity.SendButton`): the arrow (Send),
+  /// The 28-point glyph in four states (the return arrow for Send) (`TurnActivity.SendButton`): the arrow (Send),
   /// the clock (Send message, while a turn runs), a 12-point square (Stop, an empty box while a
   /// turn runs) and the arrow at 35% (an empty idle box). The pictures crossfade over 120 ms,
   /// opacity only, at once under Reduce Motion. It is the one Stop, and acts only on a reply in
@@ -2481,14 +2490,14 @@ struct RelayPanelView: View {
       if state == .stop { relay.stopReply() } else { send(interrupt: false) }
     } label: {
       ZStack {
-        InterfaceIcon(systemName: "arrow.up", size: 14).foregroundStyle(p.onSolid)
+        InterfaceIcon(systemName: "arrow.turn.down.left", size: 15).foregroundStyle(p.ink)
           .opacity(state == .send || state == .disabled ? 1 : 0)
-        InterfaceIcon(systemName: "clock", size: 13).foregroundStyle(p.onSolid).opacity(state == .queue ? 1 : 0)
-        RoundedRectangle(cornerRadius: 2, style: .continuous).fill(p.onSolid).frame(width: 12, height: 12)
+        InterfaceIcon(systemName: "clock", size: 14).foregroundStyle(p.ink).opacity(state == .queue ? 1 : 0)
+        RoundedRectangle(cornerRadius: 2, style: .continuous).fill(p.ink).frame(width: 11, height: 11)
           .opacity(state == .stop ? 1 : 0)
       }
       .animation(reduceMotion ? nil : .linear(duration: TurnActivity.sendSwap), value: state)
-      .frame(width: 28, height: 28).background(p.solid, in: Circle())
+      .frame(width: 28, height: 28).contentShape(Rectangle())
     }.buttonStyle(AssistantPressStyle()).disabled(!acts)
       .opacity(acts ? 1 : 0.35)
       .help(state == .stop && !acts ? "Another assistant's routine is running. Stop it from its own chat" : label)
@@ -3840,9 +3849,11 @@ struct ActiveAssistantModelPill: View {
   @ObservedObject var relay: RelayOrchestrator
   var compact = false
   var headerHeight: CGFloat? = nil
+  var quiet = false
   var body: some View {
     let routeKey: String = relay.team.active?.route.map { "\($0.provider):\($0.model)" } ?? "default"
-    ModelPill(agent: relay.agent, compact: compact, assistant: (relay.team.activeID, relay.team.activeName), headerHeight: headerHeight)
+    ModelPill(agent: relay.agent, compact: compact, assistant: (relay.team.activeID, relay.team.activeName), headerHeight: headerHeight,
+      quiet: quiet)
       .id(relay.team.activeID + ":" + routeKey)
   }
 }

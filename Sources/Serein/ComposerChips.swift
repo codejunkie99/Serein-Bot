@@ -31,9 +31,10 @@ extension ApprovalLevel {
 struct ComposerPermissionChip: View {
   @ObservedObject var relay: RelayOrchestrator
   let controller: RelayController
+  var quiet = false
   var body: some View {
     let level = relay.level
-    ComposerChip(
+    ComposerChip(quiet: quiet,
       label: "Permission mode", value: level.composerTitle, help: "What Serein asks before: " + level.composerHint,
       choices: ApprovalLevel.composerChoices, selected: level, title: { $0.composerTitle }, hint: { $0.composerHint }
     ) { controller.setLevel($0) }
@@ -45,6 +46,8 @@ struct ComposerPermissionChip: View {
 struct ComposerEffortChip: View {
   @ObservedObject var relay: RelayOrchestrator
   @ObservedObject private var registry = HarnessRegistry.shared
+  /// Under the bar the effort reads quieter than the model and the mode around it.
+  var quiet = false
   @MainActor static func levels(_ relay: RelayOrchestrator) -> [String] {
     let engine = relay.assistantEngine(relay.team.active)
     return EffortLadder.levels(engine.provider, engine.model)
@@ -54,7 +57,7 @@ struct ComposerEffortChip: View {
     if !levels.isEmpty {
       let id = relay.team.activeID
       let effort = relay.assistantEngine(relay.team.active).effort
-      ComposerChip(
+      ComposerChip(quiet: quiet, dim: quiet,
         label: "Effort", value: EffortLadder.label(effort), help: "How hard \(relay.team.activeName) thinks",
         choices: levels, selected: effort, title: { EffortLadder.label($0) }, hint: { _ in nil }
       ) { relay.setEffort($0, for: id) }
@@ -65,6 +68,10 @@ struct ComposerEffortChip: View {
 /// A chip in Serein's message bar drawn as the model pill beside it is (`ModelPill`): its value and
 /// a chevron, opening a short list with the current choice checked.
 private struct ComposerChip<Choice: Hashable>: View {
+  /// Words alone under Serein's message bar: no chevron, a 24-point press area.
+  var quiet = false
+  /// In `secondary`, not `ink`.
+  var dim = false
   let label: String
   let value: String
   let help: String
@@ -78,9 +85,9 @@ private struct ComposerChip<Choice: Hashable>: View {
   var body: some View {
     Button { open.toggle() } label: {
       HStack(spacing: 4) {
-        Text(value).font(UIStyle.meta).foregroundStyle(p.ink).lineLimit(1)
-        InterfaceIcon(systemName: "chevron.down", size: 9).foregroundStyle(p.faint)
-      }.padding(.horizontal, 7).frame(height: UIStyle.wide(18)).contentShape(Rectangle())
+        Text(value).font(UIStyle.meta).foregroundStyle(dim ? p.secondary : p.ink).lineLimit(1)
+        if !quiet { InterfaceIcon(systemName: "chevron.down", size: 9).foregroundStyle(p.faint) }
+      }.padding(.horizontal, quiet ? 4 : 7).frame(height: quiet ? 24 : UIStyle.wide(18)).contentShape(Rectangle())
     }.buttonStyle(AssistantPressStyle()).fixedSize()
       .help(help).accessibilityLabel(label).accessibilityValue(value)
       .popover(isPresented: $open, arrowEdge: .bottom) { list.environment(\.palette, p) }
