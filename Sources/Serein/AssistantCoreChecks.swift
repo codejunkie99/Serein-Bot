@@ -11,6 +11,7 @@ enum AssistantCoreChecks {
 
   static let suites: [(String, (Check) throws -> Void)] = [
     ("receipts", AssistantCoreChecks.receipts),
+    ("allowAllLaunch", AssistantCoreChecks.allowAllLaunch),
     ("secureCard", AssistantCoreChecks.secureCard),
     ("admission", AssistantCoreChecks.admission),
     ("schedules", AssistantCoreChecks.schedules),
