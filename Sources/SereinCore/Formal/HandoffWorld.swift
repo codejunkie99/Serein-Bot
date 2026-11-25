@@ -77,10 +77,10 @@ struct HandoffWorld: Encodable, Equatable {
   }
 
   /// `sendHandoff` after the `assistant_handoff` tool's checks: the chain rule for a part, then the
-  /// sender's open and daily limits. nil when refused.
+  /// sender's open limit and the reader's daily one. nil when refused.
   func sending(from sender: String, to target: String, parent: AssistantHandoff?) -> HandoffWorld? {
     if let parent, ledger.chainRefusal(parent: parent, fromName: sender, to: target, toName: target) != nil { return nil }
-    guard ledger.refusal(from: sender, fromName: sender, team: "", now: now) == nil else { return nil }
+    guard ledger.refusal(from: sender, fromName: sender, to: target, toName: target, now: now) == nil else { return nil }
     var next = self
     let id = "h\(ledger.records.count + 1)"
     let record = AssistantHandoff(

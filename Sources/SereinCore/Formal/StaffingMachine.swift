@@ -2,8 +2,9 @@ import Foundation
 
 /// Who joins a room (`Staffing.decide`, `Workroom`, `Reach`; Staffing.swift, Workroom.swift) under
 /// every order of seat asks, makes, archives, a maker narrowed later (`renarrow`) and Undo of a make
-/// (`RelayTeam.making`, `RelayTeam.undoing`). The tool that applies a verdict lands in commit 6, so
-/// applying one is modeled here: a seat is appended under its asker, with its ledger row.
+/// (`Staffing.make`, `RelayTeam.undoing`). A make is applied by `Staffing.make`, the reducer the
+/// shell's `assistant_make` and `assistant_handoff` run; a seat is appended under its asker with its
+/// ledger row, as the shell's launch does (`RelayOrchestrator.seat(for:target:in:)`).
 struct StaffingWorld: Encodable, Equatable {
   var room: Workroom
   var team: RelayTeam
@@ -13,6 +14,8 @@ struct StaffingWorld: Encodable, Equatable {
   var journal: [Made] = []
   /// Profiles narrowed since they were seated: `renarrow`'s `now`.
   var narrowed: [String: Reach] = [:]
+  /// `decide` said make and `Staffing.make` refused it: the person would read the wrong reason.
+  var makeRefusedAfterYes = false
 
   struct Made: Encodable, Equatable {
     var before: RelayTeam
@@ -50,14 +53,17 @@ struct StaffingWorld: Encodable, Equatable {
 
   /// Applies a verdict for `seat` asking for `wanted`; nil when refused or not applicable.
   func asking(_ wanted: Staffing.Wanted, by seat: Workroom.Seat) -> StaffingWorld? {
-    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: Set(archived), ledger: ledger, readOutside: false)
+    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: Set(archived), ledger: ledger, readOutside: false, now: Self.base)
     var next = self
     switch (verdict, wanted) {
     case (.seat(let reach), .teammate(let id)):
       next.seat(id, reach: reach, under: seat)
-    case (.make(let reach, _), .newAssistant(let draft)):
+    case (.make(let reach, let lineage), .newAssistant(let draft)):
       let id = "m\(room.made.count + 1)"
-      guard case .success(let plan) = team.making(draft, person: Self.person.destinations, id: id, now: Self.base) else { return nil }
+      guard case .success(let plan) = Staffing.make(draft, reach: reach, lineage: lineage, team: team, id: id, now: Self.base) else {
+        next.makeRefusedAfterYes = true
+        return next
+      }
       next.journal.append(Made(before: team, after: plan.team))
       next.team = plan.team
       next.room.recordMade(id)
@@ -126,8 +132,14 @@ enum StaffingMachine {
         ("seat reach within its assistant's narrowed reach", { w in
           w.room.seats.allSatisfy { s in w.narrowed[s.who].map { StaffingWorld.within(s.reach, $0) } ?? true }
         }),
+        ("a make the rule allows always applies", { w in !w.makeRefusedAfterYes }),
         ("roster at most \(RelayTeam.maxProfiles)", { w in w.team.profiles.count <= RelayTeam.maxProfiles }),
         ("at most \(Staffing.makesPerRoot) makes per root", { w in w.room.made.count <= Staffing.makesPerRoot }),
+        ("a made assistant carries its lineage and no connected apps", { w in
+          w.room.made.allSatisfy { id in
+            w.team.profiles.first { $0.id == id }.map { $0.lineage?.madeIn == w.room.id && $0.scope?.apps == [] } ?? true
+          }
+        }),
       ],
       transitions: [
         ("an archived assistant is never seated", { before, _, after in

@@ -67,10 +67,6 @@ import SereinCore
   var posts: [Post] = []
   var undo = UndoStack()
   var undoActions: [String: Undo] = [:]
-  /// Kept in relay/make-proposals.json.
-  var proposals = MakeProposals()
-  /// Proposals whose card is up now.
-  var proposalCards: Set<String> = []
   /// The work Serein paused for each paused assistant, by profile id (relay/assistant-holds.json).
   var holds: [String: [HeldWork]] = [:]
   /// Kept in relay/links.json (RelayLinks.swift).
@@ -115,7 +111,6 @@ struct ChangeRefusal: Error, ExpressibleByStringLiteral {
 }
 
 extension RelayOrchestrator {
-  static let proposalsFile = "relay/make-proposals.json"
   static let holdsFile = "relay/assistant-holds.json"
 
   // MARK: who asks for a change
@@ -138,7 +133,6 @@ extension RelayOrchestrator {
   /// Each file goes through the unreadable guard (`readState`, SPEC I13): one that does not
   /// decode is kept as it is, the person is told once, and no save writes over it.
   func loadAssistantWork() {
-    desk.proposals = readState(MakeProposals.self, Self.proposalsFile) ?? MakeProposals()
     desk.holds = readState([String: [HeldWork]].self, Self.holdsFile) ?? [:]
     loadLinks()
     loadSecrets()
@@ -146,7 +140,6 @@ extension RelayOrchestrator {
     loadSeatChats()
     loadRoutineOffers()
   }
-  func saveProposals() { persist(desk.proposals, Self.proposalsFile) }
   func saveHolds() { persist(desk.holds, Self.holdsFile) }
 
   // MARK: receipts, lines and host messages
@@ -346,31 +339,41 @@ extension RelayOrchestrator {
     let entry: String
     let receipt: Receipt
   }
-  /// Makes one assistant from `draft`, journaled (Undo removes it). The receipt, the line "You
-  /// made <Name>" and the apps to connect go to `chat`; an assistant that cannot tell its job from
-  /// its name finds its first question, with chips, in its own Main chat.
-  func makeAssistant(_ draft: AssistantDraft, actor: String, chat: String) -> Result<MadeAssistant, AssistantDraft.Problem> {
+  /// An assistant's make, as `Staffing.decide` allowed it: at `reach`, with its lineage. The room
+  /// that made it records it, for the make budget.
+  struct Staffed {
+    let reach: Reach
+    let lineage: Staffing.Lineage
+  }
+  /// Makes one assistant from `draft`, journaled (Undo removes it). The receipt, the line and the
+  /// apps to connect go to `chat`; an assistant that cannot tell its job from its name finds its
+  /// first question, with chips, in its own Main chat. `staffed`: an assistant made it
+  /// (`Staffing.make`), else the person did.
+  func makeAssistant(_ draft: AssistantDraft, actor: String, chat: String, staffed: Staffed? = nil)
+    -> Result<MadeAssistant, AssistantDraft.Problem>
+  {
     let person = personPlaces
+    func plan(_ team: RelayTeam) -> Result<MakePlan, AssistantDraft.Problem> {
+      staffed.map { Staffing.make(draft, reach: $0.reach, lineage: $0.lineage, team: team) } ?? team.making(draft, person: person)
+    }
     var made: MakePlan?
     let changed = changeTeam(actor: actor, "Made assistant \(draft.name)") { current in
-      switch current.making(draft, person: person) {
-      case .success(let plan):
-        made = plan
-        return plan.team
-      case .failure:
-        return nil
-      }
+      guard case .success(let plan) = plan(current) else { return nil }
+      made = plan
+      return plan.team
     }
     guard changed, let plan = made else {
-      if case .failure(let problem) = team.making(draft, person: person) { return .failure(problem) }
+      if case .failure(let problem) = plan(team) { return .failure(problem) }
       return .failure(.rosterFull)
     }
+    if let staffed { rooms.update(staffed.lineage.madeIn) { $0.recordMade(plan.profile.id) } }
     persist(RelayPersona(name: plan.profile.name), team.folder(plan.profile.id) + "/persona.json")
     let entry: String = teamJournal.last?.id.uuidString ?? UUID().uuidString
     desk.undoActions[entry] = .team
     let receipt = plan.receipt(entry: entry)
     let offers = AppSuggestions.offers(name: plan.profile.name, job: plan.job, composioReady: ComposioApps.available)
-    deliver(receipt: receipt, line: plan.line, connect: offers, into: chat)
+    let line = staffed == nil ? plan.line : "Made \(plan.profile.name) for this task"
+    deliver(receipt: receipt, line: line, connect: offers, into: chat)
     // The host's first message in its own chat (SPEC 2.2), with no model turn.
     if let first = FirstWords.message(name: plan.profile.name, job: plan.job, jobFromName: draft.jobFromName) {
       var message = AgentMessage(role: "assistant", text: first.text, notice: true)
@@ -390,65 +393,6 @@ extension RelayOrchestrator {
       case .success: return nil
       case .failure(let problem): return problem.words
       }
-    }
-  }
-
-  // MARK: proposals from an assistant
-
-  /// The main assistant's Main chat, where proposal cards wait.
-  var rootChat: String {
-    let id: String = team.mainProfileID ?? team.activeID
-    return knownMainThread(of: id) ?? mainThread(of: id)
-  }
-  /// An assistant proposes a new one: it waits for the person's card in the root chat. The
-  /// refusal when it cannot wait now (two open, the name blocked or waiting already).
-  func propose(_ draft: AssistantDraft, by asker: RelayProfile) -> MakeProposals.Refusal? {
-    let proposal = MakeProposals.Proposal(by: asker.id, draft: draft)
-    if let refusal = desk.proposals.add(proposal, byName: asker.name, now: Date()) { return refusal }
-    saveProposals()
-    note("\(asker.name) proposed a new assistant, \(String(draft.name.prefix(40)))", .auto)
-    showProposalCard(proposal)
-    return nil
-  }
-  /// The proposal's card (`sheet-confirm`): Make it or Not now. The tool that proposed does not
-  /// wait for it. A card that timed out comes back while the root chat is on screen.
-  func showProposalCard(_ proposal: MakeProposals.Proposal) {
-    guard !desk.proposalCards.contains(proposal.id) else { return }
-    desk.proposalCards.insert(proposal.id)
-    let draft = proposal.draft
-    let title = MakeProposals.title(draft)
-    let detail = MakeProposals.detail(draft, byName: profileName(proposal.by))
-    let more = MakeProposals.more(draft)
-    let chat = rootChat
-    let id = proposal.id
-    Task { [weak self] in
-      guard let self else { return }
-      let human = await self.confirmAnswer(
-        title, detail, button: MakeProposals.confirm, decline: MakeProposals.notNow, thread: chat, more: more,
-        moreName: "what it will do", effect: .settings)
-      self.desk.proposalCards.remove(id)
-      self.answerProposal(id, human)
-    }
-  }
-  /// Make it makes the assistant now, with its receipt in the root chat; Not now blocks the name
-  /// for seven days; a card that went unanswered leaves the proposal waiting.
-  func answerProposal(_ id: String, _ human: ApprovalGate.HumanAnswer) {
-    switch human {
-    case .yes:
-      guard let proposal = desk.proposals.take(id) else { return }
-      saveProposals()
-      let chat = rootChat
-      if case .failure(let problem) = makeAssistant(proposal.draft, actor: "user", chat: chat) {
-        var message = AgentMessage(role: "assistant", text: "", notice: true)
-        message.line = "\(String(proposal.name.prefix(40))) was not made. \(problem.words)"
-        post(message, into: chat)
-      }
-    case .no:
-      guard let proposal = desk.proposals.decline(id, now: Date()) else { return }
-      saveProposals()
-      post(AssistantDesk.lineMessage(MakeProposals.declined(proposal.name)), into: rootChat)
-    case .timeout, .error:
-      break
     }
   }
 
@@ -752,18 +696,6 @@ extension RelayOrchestrator {
       folded.end(now: now)
       desk.plans[thread] = folded
     }
-    // A proposal waits a day at most; while the root chat is on screen its card is up.
-    var book = desk.proposals
-    let cards = desk.proposalCards
-    let stale: [MakeProposals.Proposal] = book.open.filter { now.timeIntervalSince($0.createdAt) > 86_400 && !cards.contains($0.id) }
-    for proposal in stale { book.take(proposal.id) }
-    book.trim(now: now)
-    if book != desk.proposals {
-      desk.proposals = book
-      saveProposals()
-    }
-    guard !desk.proposals.open.isEmpty, chatOnScreen(), threadID == rootChat else { return }
-    for proposal in desk.proposals.open where !desk.proposalCards.contains(proposal.id) { showProposalCard(proposal) }
   }
 }
 
@@ -784,37 +716,21 @@ extension RelayToolHost {
     return ["assistants": listing]
   }
 
-  /// `assistant_make`. The person's own words that name it make it at once; a person's turn
-  /// whose words do not name it asks on a card; another assistant's turn makes a proposal the
-  /// person decides on later; nobody there refuses.
+  /// `assistant_make`: made at once when `Staffing.decide` allows it, with its receipt and Undo in
+  /// this chat, and counted against this task's make budget. A refusal is the sentence the model
+  /// follows, never a card (owner, 2026-11-25).
   func makeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
-    let turn = frame.admission
     let draft: AssistantDraft
     switch AssistantDraft.parse(a, person: relay.personPlaces, team: relay.team) {
     case .success(let parsed): draft = parsed
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
-    let named = TypedConsent.names(.makeAssistant, in: frame.typedWords)
-    switch Admission.decide(.makeAssistant, turn: turn, wordsNameIt: named) {
-    case .refuse(let why):
-      throw SereinError.invalid(why)
-    case .apply:
-      return try made(draft)
-    case .ask:
-      if turn != .person { return try proposed(draft) }
-      let human = await relay.confirmAnswer(
-        MakeProposals.title(draft), MakeProposals.detail(draft, byName: nil), button: MakeProposals.personConfirm,
-        decline: MakeProposals.notNow, thread: relay.threadID, more: MakeProposals.more(draft),
-        moreName: "what it will do", effect: .settings)
-      guard human == .yes else {
-        throw SereinError.invalid(human == .no ? "The person said not now. Nothing was made." : ActionAdmission.needsPerson)
-      }
-      return try made(draft)
-    }
-  }
-  private func made(_ draft: AssistantDraft) throws -> [String: Any] {
-    switch relay.makeAssistant(draft, actor: "relay", chat: relay.threadID) {
+    let maker = relay.profile(id: relay.turnProfileID)
+    let chat = relay.threadID
+    let staffed = relay.staff(.newAssistant(draft), sender: maker, parent: nil, chat: chat, readOutside: frame.readOutside)
+    guard case .make(let reach, let lineage) = staffed.verdict else { return Self.staffingRefusal(staffed.verdict) }
+    switch relay.makeAssistant(draft, actor: "relay", chat: chat, staffed: .init(reach: reach, lineage: lineage)) {
     case .failure(let problem):
       throw SereinError.invalid(problem.words)
     case .success(let outcome):
@@ -824,17 +740,10 @@ extension RelayToolHost {
         "note": HostFacts.receiptNote,
       ]
       if outcome.plan.asksFirst { out["first_question"] = "It asks the person what it should do when they open its chat." }
-      if !draft.dropped.isEmpty { out["left_out"] = draft.dropped }
+      let leftOut = draft.dropped + reach.dropped(from: AssistantScope(destinations: draft.places))
+      if !leftOut.isEmpty { out["left_out"] = leftOut }
       return out
     }
-  }
-  private func proposed(_ draft: AssistantDraft) throws -> [String: Any] {
-    guard let asker = relay.actingProfile ?? relay.team.active else { throw SereinError.invalid(ActionAdmission.needsPerson) }
-    if let refusal = relay.propose(draft, by: asker) { throw SereinError.invalid(refusal.words) }
-    return [
-      "proposed": draft.name,
-      "note": "The person decides on a card in Serein's main chat. Nothing is made until they press Make it. Tell them in one short sentence.",
-    ]
   }
 
   /// `assistant_change`. Narrowing, a new name or job and a pause apply from the person's own

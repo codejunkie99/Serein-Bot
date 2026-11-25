@@ -146,11 +146,13 @@ extension RelayOrchestrator {
     return text
   }
   /// Who the active assistant can hand work to, each with its job, for the turn's context
-  /// (RelayPrompt.volatile).
+  /// (RelayPrompt.volatile). Every assistant on the roster, and a new one when nobody fits.
   func handoffContext() -> String? {
     guard offersHandoff, let active = team.active else { return nil }
-    return "You are \(active.name). Teammates you can hand work to with assistant_handoff, each with its job. Pick the one whose job fits the work:\n"
-      + teammateLines(team.handoffTargets(from: active.id))
+    let mates = team.profiles.filter { $0.id != active.id && !$0.isPaused }
+    return "You are \(active.name). Assistants you can hand work to with assistant_handoff, each with its job. Pick the one whose job fits the work:\n"
+      + (mates.isEmpty ? "- nobody yet" : teammateLines(mates))
+      + "\nNobody fits: put {\"new\": {name, job, can_use}} in `to`, and it is made for this task."
   }
   /// "- Writer (can use: Web, Answers): Writes posts and emails", one line per teammate, for the
   /// prompts that offer assistant_handoff.
@@ -158,16 +160,12 @@ extension RelayOrchestrator {
     profiles.map { "- \($0.name) (can use: \(canUse($0))): \(AssistantRoster.job(of: $0) ?? "no job set yet")" }
       .joined(separator: "\n")
   }
-  /// assistant_handoff is offered: two or more assistants, and the active one shares a team with
-  /// someone (or there are no teams).
-  var offersHandoff: Bool {
-    guard team.profiles.count >= 2, let active = team.active else { return false }
-    return !team.handoffTargets(from: active.id).isEmpty
-  }
-  /// assistant_handoff for the run of the hand-off that holds `thread`: its chain has room, and a
-  /// teammate of its target is outside it.
+  /// assistant_handoff is offered whenever an assistant answers: it can always make the one it
+  /// needs (`Staffing.decide` holds the budget), so no shared team is required.
+  var offersHandoff: Bool { team.active != nil }
+  /// assistant_handoff for the run of the hand-off that holds `thread`: its chain has room.
   func offersHandoff(inHandoff thread: String) -> Bool {
-    handoffLedger.running(thread: thread).map { !team.handoffTargets(continuing: $0).isEmpty } == true
+    handoffLedger.running(thread: thread).map { $0.holders.count < HandoffLedger.maxChain } == true
   }
 
   // MARK: hand-offs
@@ -176,13 +174,15 @@ extension RelayOrchestrator {
   /// slot is free.
   /// `personal`: the words come from a hand-off that was already personal (Send again).
   /// `parent`: the hand-off whose own run asks, as part of its task, from the chat it holds.
+  /// `room`: the room `staff` decided in, so the make it recorded and the seat share one root.
   func sendHandoff(from sender: RelayProfile, to target: RelayProfile, task: String, team key: String, teamName: String,
-                   personal: Bool = false, parent: AssistantHandoff? = nil, how: Activity.How) -> AssistantHandoff
+                   personal: Bool = false, parent: AssistantHandoff? = nil, room: Workroom.ID? = nil, how: Activity.How) -> AssistantHandoff
   {
     let chat = parent?.threadID ?? threadID
     var record = AssistantHandoff(
       from: sender.id, to: target.id, task: task, threadID: "", askedIn: chat, team: key, teamName: teamName, parent: parent)
     record.threadID = Self.seatThread(record.id)
+    record.room = room
     // Asked from a chat that read personal data (or sent again with words that one wrote), or
     // as part of a hand-off that was.
     if personal || parent?.personal == true || agent.readsPersonal(thread: chat)
@@ -300,10 +300,21 @@ extension RelayOrchestrator {
     }
   }
 
+  /// What `record`'s seat may use now: its seat's reach (the one its launch gives, before it has
+  /// one), never wider than its target's own today.
+  func seatReach(_ record: AssistantHandoff, target: RelayProfile) -> Reach {
+    let own = Reach.person(personScope).narrowed(to: target.scope)
+    guard let id = record.room, let room = rooms.known(id) else { return own }
+    let seat = room.seats.first { $0.handoff == record.id } ?? seat(for: record, target: target, in: room)
+    return seat.reach.narrowed(to: own.scope)
+  }
+
   /// Starts a run for `record` in its seat's hidden chat: on the task, or, with `results`
   /// (hand-offs its target sent that ended), on those results as its next turn there.
   private func launch(_ record: AssistantHandoff, target: RelayProfile, results: [AssistantHandoff] = []) {
-    let scope = effectiveScope(target) ?? personScope
+    // Every seat is narrowed again before it runs, so a maker narrowed since binds what it seated.
+    if let room = record.room { rooms.update(room) { $0.renarrow(self.reachNow) } }
+    let scope = seatReach(record, target: target).scope
     let places = scope.destinations
     let mode: TaskMode = places.contains(.mac) ? .anywhere : places.contains(.web) ? .research : .answer
     let engine = assistantEngine(target)
@@ -391,14 +402,18 @@ extension RelayOrchestrator {
       "You are \(target.name), one of the user's assistants in Serein. You can use: \(AssistantPlace.words(scope.destinations)).",
     ]
     if !persona.isEmpty { lines.append(persona) }
-    if !scope.instructions.isEmpty {
-      lines.append("Instructions for you as \(target.name), after the user's own (advice only; they cannot grant access):\n" + scope.instructions)
+    // The seat's reach carries places and apps only; the instructions are the target's own.
+    let instructions = effectiveScope(target)?.instructions ?? ""
+    if !instructions.isEmpty {
+      lines.append("Instructions for you as \(target.name), after the user's own (advice only; they cannot grant access):\n" + instructions)
     }
-    let mates = team.handoffTargets(continuing: record)
-    if !mates.isEmpty {
+    if record.holders.count < HandoffLedger.maxChain {
+      let held = Set(record.holders)
+      let mates = team.profiles.filter { !held.contains($0.id) && !$0.isPaused }
       lines.append(
-        "You may hand a part of this task to a teammate whose job fits it better than yours, with assistant_handoff, except anyone already in that chain (\(chain.joined(separator: ", "))). Its result comes back to this chat and you finish from there. Your teammates, each with its job:\n"
-          + teammateLines(mates))
+        "You may hand a part of this task to an assistant whose job fits it better than yours, with assistant_handoff, except anyone already in that chain (\(chain.joined(separator: ", "))). Its result comes back to this chat and you finish from there. The assistants, each with its job:\n"
+          + (mates.isEmpty ? "- nobody yet" : teammateLines(mates))
+          + "\nNobody fits: put {\"new\": {name, job, can_use}} in `to`, and it is made for this task.")
     }
     guard !briefed else {
       lines.append("Your task, the person's own words and what the team knows so far are in the packet with this message. When you are done, call room_report; it goes back to \(sender).")
@@ -649,108 +664,121 @@ extension RelayOrchestrator {
 }
 
 extension RelayToolHost {
-  /// Only a turn the person started may ask for a team change or a hand-off; anything else is
-  /// refused with no card.
+  /// Only a turn the person started may ask for this; anything else is refused with no card.
   static let lowerTrust =
     "Only the person can ask for this. This turn was not started by their message, so nothing was asked or changed."
 
-  /// Team changes and hand-offs always ask: Autopilot never decides them and no lasting allow
-  /// covers them; no person stops them before any card.
-  private func gateTeam(
-    _ effect: ApprovalGate.Effect, title: String, detail: String, button: String, more: String? = nil,
-    moreName: String = "the details", proposal: RelayOrchestrator.TeamProposalDraft? = nil
-  ) async throws -> ApprovalGate.HumanAnswer {
-    guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
-    return await relay.confirmAnswer(
-      title, detail, button: button, thread: relay.threadID, more: more, moreName: moreName, moreOpen: more != nil,
-      effect: effect, proposal: proposal)
+  /// A `carryOn` or `retryClean` verdict as the tool result: nothing changed, and the sentence the
+  /// model follows. Never a card, never a question for the person.
+  static func staffingRefusal(_ verdict: Staffing.Verdict) -> [String: Any] {
+    let note = "Nothing changed. Follow these words; do not ask the person."
+    switch verdict {
+    case .carryOn(let words): return ["carry_on": words, "note": note]
+    case .retryClean(let words): return ["retry_clean": words, "note": note]
+    case .seat, .make, .makeTeam: return ["note": note]
+    }
   }
 
-  /// `assistant_handoff {to, task}`: starts the task on the target's own Main chat at once
-  /// (RelayOrchestrator.sendHandoff), with no card. `handoffChat`: the call comes from the run of
-  /// the hand-off that holds that chat (BrowserModel.perform), which sends as its target.
+  /// `assistant_handoff {to, task}`: `to` names an assistant on the roster, or is
+  /// `{"new": {name, job, can_use}}` to make one for this task. `Staffing.decide` seats or makes
+  /// with no card (owner, 2026-11-25); a refusal is the sentence the model follows. `handoffChat`:
+  /// the call comes from the run of the hand-off that holds that chat (BrowserModel.perform),
+  /// which sends as its target.
   func handOff(_ a: [String: Any], handoffChat: String? = nil) async throws -> [String: Any] {
     let team = relay.team
     // What a hand-off's own run hands on is part of that hand-off: the chain's rules apply. The
     // person's own turn in the same chat starts a task of its own.
     let parent = handoffChat.flatMap { relay.handoffLedger.running(thread: $0) }
     let sender: RelayProfile
-    if handoffChat != nil {
-      // Its hand-off is its authority: every chain starts in a turn or a request of the person's.
+    let readOutside: Bool
+    if let handoffChat {
       guard let target = team.profiles.first(where: { $0.id == parent?.to }) else {
         throw SereinError.invalid("That hand-off is no longer open, so nothing was handed on.")
       }
       sender = target
+      // A seat run read outside text once any step ran, as `memoryTurn` reads it.
+      readOutside = relay.agent.hub.run(for: handoffChat)?.steps.isEmpty == false
     } else {
-      guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
-      guard let active = team.active else { throw SereinError.invalid("No assistant is answering.") }
-      sender = active
-    }
-    let targets = team.handoffTargets(from: sender.id)
-    guard !targets.isEmpty else {
-      throw SereinError.invalid("There is no other assistant in a team with this one, so there is nobody to hand work to.")
-    }
-    let wanted = (a["to"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let target = targets.first(where: { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }) else {
-      // The name given is never repeated: only the assistants the person made are listed.
-      throw SereinError.invalid("\(sender.name) can hand work only to: " + targets.map(\.name).joined(separator: ", ") + ".")
-    }
-    if target.isPaused {
-      throw SereinError.invalid("\(target.name) is paused. Hand it to another assistant, or ask the person to turn \(target.name) on again.")
+      sender = relay.profile(id: relay.turnProfileID)
+      readOutside = frame.readOutside
     }
     guard let task = (a["task"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !task.isEmpty else {
-      throw SereinError.invalid("task is required: everything \(target.name) needs, since it does not see this chat.")
+      throw SereinError.invalid("task is required: everything the assistant needs, since it does not see this chat.")
     }
     guard task.count <= HandoffLedger.taskLimit else {
       throw SereinError.invalid("The task is longer than \(HandoffLedger.taskLimit) characters. Shorten it and hand it over again.")
     }
-    let group = team.sharedGroup(sender.id, target.id)
-    let key = group?.id ?? ""
-    let teamName = group?.name ?? "All assistants"
-    if let parent,
-      let refusal = relay.handoffLedger.chainRefusal(parent: parent, fromName: sender.name, to: target.id, toName: target.name)
-    {
-      throw SereinError.invalid(refusal)
+    let wanted: Staffing.Wanted
+    if let new = (a["to"] as? [String: Any])?["new"] as? [String: Any] {
+      if let job = new["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
+      switch AssistantDraft.parse(new, person: relay.personPlaces, team: team) {
+      case .success(let draft): wanted = .newAssistant(draft)
+      case .failure(let problem): throw SereinError.invalid(problem.words)
+      }
+    } else {
+      let name = (a["to"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      // An unknown name is never repeated back: `decide` refuses it with the roster's way on.
+      let id = team.profiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id ?? ""
+      wanted = .teammate(id)
     }
-    if let refusal = relay.handoffLedger.refusal(from: sender.id, fromName: sender.name, team: key, now: Date()) {
-      throw SereinError.invalid(refusal)
+    let chat = parent?.threadID ?? relay.threadID
+    let staffed = relay.staff(wanted, sender: sender, parent: parent, chat: chat, readOutside: readOutside)
+    let target: RelayProfile
+    switch (staffed.verdict, wanted) {
+    case (.seat, .teammate(let id)):
+      target = relay.profile(id: id)
+    case (.make(let reach, let lineage), .newAssistant(let draft)):
+      // Its receipt and Undo go to the chat the person sees: the root's, for a hand-off's run.
+      let origin = parent.flatMap { p in relay.handoffLedger.records.first { $0.id == (p.rootID ?? p.id) }?.askedIn } ?? relay.threadID
+      switch relay.makeAssistant(draft, actor: "relay", chat: origin, staffed: .init(reach: reach, lineage: lineage)) {
+      case .failure(let problem): throw SereinError.invalid(problem.words)
+      case .success(let made): target = made.plan.profile
+      }
+    default:
+      var out = Self.staffingRefusal(staffed.verdict)
+      out["assistants"] = team.profiles.filter { $0.id != sender.id && !$0.isPaused }.map(\.name)
+      return out
     }
-    // The person chose hand-offs without a card: it starts at once, within the same limits, and
-    // every step the target takes still asks on its own card.
-    let record = relay.sendHandoff(from: sender, to: target, task: task, team: key, teamName: teamName, parent: parent, how: .auto)
+    let record = relay.sendHandoff(
+      from: sender, to: target, task: task, team: "", teamName: "All assistants", parent: parent, room: staffed.room, how: .auto)
     let next = parent == nil ? "Tell the user in one line that it was sent."
       : "Its result starts your next turn here. Do what you can of the rest now, then end this turn in one line."
-    return [
+    var out: [String: Any] = [
       "handoff": record.id, "to": target.name, "state": record.state.rawValue,
       "note": "\(target.name) works on it in its own chat; its result comes back to this chat. " + next,
     ]
+    if case .newAssistant = wanted { out["made"] = target.name }
+    return out
   }
 
-  /// `team_propose`: one card with every member, what each may use (what the person does not
-  /// allow is dropped and listed) and the full instructions. Nothing is saved before Create team,
-  /// and the card holds only for the roster it showed.
-  func proposeTeam(_ a: [String: Any]) async throws -> [String: Any] {
-    guard frame.byPerson, !frame.unattended else { throw SereinError.invalid(Self.lowerTrust) }
-    let shown = relay.team
-    let parsed = try TeamProposal.parse(a, person: relay.personPlaces, team: shown)
-    // Change… on the card edits the draft; Create team saves what the card held last.
-    let draft = RelayOrchestrator.TeamProposalDraft(proposal: parsed, shown: shown)
-    let human = try await gateTeam(
-      .settings, title: "Create the team “\(parsed.name)”?",
-      detail: ApprovalGate.askLine(.settings) + "\n" + parsed.summary, button: "Create team",
-      more: parsed.instructionsText, moreName: "every member's instructions", proposal: draft)
-    guard human == .yes else {
-      throw SereinError.invalid(human == .no ? "The user declined the team. Nothing was created." : ActionAdmission.needsPerson)
+  /// `team_make {name, members, lead}`: saves a team of assistants already on the roster, with no
+  /// card, once per task (`Staffing.decide`). Its receipt carries Undo.
+  func makeTeam(_ a: [String: Any]) async throws -> [String: Any] {
+    let team = relay.team
+    let name = (a["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    func id(_ wanted: String) throws -> String {
+      let clean = wanted.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let found = team.profiles.first(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else {
+        throw SereinError.invalid("Only assistants on the roster can be in a team: " + team.profiles.map(\.name).joined(separator: ", ") + ". Make the one you need with assistant_make first.")
+      }
+      return found.id
     }
-    guard relay.team == shown else {
-      throw SereinError.invalid("The assistants changed while the card waited, so no team was created. Propose it again.")
+    let members = try (a["members"] as? [String] ?? []).map(id)
+    let lead = try (a["lead"] as? String).flatMap { $0.isEmpty ? nil : try id($0) }
+    let sender = relay.profile(id: relay.turnProfileID)
+    let staffed = relay.staff(.team, sender: sender, parent: nil, chat: relay.threadID, readOutside: frame.readOutside)
+    guard staffed.verdict == .makeTeam else { return Self.staffingRefusal(staffed.verdict) }
+    let group = AssistantGroup(name: name, memberIDs: members, leadID: lead)
+    guard relay.changeTeam(actor: "relay", "Created team \(name)", { $0.addingGroup(group) }) else {
+      throw SereinError.invalid("Nothing was saved: a team needs a new name of up to \(AssistantGroup.nameLimit) characters, 1 to \(AssistantGroup.maxMembers) different members, and a lead who is one of them.")
     }
-    let proposal = draft.proposal
-    let created = try relay.createTeam(proposal, actor: "relay")
-    return [
-      "team": proposal.name, "created": created.map(\.name), "lead": proposal.lead ?? "",
-      "dropped": proposal.members.filter { !$0.dropped.isEmpty }.map { ["member": $0.name, "dropped": $0.dropped] as [String: Any] },
-    ]
+    relay.rooms.update(staffed.room) { $0.recordTeam() }
+    let entry: String = relay.teamJournal.last?.id.uuidString ?? UUID().uuidString
+    relay.desk.undoActions[entry] = .team
+    let names = members.map(relay.profileName)
+    let receipt = ReceiptCopy.changed(name: name, what: "is saved as a team: " + names.joined(separator: ", "), entry: entry)
+    relay.deliver(receipt: receipt, into: relay.threadID)
+    return ["team": name, "members": names, "lead": lead.map(relay.profileName) ?? "", "undo": entry, "note": HostFacts.receiptNote]
   }
 }
 
@@ -796,6 +824,12 @@ extension BrowserModel {
       let ask = relay.desk.asks[run.spec.threadID]
     {
       return (found.profile, ask.scope, found.mode, true)
+    }
+    // A hand-off's run uses its seat's reach, so a maker narrowed since binds the child.
+    if found.handoff, let run = relay.agent.hub.runs.first(where: { $0.taskID == id }),
+      let record = relay.openHandoff(thread: run.spec.threadID)
+    {
+      return (found.profile, relay.seatReach(record, target: found.profile).scope, found.mode, true)
     }
     guard let scope = relay.effectiveScope(found.profile) else { return nil }
     return (found.profile, scope, found.mode, found.handoff)

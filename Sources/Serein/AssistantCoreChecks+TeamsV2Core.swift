@@ -189,7 +189,7 @@ extension AssistantCoreChecks {
     let lead = r.seats[0]
     func decide(_ w: Staffing.Wanted, by seat: Workroom.Seat? = nil, in room: Workroom? = nil, team t: RelayTeam = team,
                 ledger: HandoffLedger = HandoffLedger(), readOutside: Bool = false) -> Staffing.Verdict {
-      Staffing.decide(w, by: seat ?? lead, in: room ?? r, team: t, archived: ["old"], ledger: ledger, readOutside: readOutside)
+      Staffing.decide(w, by: seat ?? lead, in: room ?? r, team: t, archived: ["old"], ledger: ledger, readOutside: readOutside, now: at)
     }
     func isCarryOn(_ v: Staffing.Verdict, _ words: String) -> Bool {
       if case .carryOn(let text) = v { return text.contains(words) }
@@ -240,7 +240,8 @@ extension AssistantCoreChecks {
     r.recordMade("flights")
     if case .make = decide(.newAssistant(draft)) {} else { try check(false, "A room that made one assistant may make a second") }
     r.recordMade("hotels")
-    try check(isCarryOn(decide(.newAssistant(draft)), "already made \(Staffing.makesPerRoot)"), "A room makes at most 2 assistants")
+    try check(isCarryOn(decide(.newAssistant(draft)), "already made \(Staffing.makesPerRoot)") && isCarryOn(decide(.newAssistant(draft)), "Hand this to"),
+      "A room makes at most 2 assistants, and the 3rd is refused with a way on")
     try check(decide(.team) == .makeTeam, "A room may save one team")
     r.recordTeam()
     try check(isCarryOn(decide(.team), "already saved a team"), "A room saves at most 1 team")
@@ -248,9 +249,40 @@ extension AssistantCoreChecks {
     try check(isCarryOn(decide(.newAssistant(draft), in: room(lead: "p0"), team: full), "roster is full"), "A full roster refuses a make with a way on")
     var withArchived = full
     withArchived.profiles[1].id = "old"
-    if case .make = decide(.newAssistant(draft), in: room(lead: "p0"), team: withArchived) {} else {
-      try check(false, "An archived assistant does not count toward the roster")
+    try check(isCarryOn(decide(.newAssistant(draft), in: room(lead: "p0"), team: withArchived), "1 of them archived, which still count"),
+      "An archived assistant still holds a roster place, as RelayTeam.making counts it, and the refusal says so")
+    if case .failure(.rosterFull) = full.making(draft, person: [.web]) {} else { try check(false, "RelayTeam.making refuses the same full roster") }
+
+    // The 20th hand-off into one reader in a day closes it to everyone; another reader stays open.
+    var busy = HandoffLedger()
+    for i in 0..<HandoffLedger.maxPerReaderPerDay {
+      var h = hop("d\(i)", "a\(i)", "theo", nil)
+      h.state = .done
+      busy.admit(h, now: at)
     }
+    try check(busy.refusal(from: "serein", fromName: "Serein", to: "theo", toName: "Theo", now: at)?.contains("20 tasks today") == true
+      && busy.refusal(from: "serein", fromName: "Serein", to: "old", toName: "Old", now: at) == nil
+      && busy.refusal(from: "serein", fromName: "Serein", to: "theo", toName: "Theo", now: at.addingTimeInterval(86_400)) == nil,
+      "The day's cap is per reader and per day")
+    try check(isCarryOn(decide(.teammate("theo"), ledger: busy), "20 tasks today"), "decide refuses a reader at its daily cap")
+
+    // Staffing.make: what the shell's changeTeam and the formal machine both apply.
+    guard case .make(let reach, let made) = Staffing.decide(.newAssistant(draft), by: lead, in: room(), team: team, archived: [],
+                                                             ledger: HandoffLedger(), readOutside: false, now: at),
+      case .success(let plan) = Staffing.make(draft, reach: reach, lineage: made, team: team, id: "flights", now: at)
+    else { return try check(false, "A make the rule allows applies") }
+    try check(plan.profile.lineage == made && plan.team.profiles.last?.lineage == made, "A made assistant carries madeBy and madeIn")
+    try check(plan.profile.scope?.apps == [] && plan.profile.scope?.destinations == [.web], "A made assistant starts with no connected apps, within its maker")
+    let saved = try JSONDecoder().decode(RelayProfile.self, from: JSONEncoder().encode(plan.profile))
+    try check(saved.lineage == Staffing.Lineage(madeBy: "serein", madeIn: "r_test"), "Lineage survives a save and a relaunch")
+    try check(plan.team.undoing(before: team, after: plan.team) == team, "Undo of a make puts the roster back")
+
+    // The maker narrowed after the make: the child's seat narrows before its next run.
+    var lineageRoom = room()
+    lineageRoom.recordMade("flights")
+    lineageRoom.seats.append(.init(id: "s2", who: "flights", thread: "t2", reach: reach, parent: "s1", handoff: "h2"))
+    lineageRoom.renarrow(["serein": reachOf([.answer])])
+    try check(lineageRoom.seats[1].reach.scope.destinations.isEmpty, "Narrowing the maker narrows the assistant it made before its next run")
   }
 }
 #endif

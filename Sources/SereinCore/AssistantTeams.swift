@@ -338,12 +338,6 @@ extension RelayTeam {
   public func handoffTargets(from id: String) -> [RelayProfile] {
     profiles.filter { $0.id != id && (teams.isEmpty || sharedGroup(id, $0.id) != nil) }
   }
-  /// Who `record`'s target may hand part of its task to: its teammates outside the chain, and
-  /// nobody once the chain is full.
-  public func handoffTargets(continuing record: AssistantHandoff) -> [RelayProfile] {
-    guard record.holders.count < HandoffLedger.maxChain else { return [] }
-    return handoffTargets(from: record.to).filter { !record.holders.contains($0.id) }
-  }
 
   /// A new team. nil when its name is empty, too long or taken, or its members are not 1 to 8
   /// distinct assistants of this roster, or its lead is not one of them.
@@ -438,7 +432,7 @@ extension RelayTeam {
   }
 }
 
-/// A team Serein proposes from the person's description (team_propose). Nothing is saved until
+/// A team proposed from the person's description or an imported file. Nothing is saved until
 /// the person presses "Create team"; anything wider than what the person allows is dropped here
 /// and the card lists it.
 public struct TeamProposal: Equatable, Sendable {
@@ -653,11 +647,13 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
 /// resets a limit. Limits refuse with a reason; they never cut a task short.
 public struct HandoffLedger: Codable, Equatable, Sendable {
   public var records: [AssistantHandoff]
-  /// Hand-offs sent per team per day, keyed "team|yyyy-MM-dd".
+  /// Hand-offs taken per reader per day, keyed "assistant id|yyyy-MM-dd". Keys from before were a
+  /// team id, which no assistant shares, so they only age out.
   public var daily: [String: Int]
 
   public static let maxOpenPerAssistant = 3
-  public static let maxPerTeamPerDay = 20
+  /// Hand-offs one assistant may be sent in a day, from anyone.
+  public static let maxPerReaderPerDay = 20
   public static let queueExpiry: TimeInterval = 24 * 60 * 60
   public static let stallAfter: TimeInterval = 30 * 60
   /// Closed hand-offs kept for the status lines; open ones are always kept.
@@ -673,7 +669,7 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     self.daily = daily
   }
 
-  static func key(_ team: String, _ now: Date) -> String { team + "|" + RelayProactive.dayKey(now) }
+  static func key(_ reader: String, _ now: Date) -> String { reader + "|" + RelayProactive.dayKey(now) }
 
   /// The open hand-off whose target works in `thread`, if any.
   public func open(thread: String) -> AssistantHandoff? {
@@ -717,20 +713,23 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     return nil
   }
 
-  /// Why a new hand-off from `from` in `team` cannot be sent now, or nil.
-  public func refusal(from: String, fromName: String, team: String, now: Date) -> String? {
+  /// Why a new hand-off from `from` to `to` cannot be sent now, or nil. The day's cap is the
+  /// reader's: hand-offs no longer need a shared team, and a root already stops at `maxPerRoot`,
+  /// so the one flood left to bound is many tasks into one assistant. `to` is "" for an assistant
+  /// not made yet, which has had nothing.
+  public func refusal(from: String, fromName: String, to: String, toName: String, now: Date) -> String? {
     if records.filter({ $0.from == from && $0.isOpen }).count >= Self.maxOpenPerAssistant {
-      return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, then try again."
+      return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, or do this part yourself."
     }
-    if (daily[Self.key(team, now)] ?? 0) >= Self.maxPerTeamPerDay {
-      return "This team has handed over \(Self.maxPerTeamPerDay) tasks today, the most in a day. Try again tomorrow, or do this one in this chat."
+    if !to.isEmpty, (daily[Self.key(to, now)] ?? 0) >= Self.maxPerReaderPerDay {
+      return "\(toName) has been handed \(Self.maxPerReaderPerDay) tasks today, the most in a day. Hand this to another assistant, or do this part yourself."
     }
     return nil
   }
-  /// A hand-off: recorded and counted toward its team's day.
+  /// A hand-off: recorded and counted toward its reader's day.
   public mutating func admit(_ handoff: AssistantHandoff, now: Date) {
     records.append(handoff)
-    daily[Self.key(handoff.team, now), default: 0] += 1
+    daily[Self.key(handoff.to, now), default: 0] += 1
     trim(now: now)
   }
   /// Hand-offs that waited in the queue longer than a day expire; returns them, each once.

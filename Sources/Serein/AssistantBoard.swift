@@ -506,8 +506,7 @@ extension RelayOrchestrator {
     guard team.handoffTargets(from: sender.id).contains(where: { $0.id == target.id }) else {
       return "\(target.name) isn't in a team with \(sender.name)."
     }
-    let group = team.sharedGroup(sender.id, target.id)
-    return handoffLedger.refusal(from: sender.id, fromName: sender.name, team: group?.id ?? "", now: Date())
+    return handoffLedger.refusal(from: sender.id, fromName: sender.name, to: target.id, toName: target.name, now: Date())
   }
   /// Ask Writer to Continue, a message dropped on Writer's row, Hand Off to Writer…: the words go
   /// to Writer's Main chat at once. The person is the sender, so no turn is needed.

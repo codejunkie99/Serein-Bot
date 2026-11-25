@@ -25,7 +25,7 @@ public enum RelayTools {
     "goal_create", "goal_update",
     "skill_list", "skill_read", "harness_capabilities", "look_get", "look_set", "look_undo", "look_show",
     "watch_create", "watch_list", "watch_cancel",
-    "ask_user", "current_page", "recipe_run", "recipe_update", "team_propose", "todo_propose", "setup_offer",
+    "ask_user", "current_page", "recipe_run", "recipe_update", "team_make", "todo_propose", "setup_offer",
   ]).union(assistantNames).union(researchNames).union(MacFiles.toolNames).union(AppPlaces.toolNames)
   /// Offered only while the assistant has someone to hand work to (the helper's `--team`): the
   /// active one in Serein's run, a hand-off's target in its own. The host checks again on every call.
@@ -33,9 +33,28 @@ public enum RelayTools {
   public static var handoffTool: [String: Any] {
     [
       "name": "assistant_handoff",
-      "description": "Hand a task, or part of one, to the teammate whose job fits it (to: its name). It works in its own chat with only what it may use; your permissions do not carry over. It starts at once; each step it takes still asks the user as usual. The result comes back to this chat. Only when the user asks for it or a teammate's job clearly fits better than yours. It does not see this chat, so task is a brief: the goal, when it counts as done, and any file, page or note it needs. It may hand part of the task on in turn, never back to an assistant that already holds it.",
+      "description": "Hand a task, or part of one, to the assistant whose job fits it. to: an assistant's name, or {\"new\": {name, job, can_use}} to make one for this task when nobody fits (it starts with no connected apps and never more than you may use; a task makes at most 2). It works in its own chat with only what it may use; your permissions do not carry over. It starts at once, with no card. The result comes back to this chat. It does not see this chat, so task is a brief: the goal, when it counts as done, and any file, page or note it needs. It may hand part of the task on in turn, never back to an assistant that already holds it. A result with carry_on or retry_clean sent nothing: do what its words say, and never ask the person.",
       "inputSchema": [
-        "type": "object", "properties": ["to": ["type": "string"], "task": ["type": "string"]],
+        "type": "object",
+        "properties": [
+          "to": [
+            "anyOf": [
+              ["type": "string"],
+              [
+                "type": "object",
+                "properties": [
+                  "new": [
+                    "type": "object",
+                    "properties": ["name": ["type": "string"], "job": ["type": "string"], "can_use": ["type": "array", "items": ["type": "string"]]],
+                    "required": ["name"], "additionalProperties": false,
+                  ],
+                ],
+                "required": ["new"], "additionalProperties": false,
+              ],
+            ],
+          ],
+          "task": ["type": "string"],
+        ],
         "required": ["to", "task"], "additionalProperties": false,
       ],
     ]
@@ -239,21 +258,9 @@ public enum RelayTools {
           ],
         ], ["name", "steps"]),
       tool(
-        "team_propose",
-        "Propose a new team of assistants when the user asks you to make one (\"make a team that …\"). name: the team's name. members: each new assistant's name, persona (one line on who it is), canUse (places it may use: web, page, answer, mac, project, mail, messages, calendar, contacts, connectedApps, computer; keep to what its job needs) and instructions (how it works, up to 2000 characters). lead: the member who answers messages to the team. The user sees every member, what each may use and the full instructions on one card and decides; nothing is created unless they press Create team. Places the user does not allow are dropped and the card says so.",
-        [
-          "name": string,
-          "members": [
-            "type": "array", "items": [
-              "type": "object", "properties": [
-                "name": string, "persona": string,
-                "canUse": ["type": "array", "items": ["type": "string", "enum": AssistantPlace.allCases.map(\.rawValue)]],
-                "instructions": string,
-              ], "required": ["name", "persona", "canUse", "instructions"], "additionalProperties": false,
-            ],
-          ],
-          "lead": string,
-        ], ["name", "members", "lead"]),
+        "team_make",
+        "Save assistants already on the roster as a team for this kind of work, with no card. name: the team's name. members: 1 to 8 assistants' names. lead: the member who answers messages to the team. Make any new member first with assistant_make or assistant_handoff. A task saves at most one team; the person sees a receipt with Undo. A result with carry_on or retry_clean saved nothing: do what its words say, and never ask the person.",
+        ["name": string, "members": ["type": "array", "items": string], "lead": string], ["name", "members"]),
       tool(
         "todo_propose",
         "Propose a card for the user's To do board when they ask you to note something to do, or when what they asked you to read (mail, a page) holds a clear task for them. title: one short line. notes: optional details. deadline: optional ISO 8601 time; it only reminds them. assistant: optional name of one of their assistants the card is for. The user sees the card and chooses Add or Decline; nothing is added without Add, and adding starts no work: only the user starts a card. Words copied from a page or mail stay plain text.",
@@ -338,7 +345,7 @@ extension RelayTools {
         [:], []),
       tool(
         "assistant_make",
-        "Make a new assistant when the person asks for one (\"make an assistant for my inbox\", or only a name). name: its name. job: one sentence on what it does, in the person's words; leave it out when they gave only a name (Serein reads the name, or the new assistant asks them). can_use: places it may use; leave it out for every place the person allows. Connected apps always start off. When the person's own message asks for it, it is made at once and they see a receipt with Undo; otherwise they decide on a card. In a turn the person did not start it is only a proposal, which they decide on later. Never say it is made before the result says so.",
+        "Make a new assistant when the person asks for one (\"make an assistant for my inbox\", or only a name), or when the work needs one nobody on the roster fits. name: its name. job: one sentence on what it does, in the person's words; leave it out when they gave only a name (Serein reads the name, or the new assistant asks them). can_use: places it may use; leave it out for every place you may use. It never gets more than you may use, and connected apps always start off. It is made at once, with no card, and the person sees a receipt with Undo. A task makes at most 2. A result with carry_on or retry_clean made nothing: do what its words say, and never ask the person. Never say it is made before the result says so.",
         ["name": string, "job": string, "can_use": places], ["name"]),
       tool(
         "assistant_change",

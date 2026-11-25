@@ -1,8 +1,8 @@
 import Foundation
 
-/// One rule for changes an assistant makes to Serein itself (reminders, routines, memory,
-/// assistants, links): the person's own typed words approve the change they name; an assistant
-/// can only propose; deleting and widening always ask. Sending, buying, deleting data and page
+/// One rule for changes an assistant makes to Serein itself (reminders, routines, memory, links):
+/// the person's own typed words approve the change they name; an assistant can only propose;
+/// deleting and widening always ask. Making assistants and teams is `Staffing`'s, which never asks. Sending, buying, deleting data and page
 /// actions are not here: `ApprovalGate` keeps deciding those, unchanged.
 public enum Admission {
   /// Who started the turn that asks for the change.
@@ -25,7 +25,6 @@ public enum Admission {
     case shareMemory
     /// A link another app calls to wake an assistant.
     case makeLink
-    case makeAssistant
     /// Letting an assistant use more places or apps.
     case widen
     case deleteAssistant
@@ -55,8 +54,6 @@ public enum Admission {
     case (.schedule(signIns: true), .person): return .ask
     case (.schedule, .person), (.memory, .person), (.ownChange, .person), (.undo, .person): return .apply
     case (.shareMemory, .person), (.makeLink, .person): return wordsNameIt ? .apply : .ask
-    case (.makeAssistant, .person): return wordsNameIt && TypedConsent.makeAssistant ? .apply : .ask
-    case (.makeAssistant, .assistant): return .ask
     case (.widen, .person): return .ask
     case (.board, .person): return wordsNameIt ? .apply : .ask
     case (.deleteAssistant, .person), (.deleteAssistant, .assistant): return .ask
@@ -71,15 +68,9 @@ public enum Admission {
 /// Whether the person's own message names a change. It reads only verbs it knows: a message it
 /// cannot read gives a card, so a miss costs one tap and never a wrong apply.
 public enum TypedConsent {
-  /// Whether a typed "make an assistant" counts as the approval (owner's decision, 2026-10-29).
-  public static let makeAssistant = true
-
   public static func names(_ change: Admission.Change, in message: String) -> Bool {
     let words = normalized(message)
     switch change {
-    case .makeAssistant:
-      return contains(words, any: ["make", "create", "add", "new", "set up", "build"])
-        && contains(words, any: ["assistant", "bot", "helper", "agent"])
     case .shareMemory:
       return contains(words, any: ["share", "tell everyone", "let everyone", "all assistants", "every assistant", "the team"])
     case .makeLink:

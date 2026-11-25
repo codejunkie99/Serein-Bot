@@ -150,7 +150,7 @@ public struct AssistantFace: Equatable, Sendable {
 
 /// A new assistant read from `assistant_make` (`name`, `job`, `can_use`) and checked against the
 /// roster and the person's own places. A draft makes nothing: `RelayTeam.making` turns it into a
-/// plan, after `Admission` said apply or the person pressed the card's button.
+/// plan for the person's own make, `Staffing.make` for an assistant's.
 public struct AssistantDraft: Equatable, Sendable {
   /// Why a draft or a make is refused, in words the model can repeat to the person.
   public enum Problem: Error, Equatable, Sendable {
@@ -200,8 +200,9 @@ public struct AssistantDraft: Equatable, Sendable {
 
   /// Reads the tool's arguments. `person` is the places the person allows. Without `can_use`, the
   /// new assistant gets every place the person allows except connected apps, as New assistant does.
+  /// A full roster is not a draft's problem: `RelayTeam.making` refuses it, and an assistant's
+  /// make hears it from `Staffing.decide` with the way on.
   public static func parse(_ a: [String: Any], person: Set<AssistantPlace>, team: RelayTeam) -> Result<AssistantDraft, Problem> {
-    guard team.profiles.count < RelayTeam.maxProfiles else { return .failure(.rosterFull) }
     let name = (a["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     if let problem = nameProblem(name, team: team) { return .failure(problem) }
 
@@ -275,8 +276,8 @@ public struct MakePlan: Equatable, Sendable {
 }
 
 extension RelayTeam {
-  /// The roster with one new assistant from `draft`. It checks the roster again (a card can wait
-  /// while the roster changes) and clips the places to `person` again. The new assistant gets the
+  /// The roster with one new assistant from `draft`. It checks the roster's size (archived
+  /// assistants count) and clips the places to `person` again. The new assistant gets the
   /// next free tint and a face from its id; the active assistant does not change.
   public func making(
     _ draft: AssistantDraft, person: Set<AssistantPlace>, id: String = UUID().uuidString, now: Date = Date()

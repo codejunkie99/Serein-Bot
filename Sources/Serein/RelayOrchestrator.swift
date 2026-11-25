@@ -89,7 +89,7 @@ import SereinCore
     /// The effect the gate judged, when the asker knows it: only a voice-eligible one can be
     /// allowed by voice in a call (nil needs a click).
     var effect: ApprovalGate.Effect? = nil
-    /// A proposed team (team_propose, Describe it, Import file): the card lists every member and
+    /// A proposed team (Import file; no tool sets it since team_make saves with no card): the card lists every member and
     /// its instructions, and Change… edits the draft before Create team answers.
     var proposal: TeamProposalDraft? = nil
     /// A routine step's standing yeses (RoutineGrants): Allow for this task and Always on the site,

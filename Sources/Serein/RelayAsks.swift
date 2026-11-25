@@ -216,7 +216,6 @@ extension RelayOrchestrator {
       var message = AgentMessage(role: "assistant", text: shown, notice: true)
       message.from = ask.targetID
       deliverAnswer(message, into: ask.askerChat)
-      foldIntoTargetChat(ask, answer: shown, personal: ask.askerMarked || marked)
     case .noAnswer:
       shown = AskLines.noAnswer(ask.targetName)
       prompt = text
@@ -251,16 +250,6 @@ extension RelayOrchestrator {
     deliverLateAnswers()
   }
 
-  /// One folded line in the asked assistant's own chat ("Serein asked you"), which opens to the
-  /// question and the answer. Words that touched personal data do not travel there.
-  private func foldIntoTargetChat(_ ask: AssistantDesk.Ask, answer: String, personal: Bool) {
-    let target = profile(id: ask.targetID)
-    let chat: String = knownMainThread(of: target.id) ?? mainThread(of: target.id)
-    let words: String = personal ? AskLines.personalFold : ask.question + "\n\n" + answer
-    var message = AgentMessage(role: "assistant", text: words, notice: true)
-    message.line = AskLines.askedYou(ask.askerName)
-    post(message, into: chat, owner: target)
-  }
   /// The asker an assistant answers now ("Answering Serein" on its row), or nil.
   func answering(_ id: String) -> String? {
     desk.asks.values.first { $0.targetID == id && $0.shown == nil }?.askerName

@@ -45,9 +45,6 @@ extension AssistantCoreChecks {
 
     try check(refusal(L(records: [root, child, grandchild]), grandchild, to: "ana")?.contains("\(L.maxChain) assistants") == true,
       "A fifth assistant on one task is refused")
-    let team = RelayTeam(profiles: ["serein", "writer", "editor", "scout", "ana"].map { RelayProfile(id: $0, name: $0) }, activeID: "serein")
-    try check(team.handoffTargets(continuing: child).map(\.id) == ["scout", "ana"], "A target is offered only its teammates outside the chain")
-    try check(team.handoffTargets(continuing: grandchild).isEmpty, "A full chain offers nobody")
 
     var wide = L(records: [root])
     for i in 1..<L.maxPerRoot { wide.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }

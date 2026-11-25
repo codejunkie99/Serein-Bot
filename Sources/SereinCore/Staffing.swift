@@ -40,7 +40,7 @@ public enum Staffing {
   /// `team` is the roster; `archived` the assistants archived from it, who never take work, even
   /// if they are still listed. `readOutside`: this turn read text from outside Serein.
   public static func decide(_ wanted: Wanted, by seat: Workroom.Seat, in room: Workroom, team: RelayTeam,
-                            archived: Set<RelayProfile.ID>, ledger: HandoffLedger, readOutside: Bool) -> Verdict {
+                            archived: Set<RelayProfile.ID>, ledger: HandoffLedger, readOutside: Bool, now: Date) -> Verdict {
     let maker = team.profiles.first { $0.id == seat.who }?.name ?? "You"
     let row = seat.handoff.flatMap { h in ledger.records.first { $0.id == h } }
     let roomFull = room.seats.count > HandoffLedger.maxPerRoot
@@ -56,7 +56,8 @@ public enum Staffing {
         return .carryOn("\(name) is paused, so it can't take work. Hand this to another assistant, or do this part yourself.")
       }
       if id == seat.who { return .carryOn("This is your own task. Do this part yourself, or hand it to another assistant.") }
-      if let refusal = roomFull ?? row.flatMap({ ledger.chainRefusal(parent: $0, fromName: maker, to: id, toName: name) }) {
+      if let refusal = roomFull ?? row.flatMap({ ledger.chainRefusal(parent: $0, fromName: maker, to: id, toName: name) })
+        ?? ledger.refusal(from: seat.who, fromName: maker, to: id, toName: name, now: now) {
         return .carryOn(refusal)
       }
       return .seat(seat.reach.narrowed(to: target.scope))
@@ -68,11 +69,15 @@ public enum Staffing {
       if room.made.count >= makesPerRoot {
         return .carryOn("This task already made \(makesPerRoot) assistants, the most for one task. Hand this to one of them or to another assistant on the roster, or do this part yourself.")
       }
-      if team.profiles.filter({ !archived.contains($0.id) }).count >= RelayTeam.maxProfiles {
-        return .carryOn("The roster is full (\(RelayTeam.maxProfiles) assistants). Hand this to an assistant on it, or do this part yourself.")
+      // Archived assistants still hold a place, as `RelayTeam.making` counts them (base 3.4 #2).
+      if team.profiles.count >= RelayTeam.maxProfiles {
+        let held = team.profiles.filter { archived.contains($0.id) }.count
+        let archivedWords = held == 0 ? "" : ", \(held) of them archived, which still count"
+        return .carryOn("The roster is full (\(RelayTeam.maxProfiles) assistants\(archivedWords)). Hand this to an assistant on it, or do this part yourself.")
       }
       // A new assistant holds nothing up the chain yet, so "" only meets the depth and per-root caps.
-      if let refusal = roomFull ?? row.flatMap({ ledger.chainRefusal(parent: $0, fromName: maker, to: "", toName: draft.name) }) {
+      if let refusal = roomFull ?? row.flatMap({ ledger.chainRefusal(parent: $0, fromName: maker, to: "", toName: draft.name) })
+        ?? ledger.refusal(from: seat.who, fromName: maker, to: "", toName: draft.name, now: now) {
         return .carryOn(refusal)
       }
       // Connected apps start off for a made assistant, as `AssistantDraft.places` says.
@@ -86,6 +91,21 @@ public enum Staffing {
         return .carryOn("This task already saved a team, the most for one task. Hand the work to its members directly.")
       }
       return .makeTeam
+    }
+  }
+
+  /// Applies a `.make` verdict to the roster: the drafted assistant at `reach` with no connected
+  /// apps and its lineage. The shell's journaled change and the formal machine both run it; the
+  /// caller records the make in its room (`Workroom.recordMade`).
+  public static func make(_ draft: AssistantDraft, reach: Reach, lineage: Lineage, team: RelayTeam,
+                          id: String = UUID().uuidString, now: Date = Date()) -> Result<MakePlan, AssistantDraft.Problem> {
+    team.making(draft, person: reach.scope.destinations, id: id, now: now).map { plan in
+      var plan = plan
+      plan.profile.scope?.neverSites = reach.scope.neverSites
+      plan.profile.scope?.apps = []
+      plan.profile.lineage = lineage
+      plan.team.profiles[plan.team.profiles.count - 1] = plan.profile
+      return plan
     }
   }
 }

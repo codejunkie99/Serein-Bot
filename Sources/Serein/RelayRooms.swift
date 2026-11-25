@@ -95,6 +95,22 @@ import SereinCore
     return true
   }
 
+  /// Changes room `id` and saves it: a make or a team recorded, or its seats narrowed again before
+  /// a run. False for a room neither this launch nor the disk knows.
+  @discardableResult
+  func update(_ id: Workroom.ID, _ change: (inout Workroom) -> Void) -> Bool {
+    guard var room = known(id) else { return false }
+    change(&room)
+    rooms[id] = room
+    save(room)
+    return true
+  }
+
+  /// Room `id` as this launch or the disk knows it, else nil.
+  func known(_ id: Workroom.ID) -> Workroom? {
+    rooms[id] ?? Library.load(Workroom.self, at: folder.appendingPathComponent(id + "/room.json"))
+  }
+
   /// What a reader of `handoff`'s packet gets: the whole packet only when it takes private chats.
   /// `room` and `n` read a packet this launch did not seal back from its JSON.
   func packet(_ handoff: AssistantHandoff.ID, room: Workroom.ID? = nil, n: Int? = nil, takesPrivate: Bool) -> HandoffPacket? {
@@ -236,11 +252,7 @@ extension RelayOrchestrator {
     var record = record
     let parent = record.parentID.flatMap { id in handoffLedger.records.first { $0.id == id } }
     let leadID = record.chain?.first ?? record.from
-    func make(_ id: Workroom.ID? = nil) -> Workroom {
-      let reach = Reach.person(personScope).narrowed(to: profile(id: leadID).scope)
-      return id.map { Workroom(id: $0, root: root, lead: leadID, thread: record.askedIn, reach: reach, now: record.createdAt) }
-        ?? Workroom(root: root, lead: leadID, thread: record.askedIn, reach: reach, now: record.createdAt)
-    }
+    func make(_ id: Workroom.ID? = nil) -> Workroom { newRoom(id, root: root, lead: leadID, thread: record.askedIn, now: record.createdAt) }
     let id = record.room ?? parent?.room ?? rooms.open(root) { make() }
     let taken = handoffLedger.records.filter { $0.room == id }.compactMap(\.packet).max() ?? 0
     let room = rooms.room(id) { make(id) }
@@ -267,6 +279,46 @@ extension RelayOrchestrator {
         decisions: decisions, openAsks: asks, files: files, trail: trail)
     }
     return record
+  }
+
+  /// A room with `lead` seated at the person's reach narrowed to its own; `id` nil gives a new id.
+  private func newRoom(_ id: Workroom.ID?, root: Workroom.Root, lead: RelayProfile.ID, thread: String, now: Date) -> Workroom {
+    let reach = Reach.person(personScope).narrowed(to: profile(id: lead).scope)
+    return id.map { Workroom(id: $0, root: root, lead: lead, thread: thread, reach: reach, now: now) }
+      ?? Workroom(root: root, lead: lead, thread: thread, reach: reach, now: now)
+  }
+
+  /// Each assistant's reach today, for `Workroom.renarrow` before a seat runs.
+  var reachNow: [RelayProfile.ID: Reach] {
+    Dictionary(team.profiles.map { ($0.id, Reach.person(personScope).narrowed(to: $0.scope)) }, uniquingKeysWith: { a, _ in a })
+  }
+
+  /// `Staffing.decide` for `sender`, with no card. The seat is `parent`'s, for a hand-off's own run;
+  /// else the lead of the room `chat`'s turn roots, opened now as `pack` would open it, so the make
+  /// budget is the root's. Returns the room too, for the verdict's caller to apply.
+  func staff(_ wanted: Staffing.Wanted, sender: RelayProfile, parent: AssistantHandoff?, chat: String,
+             readOutside: Bool) -> (verdict: Staffing.Verdict, room: Workroom.ID) {
+    let room: Workroom
+    let seat: Workroom.Seat
+    if let parent, let id = parent.room {
+      room = rooms.room(id) {
+        newRoom(id, root: .person(thread: parent.askedIn, message: "handoff-" + (parent.rootID ?? parent.id)),
+                lead: parent.chain?.first ?? parent.from, thread: parent.askedIn, now: parent.createdAt)
+      }
+      // A running part always has its seat (`Rooms.launch`); a stand-in keeps the chain rules.
+      seat = room.seats.first { $0.handoff == parent.id }
+        ?? Workroom.Seat(id: "h-" + parent.id, who: sender.id, thread: parent.threadID,
+                         reach: room.ceiling.narrowed(to: sender.scope), parent: room.seats[0].id, handoff: parent.id)
+    } else {
+      let root = Workroom.Root.person(thread: chat, message: lastPersonMessage(chat) ?? "turn-" + UUID().uuidString)
+      let id = rooms.open(root) { newRoom(nil, root: root, lead: sender.id, thread: chat, now: Date()) }
+      room = rooms.room(id) { newRoom(id, root: root, lead: sender.id, thread: chat, now: Date()) }
+      seat = room.seats[0]
+    }
+    // Archive is not built yet: an assistant off the roster is refused with the same words.
+    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: [], ledger: handoffLedger,
+                                  readOutside: readOutside, now: Date())
+    return (verdict, room.id)
   }
 
   /// room_read, room_note and room_report from the run of the hand-off that holds `seatThread`.

@@ -169,7 +169,7 @@ extension AssistantCoreChecks {
 
     var full = team
     for i in 0..<(RelayTeam.maxProfiles - 2) { full.profiles.append(RelayProfile(id: "x\(i)", name: "Helper \(i)")) }
-    let refusedFull = Draft.parse(["name": "One more"], person: person, team: full)
+    let refusedFull = full.making(Draft(name: "One more", job: nil, places: [.web]), person: person)
     if case .failure(let p) = refusedFull {
       try check(p == .rosterFull && p.words == AssistantBoard.fullRoster, "A full roster refuses a new assistant")
     } else {

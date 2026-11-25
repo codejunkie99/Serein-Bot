@@ -180,21 +180,16 @@ enum AssistantCoreChecks {
     typealias A = Admission
     try check(A.decide(.schedule(signIns: false), turn: .person, wordsNameIt: true) == .apply, "A typed reminder applies")
     try check(A.decide(.schedule(signIns: true), turn: .person, wordsNameIt: true) == .ask, "A routine with kept sign-ins asks")
-    try check(A.decide(.makeAssistant, turn: .person, wordsNameIt: true) == .apply, "A typed make applies")
-    try check(A.decide(.makeAssistant, turn: .person, wordsNameIt: false) == .ask, "A make the words do not name asks")
-    try check(A.decide(.makeAssistant, turn: .assistant, wordsNameIt: true) == .ask, "An assistant's make is a proposal card")
     try check(A.decide(.deleteAssistant, turn: .person, wordsNameIt: true) == .ask, "Delete always asks the person")
     try check(A.decide(.deleteAssistant, turn: .assistant, wordsNameIt: true) == .ask, "An assistant's delete is a card")
     try check(A.decide(.widen, turn: .person, wordsNameIt: true) == .ask, "Widening always asks")
     try check(A.decide(.ask, turn: .person, wordsNameIt: true) == .apply, "Asking another assistant needs no card")
     if case .refuse = A.decide(.ask, turn: .assistant, wordsNameIt: true) {} else { try check(false, "An asked assistant cannot ask again") }
-    for change: A.Change in [.schedule(signIns: false), .memory, .ownChange, .shareMemory, .makeLink, .makeAssistant, .widen, .deleteAssistant, .undo, .board] {
+    for change: A.Change in [.schedule(signIns: false), .memory, .ownChange, .shareMemory, .makeLink, .widen, .deleteAssistant, .undo, .board] {
       if case .refuse = A.decide(change, turn: .unattended, wordsNameIt: true) {} else {
         try check(false, "An unattended turn cannot change \(change)")
       }
     }
-    try check(TypedConsent.names(.makeAssistant, in: "Make an assistant for my inbox"), "\"Make an assistant\" names a make")
-    try check(!TypedConsent.names(.makeAssistant, in: "Make me a sandwich"), "A make needs the word assistant, bot, helper or agent")
     try check(TypedConsent.names(.shareMemory, in: "Share that with every assistant"), "\"Share\" names a share")
     try check(!TypedConsent.names(.shareMemory, in: "Remember that Ana is a client"), "Remember alone does not share")
   }
