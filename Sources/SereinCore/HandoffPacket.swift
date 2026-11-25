@@ -256,7 +256,8 @@ public struct HandoffReport: Codable, Equatable, Sendable {
 
   /// The id of the channel post that carries it. Delivery appends only when the chat lacks this id,
   /// so a replay or the launch sweep posts it once.
-  public var postID: String { "handoff-report-" + handoff }
+  public var postID: String { Self.postID(handoff) }
+  public static func postID(_ handoff: String) -> String { "handoff-report-" + handoff }
 
   public func markdown() -> String {
     let front = ["---", "handoff: \(handoff)", "packet: \(packet)", "state: \(state.rawValue)", "by host: \(byHost)", "---"]

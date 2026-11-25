@@ -196,9 +196,9 @@ extension RelayOrchestrator {
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
     note("Handed “\(String(task.prefix(60)))” to \(target.name)", how)
-    // The system line in the asking chat (SPEC 2.5): "Messaged Writer".
-    // In a hand-off's own run the step in its trail says it: system lines land only on Serein's turns.
-    if parent == nil { deliver(receipt: nil, line: AskLines.messaged(target.name), into: threadID) }
+    let admitted = handoffLedger.records.first { $0.id == record.id } ?? record
+    // The hand-off is a message in the chat the task started in, from its sender.
+    postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 })
     startWaitingHandoffs()
     return handoffLedger.records.first { $0.id == record.id } ?? record
   }
@@ -209,8 +209,11 @@ extension RelayOrchestrator {
     saveHandoffs()
   }
   /// Claims a closed hand-off's report, saved before anything is delivered; nil if it was claimed.
-  private func claimReport(_ id: String) -> AssistantHandoff? {
-    guard let claimed = handoffLedger.claimReport(id) else { return nil }
+  /// Its post goes into the chat first (`postReport`, keyed): `landed` claims only once it is
+  /// there, so a relaunch between the two still delivers it once.
+  private func claimReport(_ id: String, landed: Bool = false) -> AssistantHandoff? {
+    guard let record = handoffLedger.records.first(where: { $0.id == id }), !record.isOpen, record.reported != true else { return nil }
+    guard postReport(record) || !landed, let claimed = handoffLedger.claimReport(id) else { return nil }
     saveHandoffs()
     return claimed
   }
@@ -223,6 +226,7 @@ extension RelayOrchestrator {
       $0.finishedAt = Date()
       $0.result = result.map { String($0.suffix(4_000)) }
     }
+    if let closed = handoffLedger.records.first(where: { $0.id == id }) { postReport(closed) }
     if !report { _ = claimReport(id) }
     // What its target handed on ends with it: nobody is left to take those results.
     for child in handoffLedger.records where child.isOpen && child.parentID == id {
@@ -472,7 +476,7 @@ extension RelayOrchestrator {
         ($0.state == .done || $0.state == .failed) && $0.reported != true && $0.parentID == nil
           && $0.from == team.activeID && $0.askedIn == threadID
       }),
-      let record = claimReport(due.id)
+      let record = claimReport(due.id, landed: true)
     else { return }
     let name = profileName(record.to)
     // The target's words come back into the asking chat: a marked target marks it too, and its
@@ -563,6 +567,7 @@ extension RelayOrchestrator {
     let ended = handoffLedger.stop(now: Date())
     saveHandoffs()
     for record in ended {
+      postReport(record)
       // A part that only waited holds no chat: a run there is not its own.
       if held.contains(record.id), let run = agent.hub.run(for: record.threadID) { agent.hub.stop(run) }
       announceEnd(record, .failed, record.result)

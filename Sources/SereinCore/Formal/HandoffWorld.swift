@@ -4,7 +4,8 @@ import Foundation
 /// the Chain and Report machines both explore it. Every ledger change goes through the shipped
 /// reducers (`admit`, `chainRefusal`, `refusal`, `running`, `closable`, `expire`, `stop`,
 /// `claimReport`). The shell glue around them (`closeHandoff`, `launch`, `finishHandoff`,
-/// `deliverChainResults`, `deliverHandoffReports`, `sweepHandoffs`) lives in the app target, which
+/// `deliverChainResults`, `deliverHandoffReports`, `sweepHandoffs`, and `postReport` in
+/// RelayChannel.swift) lives in the app target, which
 /// SereinCore cannot call, so it is mirrored here step for step. Each shell function is one step.
 struct HandoffWorld: Encodable, Equatable {
   var ledger = HandoffLedger()
@@ -18,6 +19,13 @@ struct HandoffWorld: Encodable, Equatable {
   var unclaimedReads = 0
   /// Wake turns per root hand-off (`deliverHandoffReports`).
   var wakes: [String: Int] = [:]
+  /// Report posts saved in the chat the task started in, by `HandoffReport.postID`, in order:
+  /// `channelPost` appends one only when its id is not there.
+  var posted: [String] = []
+  /// Report posts held in memory for a busy chat (`desk.facts`, `desk.posts`): a relaunch loses them.
+  var held: [String] = []
+  /// The chat a report goes to may be busy, so its post waits (the Report machine); else it lands at once.
+  var heldPosts = false
   var crashes = 0
   /// A day went by once: `expire` ran, and later hand-offs are made a day on.
   var dayLater = false
@@ -45,7 +53,8 @@ struct HandoffWorld: Encodable, Equatable {
     }
     let counts = [claims, readerTurns, wakes].map { $0.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",") }
     let daily = ledger.daily.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
-    return (rows + [live.joined(separator: ","), daily] + counts + ["\(unclaimedReads) \(crashes) \(dayLater)"]).joined(separator: ";")
+    let posts = [posted.sorted().joined(separator: ","), held.sorted().joined(separator: ",")]
+    return (rows + [live.joined(separator: ","), daily] + counts + posts + ["\(unclaimedReads) \(crashes) \(dayLater)"]).joined(separator: ";")
   }
 
   static let base = Date(timeIntervalSince1970: 1_800_000_000)
@@ -58,8 +67,10 @@ struct HandoffWorld: Encodable, Equatable {
 
   // MARK: shell glue, each one step
 
-  /// `claimReport` (RelayTeams): saved before anything is delivered.
+  /// `claimReport` (RelayTeams): its post goes first, then the claim, saved before anything is delivered.
   mutating func claim(_ id: String) -> AssistantHandoff? {
+    guard record(id)?.reported != true else { return nil }
+    post(id, busy: heldPosts)
     guard let claimed = ledger.claimReport(id) else { return nil }
     claims[id, default: 0] += 1
     return claimed
@@ -114,6 +125,7 @@ struct HandoffWorld: Encodable, Equatable {
       $0.finishedAt = at
       $0.result = "result"
     }
+    post(id, busy: heldPosts)
     if !report { _ = claim(id) }
     for child in ledger.records where child.isOpen && child.parentID == id {
       if child.state == .running && live.contains(child.threadID) {
@@ -147,9 +159,16 @@ struct HandoffWorld: Encodable, Equatable {
     return next
   }
 
-  /// `deliverHandoffReports`' wake turn for a root that ended, keyed by its claim.
+  /// `deliverHandoffReports`' wake turn for a root that ended, keyed by its claim. Its post lands
+  /// first (`postReport`, the asking chat is idle): one step, so a relaunch can fall between the
+  /// post and the claim (`claimReport(landed:)`).
   func waking(_ id: String) -> HandoffWorld? {
     guard let r = record(id), r.parentID == nil, r.state == .done || r.state == .failed, r.reported != true else { return nil }
+    guard posted.contains(HandoffReport.postID(id)) else {
+      var next = self
+      next.post(id, busy: false)
+      return next
+    }
     return wake(id)
   }
 
@@ -158,6 +177,8 @@ struct HandoffWorld: Encodable, Equatable {
 
   private func wake(_ id: String) -> HandoffWorld {
     var next = self
+    guard next.record(id)?.reported != true else { return next }
+    next.post(id, busy: false)
     guard next.claim(id) != nil else { return next }
     next.wakes[id, default: 0] += 1
     next.readerTurns[id, default: 0] += 1
@@ -170,6 +191,7 @@ struct HandoffWorld: Encodable, Equatable {
     let held = Set(ledger.records.filter { $0.state == .running }.map(\.id))
     let ended = next.ledger.stop(now: now)
     for r in ended {
+      next.post(r.id, busy: heldPosts)
       if record(r.id)?.reported != true { next.claims[r.id, default: 0] += 1 }
       if held.contains(r.id) { next.live.removeAll { $0 == r.threadID } }
     }
@@ -180,6 +202,7 @@ struct HandoffWorld: Encodable, Equatable {
   func crashing() -> HandoffWorld {
     var next = self
     next.live = []
+    next.held = []
     next.crashes += 1
     return next
   }
@@ -199,6 +222,28 @@ struct HandoffWorld: Encodable, Equatable {
     var next = self
     next.dayLater = true
     _ = next.ledger.expire(now: next.now)
+    return next
+  }
+
+  /// `postReport` into the chat the task started in, for a closed hand-off: saved now, or held
+  /// while that chat is `busy`; a post whose id is saved or held changes nothing.
+  mutating func post(_ id: String, busy: Bool) {
+    guard record(id)?.isOpen == false else { return }
+    let key = HandoffReport.postID(id)
+    guard !posted.contains(key) else { return }
+    if busy {
+      if !held.contains(key) { held.append(key) }
+      return
+    }
+    posted.append(key)
+    held.removeAll { $0 == key }
+  }
+
+  /// The busy chat went idle: what waited for it lands (`flushHostPosts`, `land`).
+  func landing() -> HandoffWorld {
+    var next = self
+    for key in held where !next.posted.contains(key) { next.posted.append(key) }
+    next.held = []
     return next
   }
 
@@ -236,11 +281,15 @@ struct HandoffWorld: Encodable, Equatable {
           out.append(("the run in \(t) ends failed", w.finishing(t, done: false)))
         }
         for p in w.ledger.records { if let n = w.deliveringResults(of: p.id) { out.append(("results of \(p.id)'s parts are delivered", n)) } }
-        for r in w.ledger.records { if let n = w.waking(r.id) { out.append(("wake turn for \(r.id)", n)) } }
+        for r in w.ledger.records {
+          guard let n = w.waking(r.id) else { continue }
+          out.append((n.wakes == w.wakes ? "\(r.id)'s report is posted for its wake turn" : "wake turn for \(r.id)", n))
+        }
+        if !w.held.isEmpty { out.append(("the busy chat goes idle and held posts land", w.landing())) }
         if c.replays { for r in w.ledger.records { out.append(("replayed delivery of \(r.id)", w.replaying(r.id))) } }
       }
       if w.ledger.records.contains(where: \.isOpen) { out.append(("Stop Everything", w.stoppingEverything())) }
-      if w.crashes < c.crashes && !w.live.isEmpty { out.append(("Serein quits mid-run", w.crashing())) }
+      if w.crashes < c.crashes && !(w.live.isEmpty && w.held.isEmpty) { out.append(("Serein quits mid-run", w.crashing())) }
       if let n = w.sweeping() { out.append(("the sweep closes what a relaunch lost", n)) }
       if c.expiry && !w.dayLater { out.append(("a day goes by", w.expiring())) }
       return out.map { ($0.label, $0.next.startingWaiting()) }

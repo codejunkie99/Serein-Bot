@@ -222,7 +222,6 @@ extension AssistantCoreChecks {
     try check(AskLines.asked(["Planner", "Scout", "Writer"]) == "Asked 3 assistants", "Three targets are counted")
     try check(AskLines.stillAnswering("Scout") == "Scout is still answering. I will add it here.", "A late answer says it comes here")
     try check(AskLines.noAnswer("Scout") == "Scout did not answer.", "An ask over the time cap says so")
-    try check(AskLines.messaged("Writer") == "Messaged Writer", "A hand-off's line names the assistant")
     let lines = [AskLines.askedYou("Serein"), AskLines.answering("Serein"), AskLines.personalFold]
     try check(lines.allSatisfy { asksPlainWords($0) }, "The lines of working together have no feature words")
   }

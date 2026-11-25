@@ -44,6 +44,19 @@ struct AgentMessage: Identifiable, Codable, Equatable {
   /// its profile id. The chat draws it as that assistant's group bubble with its face. Its words
   /// are untrusted data. Absent in every other message.
   var from: String? = nil
+  /// The message a channel post answers (RelayChannel): the person's message a hand-off came
+  /// from, or the hand-off post a report or a team note is about, by id. Absent in every other message.
+  var re: String? = nil
+  /// The assistants a channel post tags ("@Theo …"), by profile id. Absent in every other message.
+  var mentions: [String]? = nil
+  /// A report's lists under its words: plain text from a model, drawn as text. Absent in every
+  /// other message.
+  var parts: [Part]? = nil
+  struct Part: Codable, Equatable {
+    enum Kind: String, Codable { case decisions, files, open }
+    var kind: Kind
+    var items: [String]
+  }
   /// Tap-to-send replies under this message (`QuickReplies`, or the host's first question):
   /// plain text; a tap sends the words as the person's own message. Absent in every other message.
   var chips: [String]? = nil

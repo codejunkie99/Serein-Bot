@@ -600,8 +600,6 @@ public enum AskLines {
   public static func answering(_ asker: String) -> String { "Answering \(AskPolicy.oneLine(asker))" }
   /// What the folded line opens to when personal data took part: no words travel.
   public static let personalFold = "The question or the answer used personal data, so the words stay in the chat that asked."
-  /// The line after a hand-off left.
-  public static func messaged(_ name: String) -> String { "Messaged \(AskPolicy.oneLine(name))" }
 }
 
 // MARK: - Words of the host

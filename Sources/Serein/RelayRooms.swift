@@ -298,7 +298,7 @@ extension RelayOrchestrator {
         throw SereinError.invalid("A note needs kind (fact, decision, file or ask) and text.")
       }
       try refuseSecret([text])
-      rooms.note(kind, text, seat: seat, in: id, names: names)
+      postNote(rooms.note(kind, text, seat: seat, in: id, names: names), room: id, record: record)
       return ["result": "Noted for the team."]
     case "room_report":
       let summary = words("summary")
