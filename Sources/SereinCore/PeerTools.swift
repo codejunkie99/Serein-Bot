@@ -224,6 +224,10 @@ public enum PeerTools {
     case .working: return "working"
     case .waitingForMemory: return "waiting for memory, starts by itself when this Mac has room"
     case .limited(let until): return "waiting for its limit to reset, starts by itself at \(UsageLimit.when(until, now: Date()))"
+    case .limitUnclear(let at?):
+      return "waiting for its limit to clear, which it named no time for; one of its jobs checks again at \(UsageLimit.when(at, now: Date())), and this starts by itself once one gets through"
+    case .limitUnclear(nil):
+      return "waiting for its limit to clear, which it named no time for; another of its jobs is checking now, and this starts by itself once one gets through"
     case .parked: return "waiting on the person: a secure card is open in the chat"
     case .answered: return "answered"
     case .failed(let why): return "failed: \(why)"
@@ -323,6 +327,9 @@ public enum PeerJobState: Sendable, Equatable {
   case waitingForMemory
   /// Not started: the CLI reached its usage or rate limit, so its jobs start by themselves at this time.
   case limited(until: Date)
+  /// Not started: the CLI reached its limit and named no reset time. One of its jobs tries again at
+  /// `checksAt` (nil: one tries now), and the rest start once a try gets through.
+  case limitUnclear(checksAt: Date?)
   case answered(String)
   case failed(String)
   /// A secure card outlasted the callee's tool call; the person's answer starts its next turn.
@@ -331,7 +338,7 @@ public enum PeerJobState: Sendable, Equatable {
 
   public var settled: Bool {
     switch self {
-    case .queued, .working, .waitingForMemory, .limited: return false
+    case .queued, .working, .waitingForMemory, .limited, .limitUnclear: return false
     case .answered, .failed, .parked, .stopped: return true
     }
   }

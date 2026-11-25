@@ -46,6 +46,8 @@ public struct UsageLimit: Equatable, Sendable {
   ///   time, or this Mac's when none is named, next coming.
   /// - Codex: “You've hit your usage limit. … Try again at 3:15 PM.” (today) or “… Try again at
   ///   Oct 28th, 2026 3:15 PM.”
+  /// - Every other CLI passes its model provider's words on: a usage limit is what
+  ///   `HarnessRetry` reads as one, and its reset is the delay the provider named (`retryAfter`).
   public static func text(_ output: String, harness: HarnessDriver?, now: Date, calendar: Calendar = .current)
     -> UsageLimit?
   {
@@ -59,9 +61,30 @@ public struct UsageLimit: Equatable, Sendable {
     case .codex?:
       guard match(#"hit your usage limit"#, text) != nil else { return nil }
       return UsageLimit(resetsAt: codexReset(text, now: now, calendar: calendar))
-    default:
+    case nil:
       return nil
+    default:
+      guard HarnessRetry.classify(.message(text)) == .terminal(.quota) else { return nil }
+      return UsageLimit(resetsAt: retryAfter(text, now: now))
     }
+  }
+
+  /// The delay a model provider named in its error words, as a time: Google's “Please retry in
+  /// 23.5s.”, Gemini CLI's “Suggested retry after 23s.” and “Your quota will reset after 10m.”,
+  /// OpenAI's “Please try again in 6m0s.”, Pi's “Try again in ~143 min.”, and Oh My Pi's
+  /// “Provider requested 8580000ms wait” and “retry-after-ms=8580000”. The longest one wins, since
+  /// every limit has reset by then. Words with no number (“try again later”) name nothing.
+  public static func retryAfter(_ output: String, now: Date) -> Date? {
+    let text = String(output.prefix(textLimit))
+    var waits: [TimeInterval] = []
+    for raw in captures(#"\b(?:retry|try again|resets?) (?:in|after) ~?((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)\b"#, text) {
+      if let seconds = duration(raw.lowercased()) { waits.append(seconds) }
+    }
+    for raw in captures(#"\btry again in ~?(\d+) min(?:ute)?s?\b"#, text) { waits.append((Double(raw) ?? 0) * 60) }
+    for raw in captures(#"\b(?:requested|requires) (\d+) ?ms wait\b|\bretry-after-ms=(\d+)\b"#, text) {
+      waits.append((Double(raw) ?? 0) / 1000)
+    }
+    return bounded(waits.max().map { now.addingTimeInterval($0) }, now: now)
   }
 
   /// An API route's refusal: HTTP 429 only, with its reset from `Retry-After` (seconds or an HTTP
@@ -190,6 +213,13 @@ public struct UsageLimit: Equatable, Sendable {
     else { return nil }
     return (0..<found.numberOfRanges).map { index in
       Range(found.range(at: index), in: text).map { String(text[$0]) } ?? ""
+    }
+  }
+  /// The first non-empty capture group of every match of `pattern` (case-insensitive) in `text`.
+  static func captures(_ pattern: String, _ text: String) -> [String] {
+    guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+    return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { found in
+      (1..<found.numberOfRanges).lazy.compactMap { Range(found.range(at: $0), in: text).map { String(text[$0]) } }.first
     }
   }
   /// “resets 3:45pm” or “resets Mon 12:00am”: the next such clock time on this Mac.

@@ -65,10 +65,12 @@ public actor Peers {
     public var inlineCap: Duration = .seconds(100)
     public var inlineMargin: Duration = .seconds(5)
     public var inlineUnknown: Duration = .seconds(20)
-    /// How long a CLI's jobs wait after its usage limit when it named no reset time...
-    public var limitWait: TimeInterval = 15 * 60
-    /// ...and after a rate limit (HTTP 429), which clears in about a minute.
-    public var rateWait: TimeInterval = 60
+    /// A CLI's limit with no reset named: one of its jobs tries again this long after, the wait
+    /// doubling with each try still refused, up to `probeMost`. The CLI already retried for a
+    /// minute or two itself, so a sooner try learns nothing; at the most the provider gets one
+    /// try each half hour, and the work starts at most that long after the limit clears.
+    public var probeFirst: TimeInterval = 2 * 60
+    public var probeMost: TimeInterval = 30 * 60
     public init() {}
   }
 
@@ -99,6 +101,18 @@ public actor Peers {
     var work: Task<Void, Never>?
     /// The CLI's own word on when its limit resets, seen during the turn.
     var limit: UsageLimit? = nil
+    /// When its latest turn started, and whether that turn started a tool.
+    var started: Date? = nil
+    var toolRan = false
+  }
+
+  /// Why a CLI's jobs wait after its usage or rate limit.
+  private enum Hold {
+    /// It named its reset: none of its jobs starts before then.
+    case until(Date)
+    /// It named none: after `misses` refusals in a row, one job tries at `next` and the rest wait
+    /// for it. The first answer from this CLI ends the hold.
+    case unclear(misses: Int, next: Date)
   }
 
   private enum Kind { case ask, bridge, burst, swarm }
@@ -123,8 +137,8 @@ public actor Peers {
   private var order: [String] = []
   private var made = 0
   private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
-  /// Each CLI that reached its usage or rate limit, and when its jobs may start again.
-  private var limitedUntil: [HarnessDriver: Date] = [:]
+  /// Each CLI that reached its usage or rate limit.
+  private var holds: [HarnessDriver: Hold] = [:]
 
   public init(engines: Engines, host: (any PeerHost)? = nil, limits: Limits = Limits()) {
     self.engines = engines
@@ -245,23 +259,45 @@ public actor Peers {
     return index
   }
 
-  /// Starts queued jobs, oldest first. A CLI past its limit starts none until it resets.
+  /// Starts queued jobs, oldest first. A CLI past its limit starts none until it resets, or only
+  /// the one job that tries whether its limit has cleared.
   private func pump() {
     let now = Date()
     for id in order {
       guard let run = runs[id] else { continue }
       for index in run.jobs.indices where runs[id]!.jobs[index].state.unstarted {
-        if let until = limitedUntil[runs[id]!.jobs[index].agent], until > now {
-          runs[id]!.jobs[index].state = .limited(until: until)
+        if let held = held(runs[id]!.jobs[index].agent, now: now) {
+          runs[id]!.jobs[index].state = held
           continue
         }
         runs[id]!.jobs[index].state = .queued
         if let folder = runs[id]!.jobs[index].shares, writing(in: folder) { continue }
         if run.owner.depth > 0, working(where: { $0.owner.caller.thread == run.owner.caller.thread }) > 0 { break }
         runs[id]!.jobs[index].state = .working
+        runs[id]!.jobs[index].started = now
+        runs[id]!.jobs[index].toolRan = false
+        runs[id]!.jobs[index].limit = nil
         runs[id]!.jobs[index].work = Task { await self.run(id, index) }
       }
     }
+  }
+
+  /// What `cli`'s next job reads while its limit holds it, or nil when it may start.
+  private func held(_ cli: HarnessDriver, now: Date) -> PeerJobState? {
+    switch holds[cli] {
+    case .until(let reset)? where reset > now: return .limited(until: reset)
+    case .until?: holds[cli] = nil
+    case .unclear(_, let next)? where next > now: return .limitUnclear(checksAt: next)
+    case .unclear(_, let next)? where trying(cli, since: next): return .limitUnclear(checksAt: nil)
+    // The wait is over and no job tries yet: this one does.
+    case .unclear?, nil: return nil
+    }
+    return nil
+  }
+
+  /// A job of `cli` that started at or after `since` still runs.
+  private func trying(_ cli: HarnessDriver, since: Date) -> Bool {
+    runs.values.contains { $0.jobs.contains { $0.agent == cli && $0.state.running && ($0.started ?? .distantPast) >= since } }
   }
 
   private func working(where match: (Run) -> Bool) -> Int {
@@ -308,14 +344,15 @@ public actor Peers {
     } catch is CancellationError {
       state = .stopped
     } catch StopReason.usageLimit(let words) {
-      state = limited(job.agent, "usage limit", words: words, reported: runs[id]?.jobs[index].limit, wait: limits.limitWait)
+      state = limited(id, index, "usage limit", words: words)
     } catch StopReason.failed(let why) where HarnessRetry.classify(.message(why)) == .transient(.rateLimited) {
-      state = limited(job.agent, "rate limit", words: why, reported: nil, wait: limits.rateWait)
+      state = limited(id, index, "rate limit", words: why)
     } catch StopReason.failed(let why) {
       state = .failed(why)
     } catch {
       state = .failed(String(describing: error))
     }
+    if case .unclear? = holds[job.agent], state.through { holds[job.agent] = nil }
     callerEnded(job.thread)
     await engines.close(job.thread)
     if let task { await host.release(task: task) }
@@ -325,21 +362,56 @@ public actor Peers {
 
   private func saw(_ event: EngineEvent, _ id: String, _ index: Int) {
     if case .limitReached(let limit) = event { runs[id]?.jobs[index].limit = limit }
+    if case .toolStarted = event { runs[id]?.jobs[index].toolRan = true }
     guard runs[id]?.jobs[index].state.running == true else { return }
     if case .waiting = event { runs[id]!.jobs[index].state = .waitingForMemory } else { runs[id]!.jobs[index].state = .working }
   }
 
-  /// `cli` reached its limit: its jobs wait for the reset it named, else for `wait`, then start by themselves.
-  private func limited(_ cli: HarnessDriver, _ what: String, words: String, reported: UsageLimit?, wait: TimeInterval) -> PeerJobState {
+  /// Job `index`'s CLI reached its limit. A reset it named holds its jobs until then. With none,
+  /// one job tries again after a wait that doubles with each refusal (`Limits.probeFirst`), and an
+  /// answer releases the rest. The job goes back in line when it ran no tool, since sending it
+  /// again repeats nothing; else it fails.
+  private func limited(_ id: String, _ index: Int, _ what: String, words: String) -> PeerJobState {
+    guard let job = runs[id]?.jobs[index] else { return .stopped }
+    let cli = job.agent
     let now = Date()
-    let reset = reported?.resetsAt ?? UsageLimit.text(words, harness: cli, now: now)?.resetsAt ?? now.addingTimeInterval(wait)
-    let until = max(reset, limitedUntil[cli] ?? reset)
-    limitedUntil[cli] = until
+    // A reset the turn outlived counts as none, so the job cannot restart at once and loop.
+    let named = (job.limit?.resetsAt ?? UsageLimit.text(words, harness: cli, now: now)?.resetsAt
+      ?? UsageLimit.retryAfter(words, now: now)).flatMap { $0 > now ? $0 : nil }
+    if let named {
+      if case .until(let held)? = holds[cli], held > named {} else { holds[cli] = .until(named) }
+    } else {
+      switch holds[cli] {
+      case .until(let reset)? where reset > now: break
+      // A job that started before this wait began brings old news; only the try counts.
+      case .unclear(let misses, let next)?:
+        if (job.started ?? .distantPast) >= next { holds[cli] = .unclear(misses: misses + 1, next: now.addingTimeInterval(gap(misses + 1))) }
+      default: holds[cli] = .unclear(misses: 1, next: now.addingTimeInterval(gap(1)))
+      }
+    }
+    let wait: String
+    let at: Date
+    switch holds[cli] {
+    case .until(let reset)?:
+      at = reset
+      wait = "Its next jobs start by themselves at \(UsageLimit.when(reset, now: now))."
+    case .unclear(_, let next)?:
+      at = next
+      wait = "It named no reset time, so one of its jobs checks again at \(UsageLimit.when(next, now: now)) and the rest start once one gets through."
+    case nil:
+      return .queued
+    }
     Task {
-      try? await Task.sleep(for: .seconds(max(0, until.timeIntervalSinceNow)))
+      try? await Task.sleep(for: .seconds(max(0, at.timeIntervalSinceNow)))
       self.changed()
     }
-    return .failed("\(cli.displayName) reached its \(what). Its next jobs start by themselves at \(UsageLimit.when(until, now: now)).")
+    guard job.toolRan else { return .queued }
+    return .failed("\(cli.displayName) reached its \(what) after this job had run tools, so it is not sent again. \(wait)")
+  }
+
+  /// The wait before the try after `misses` refusals in a row: `probeFirst`, doubling, at most `probeMost`.
+  private func gap(_ misses: Int) -> TimeInterval {
+    min(limits.probeFirst * pow(2, Double(min(misses, 30) - 1)), limits.probeMost)
   }
 
   /// At Allow all the caller does not stop to answer: a callee marks a question so Serein can
@@ -651,8 +723,17 @@ public actor Peers {
 extension PeerJobState {
   /// Not started yet: queued, or held for its CLI's limit.
   fileprivate var unstarted: Bool {
-    if case .limited = self { return true }
-    return self == .queued
+    switch self {
+    case .queued, .limited, .limitUnclear: return true
+    default: return false
+    }
+  }
+  /// The CLI took the turn: its limit, if any, has cleared.
+  fileprivate var through: Bool {
+    switch self {
+    case .answered, .parked: return true
+    default: return false
+    }
   }
   /// Started: its turn runs, or its CLI waits for memory to start.
   fileprivate var running: Bool { self == .working || self == .waitingForMemory }

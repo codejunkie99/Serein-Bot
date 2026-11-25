@@ -53,8 +53,8 @@ extension AssistantCoreChecks {
     let (retried, _) = try rig.turn(rig.request("RETRY", thread: "retry"))
     let notices = retried.filter { if case .notice(let text) = $0 { return text.contains("retrying its model") } else { return false } }
     try check(notices.count == 4, "Grok: each model retry is shown")
-    try check(endText(retried, contains: "Connection refused") && reason(retried) != .stopped && rig.log("cancel").contains("RETRY"),
-      "Grok: after the retry limit Serein cancels and the turn ends failed with Grok's reason")
+    try check(endText(retried, contains: "error decoding response body") && reason(retried) != .stopped && rig.log("cancel").contains("RETRY"),
+      "Grok: after the retry limit Serein cancels and the turn ends failed with Grok's reason, from a failed try's message too")
 
     let (stopped, _) = try rig.turn(rig.request("HANG", thread: "hang"), stop: true)
     let child = pid_t(rig.log("child").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
@@ -134,9 +134,12 @@ extension AssistantCoreChecks {
             ok(i, {"stopReason": "cancelled", "_meta": {"cancellationCategory": "PermissionRejected",
                 "cancellationContext": {"tool_name": "write", "reason": "User rejected the execution"}}}); return
         elif body.endswith("RETRY"):
-            for n in range(1, 5):
+            for n in range(1, 4):
                 note("_x.ai/session_notification", sid, {"sessionUpdate": "retry_state", "type": "retrying", "attempt": n,
                     "max_retries": 15, "error_type": "http", "reason": "tcp connect error: Connection refused (os error 61)"})
+            # As Grok 1.0.89 recorded it: a failed try names its error `message`.
+            note("_x.ai/session_notification", sid, {"sessionUpdate": "retry_state", "type": "failed", "error_type": "http",
+                "message": "reqwest error stream: error decoding response body"})
             wait_cancel(body, 3)
             ok(i, {"stopReason": "cancelled"}); return
         elif body.endswith("HANG"):

@@ -112,6 +112,7 @@ enum AssistantCoreChecks {
     ("engines", AssistantCoreChecks.engines),
     ("peers", AssistantCoreChecks.peers),
     ("peerQuota", AssistantCoreChecks.peerQuota),
+    ("limitWords", AssistantCoreChecks.limitWords),
     ("roomCallee", AssistantCoreChecks.roomCallee),
     ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("swarmWriters", AssistantCoreChecks.swarmWriters),
