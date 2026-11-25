@@ -106,8 +106,8 @@ extension FormalMachine {
   }
 }
 
-/// Every machine `--verify-formal` runs. Frames and SettingsUndo (TEAMS-V2 rows 2a and 10) each
-/// add a `Formal/<Name>Machine.swift` with a `static var machine` and one line here.
+/// Every machine `--verify-formal` runs. A new one adds a `Formal/<Name>Machine.swift` with a
+/// `static var machine` and one line here. TEAMS-V2's Frames and SettingsUndo are one: settings-undo.
 public enum FormalCheck {
   public static let machines: [(String, @Sendable () -> FormalResult)] = [
     ("chain", { ChainMachine.machine.check() }),
@@ -117,6 +117,7 @@ public enum FormalCheck {
     ("staffing", { StaffingMachine.machine.check() }),
     ("packet", { PacketMachine.machine.check() }),
     ("seats", { SeatMachine.machine.check() }),
+    ("settings-undo", { SettingsMachine.machine.check() }),
   ]
 
   /// Runs every machine, or only those named in `arguments`, printing one result each; false when any is broken.

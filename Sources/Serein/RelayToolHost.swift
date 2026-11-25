@@ -96,6 +96,7 @@ import SereinCore
     // A rule is a memory record: removing one is a forget, with the same Undo.
     case "rule_undo": return try await forget(a)
     case "memory_share": return try await shareMemory(a)
+    case ChatSettings.tool: return try await changeSetting(a)
     case "instructions_propose": return try await proposeInstructions(a)
     // A plain reminder only shows in the user's own UI; a request for later (action) is gated in createReminder.
     case "reminder_create": return try await createReminder(a)

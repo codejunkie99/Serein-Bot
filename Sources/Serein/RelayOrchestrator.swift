@@ -550,6 +550,9 @@ import SereinCore
   var turnReadOutside = false
   /// Each running turn's frame (TurnFrame.swift): Serein's tools read the calling turn's.
   var frames = TurnFrames()
+  /// The Undo of each setting changed from the chat (`setting_change`). In memory: after a relaunch
+  /// its receipts' Undo refuses.
+  var settingsLedger = SettingsLedger()
   /// The chat whose Get to know you turn is running: check-ins are offered there when it ends.
   var checkInsAfterTurn: String?
 

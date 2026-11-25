@@ -22,7 +22,7 @@ enum AssistantCoreChecks {
     ("workspaceSignals", AssistantCoreChecks.workspaceSignals),
     ("stepLabels", AssistantCoreChecks.stepLabels),
     ("reels", AssistantCoreChecks.reels),
-    ("macFiles", AssistantCoreChecks.macFiles), ("allowAll", AssistantCoreChecks.allowAll), ("cardPlacement", AssistantCoreChecks.cardPlacement), ("codeFormat", AssistantCoreChecks.codeFormat), ("macRun", AssistantCoreChecks.macRun), ("assistantWeb", AssistantCoreChecks.assistantWeb), ("everydayApps", AssistantCoreChecks.everydayApps), ("connectionStatus", AssistantCoreChecks.connectionStatus), ("uiSDKSkill", AssistantCoreChecks.uiSDKSkill), ("waitingPrompt", AssistantCoreChecks.waitingPrompt), ("decisionDock", AssistantCoreChecks.decisionDock), ("alwaysOn", AssistantCoreChecks.alwaysOn),
+    ("macFiles", AssistantCoreChecks.macFiles), ("allowAll", AssistantCoreChecks.allowAll), ("settingChange", AssistantCoreChecks.settingChange), ("cardPlacement", AssistantCoreChecks.cardPlacement), ("codeFormat", AssistantCoreChecks.codeFormat), ("macRun", AssistantCoreChecks.macRun), ("assistantWeb", AssistantCoreChecks.assistantWeb), ("everydayApps", AssistantCoreChecks.everydayApps), ("connectionStatus", AssistantCoreChecks.connectionStatus), ("uiSDKSkill", AssistantCoreChecks.uiSDKSkill), ("waitingPrompt", AssistantCoreChecks.waitingPrompt), ("decisionDock", AssistantCoreChecks.decisionDock), ("alwaysOn", AssistantCoreChecks.alwaysOn),
     ("setupHoldsCheckIns", AssistantCoreChecks.setupHoldsCheckIns),
     ("setupName", AssistantCoreChecks.setupName),
     ("sessionStatus", AssistantCoreChecks.sessionStatus),

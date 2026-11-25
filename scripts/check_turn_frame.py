@@ -101,7 +101,13 @@ READ = re.compile(r"\brelay\??\.(" + "|".join(GLOBALS) + r")\b")
 HOST = re.compile(r"^(?:@MainActor )?(?:final class|extension) RelayToolHost\b")
 LIFE = {"begin": re.compile(r"\bframes\.begin\("), "end": re.compile(r"\bframes\.end\(")}
 # file: frame starts and ends. Change a number only with the reason in the commit.
-WIRING = {"Sources/Serein/RelayOrchestrator.swift": {"begin": 2, "end": 4}}
+WIRING = {
+    "Sources/Serein/RelayOrchestrator.swift": {"begin": 2, "end": 4},
+    # The setting_change check opens a person's and an assistant's turn on a real Relay.
+    "Sources/Serein/AssistantCoreChecks+SettingChange.swift": {"begin": 1},
+    # The settings-undo machine starts, ends and late-ends turns on both chats.
+    "Sources/SereinCore/Formal/SettingsMachine.swift": {"begin": 1, "end": 2},
+}
 
 
 def host_lines(text):

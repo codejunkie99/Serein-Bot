@@ -243,19 +243,31 @@ extension BrowserModel {
   /// Never on a Never site, and never for a paired outside app (it has no agent history). Each use
   /// is a line in the task's steps and in agent history, recorded before the cookies go in. A no
   /// leaves the page signed out; only a task that ended while the card waited throws.
+  /// At Allow all no window waits: the call stops once with the person_step confirm route, the
+  /// person's yes on that card in the chat grants this exact call (`arguments`), and the same call
+  /// again uses the sign-in; called again with no yes, the page opens signed out.
   func useKeptSignIn(
-    _ address: String, taskID id: String, into target: WKWebsiteDataStore, tool: String, operationID: UUID
+    _ address: String, taskID id: String, into target: WKWebsiteDataStore, tool: String, arguments: [String: Any],
+    operationID: UUID
   ) async throws {
-    guard let task = tasks[id], let site = KeptSignIns.site(address), !task.keptAsked.contains(site),
+    guard let task = tasks[id], let site = KeptSignIns.site(address),
       KeptSignIns.kept(site) != nil, SiteRules.rule(for: address) != .never,
       let context = behaviorContexts[id]
     else { return }
-    tasks[id]?.keptAsked.insert(site)
     let unattended = isUnattended(task: id)
+    let atAllowAll = !unattended && allowsAll(task: id)
+    let granted = atAllowAll
+      && RelayOrchestrator.shared?.takesConfirm(tool: tool, argsHash: PersonStep.argsHash(arguments), path: nil, task: id) == true
+    let ask = KeptSignInAsk.decide(allowsAll: atAllowAll, granted: granted, askedBefore: task.keptAsked.contains(site))
+    guard ask != .signedOut else { return }
+    tasks[id]?.keptAsked.insert(site)
+    if ask == .personStep { throw KeptSignInAsk.route(site) }
     let relay = relayTask(id, task)
     var answer = ApprovalGate.HumanAnswer.no
     // The person's own sign-in: their card, at every level.
-    if unattended {
+    if ask == .use {
+      answer = .yes
+    } else if unattended {
       // The yes is the creation card's (RelayToolHost.createReminder), which named the site.
       if unattendedSignIns(task: id).contains(site) { answer = .yes }
     } else if let asker = relay ?? RelayOrchestrator.shared {

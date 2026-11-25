@@ -28,6 +28,8 @@ import SwiftUI
     case .updateInstalls: return Updates.shared.installsAutomatically
     }
   }
+  /// One setting as Settings shows it, in the words `set` takes (`setting_change`).
+  static func value(_ setting: AgentSetting) -> String { setting.show(stored(setting)) }
   /// The values Settings shows on one page (`AgentSetting.page`), for `app_read`.
   static func values(on page: String) -> [String: String] {
     Dictionary(uniqueKeysWithValues: AgentSetting.allCases.filter { $0.page == page }.map { ($0.rawValue, $0.show(stored($0))) })

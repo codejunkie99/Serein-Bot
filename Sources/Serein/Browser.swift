@@ -1496,6 +1496,7 @@ struct BrowserTask {
         ? MacBackgroundAsk(
           thread: owner ?? agentTabs.hub?.runs.first { $0.taskID == id }?.spec.threadID,
           unattended: { [weak self] in self?.isUnattended(task: id) ?? true },
+          allowsAll: { [weak self] in self?.allowsAll(task: id) ?? false },
           ask: { [weak self] title, detail, button in
             if let relay { return await relay.confirmAnswer(title, detail, button: button, thread: self?.threadID(forTask: id)) }
             return await MacBackgroundAsk.alert(title, detail, button: button, thread: owner)
@@ -1863,7 +1864,7 @@ struct BrowserTask {
         throw SereinError.invalid(AgentTabPolicy.capMessage())
       }
       try await authorizeSite(u, taskID: id)
-      try await useKeptSignIn(u, taskID: id, into: task.store, tool: raw, operationID: operationID)
+      try await useKeptSignIn(u, taskID: id, into: task.store, tool: raw, arguments: a, operationID: operationID)
       task.pass = tasks[id]?.pass
       task.keptAsked = tasks[id]?.keptAsked ?? task.keptAsked
       let tab = BrowserTab(privateMode: task.isolated, owner: id, store: task.store)
@@ -1928,7 +1929,8 @@ struct BrowserTask {
       guard let url = a["url"] as? String else { throw SereinError.invalid("Missing URL") }
       try Self.check(try BrowserPolicy.url(url), task)
       try await authorizeSite(url, taskID: id)
-      try await useKeptSignIn(url, taskID: id, into: tab.web.configuration.websiteDataStore, tool: raw, operationID: operationID)
+      try await useKeptSignIn(
+        url, taskID: id, into: tab.web.configuration.websiteDataStore, tool: raw, arguments: a, operationID: operationID)
       // Its card can wait: a tab the person took over meanwhile is theirs, never driven.
       guard AgentTabGate.mayDrive(
         owner: tab.owner, task: id, defaultStore: tab.web.configuration.websiteDataStore === WKWebsiteDataStore.default())

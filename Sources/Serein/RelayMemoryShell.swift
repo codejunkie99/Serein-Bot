@@ -66,7 +66,7 @@ extension RelayOrchestrator {
   /// the person's own answers. A turn that used only these, with no page or file on the person's
   /// message, is clean (`MemoryTurn.isClean`), so a typed remember is shared with every assistant.
   static let cleanTools: Set<String> = [
-    "remember", "recall", "forget", "memory_share", "rule_save", "rule_undo", "reminder_create", "reminder_cancel", "notify",
+    "remember", "recall", "forget", "memory_share", "rule_save", "rule_undo", ChatSettings.tool, "reminder_create", "reminder_cancel", "notify",
     "look_get", "look_set", "look_undo", "look_show", "ask_user",
   ]
 
