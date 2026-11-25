@@ -1385,9 +1385,19 @@ import SereinCore
     stopNotice = nil
     // "@Writer and @Scout, …": each one tagged takes a turn in this chat (RelayGroupTurn.swift).
     if userMessage, attachments.isEmpty, trail == nil, page == nil, startGroupTurn(prompt) { return true }
+    // The chat it was written in, and its assistant, before "@Writer …" switches to Writer's.
+    let origin = threadID
+    let originAssistant = team.activeID
     // “@Writer …” goes to Writer's Main chat and “@Trip …” to that team's responder: the person's
     // own words only, never automation (TeamMention).
     if userMessage, TeamMention.parse(prompt, in: team) != nil {
+      // “@Writer stop” from a chat too busy to switch still stops Writer's seats asked here.
+      if attachments.isEmpty, !canSwitchAssistant, let to = recipient(of: prompt), to.id != team.activeID,
+        RelayStop.kind(to.rest) == .reply
+      {
+        stopSeats(askedIn: origin, to: to.id)
+        return false
+      }
       guard let routed = routeMention(prompt, attachments: attachments) else { return false }
       prompt = routed
     }
@@ -1406,10 +1416,14 @@ import SereinCore
     case .reply?:
       cancelWelcome(suppress: true)
       SereinChatSetup.shared.cancelPending(self)
+      // The side seats answering this chat stop too: all of them, or the named assistant's.
+      let seats = stopSeats(askedIn: origin, to: team.activeID != originAssistant ? team.activeID : nil)
       if working {
         stopReply()
-      } else {
+      } else if seats == 0 {
         stopNotice = .idle(working: liveTasks, others: otherLiveTasks)
+      } else {
+        stopNotice = .stoppedReply(working: liveTasks, others: otherLiveTasks)
       }
       return false
     case nil: break
@@ -1435,6 +1449,12 @@ import SereinCore
       return false
     }
     if working {
+      // No queue: the person's plain message takes a side seat now (RelaySideSeats.swift). Files,
+      // a page or a screen trail need this chat's own turn, and ⌥Return stops the reply for it.
+      if userMessage, !interrupt, attachments.isEmpty, trail == nil, page == nil {
+        startSideSeat(prompt)
+        return true
+      }
       // The person's own words go into the reply that runs, where its engine reads them now
       // (RunSteering.path). Its consent words and grants stay as the turn started with.
       if !interrupt, let run, run.spec.initiator != .handoff, agent.hub.takesWords(run),
@@ -2276,7 +2296,11 @@ import SereinCore
     // Done, failed or stopped, Serein's turn on that thread is over.
     if run.spec.relay { frames.end(run.spec.threadID) }
     // Whatever ended, a queued scheduled turn may go now (its owner's chat may be free).
-    defer { drainScheduled() }
+    defer {
+      drainScheduled()
+      // A run that ended may free a side seat (`sideSeatFree` counts delegated runs too).
+      startWaitingHandoffs()
+    }
     noteSecureCard(run)
     tallyUsage(run)
     // Get to know you ended: the check-ins card comes next, whatever the reply said. While they

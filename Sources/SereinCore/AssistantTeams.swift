@@ -675,6 +675,15 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
     }
   }
 
+  /// A side seat (`SideSeat`): the person's own message to its chat's assistant, answered in a
+  /// hidden seat beside a busy turn (`busy`) or carried on from a turn that ran long
+  /// (`background`). `from` and `to` are that assistant, and the seat holds it once. nil for a hand-off.
+  public var side: Side? = nil
+  public enum Side: String, Codable, Sendable { case busy, background }
+  /// Its report post is owed to the origin chat (false) or is there (true). nil in older ledgers
+  /// and while it is open; only a row that closes owes one, so an old row is never posted again.
+  public var posted: Bool? = nil
+
   /// `parent`: the hand-off whose target sends this one as part of its own task.
   public init(
     id: String = UUID().uuidString, from: String, to: String, task: String, threadID: String, askedIn: String,
@@ -698,7 +707,7 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   }
   public var isOpen: Bool { state == .waiting || state == .running }
   /// Everyone who holds this work once its target has it, in order. None of them is asked again.
-  public var holders: [String] { (chain ?? [from]) + [to] }
+  public var holders: [String] { side != nil ? [to] : (chain ?? [from]) + [to] }
   /// "Serein asked Writer, who asked you": the chain as the target's prompt says it, from the
   /// names of `chain`.
   public static func chainWords(_ names: [String]) -> String {
@@ -723,6 +732,8 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
   /// Closed hand-offs kept for the status lines; open ones are always kept.
   public static let kept = 50
   public static let taskLimit = 2_000
+  /// The most of a closed hand-off's result kept, and of a side seat's answer posted.
+  public static let resultLimit = 4_000
   /// The most assistants one task passes through, its first sender included.
   public static let maxChain = 4
   /// The most hand-offs that share one root, the root included.
@@ -782,7 +793,8 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
   /// so the one flood left to bound is many tasks into one assistant. `to` is "" for an assistant
   /// not made yet, which has had nothing.
   public func refusal(from: String, fromName: String, to: String, toName: String, now: Date) -> String? {
-    if records.filter({ $0.from == from && $0.isOpen }).count >= Self.maxOpenPerAssistant {
+    // A side seat is the person's message, not a hand-off the assistant sent.
+    if records.filter({ $0.from == from && $0.isOpen && $0.side == nil }).count >= Self.maxOpenPerAssistant {
       return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, or do this part yourself."
     }
     if !to.isEmpty, (daily[Self.key(to, now)] ?? 0) >= Self.maxPerReaderPerDay {
@@ -790,10 +802,10 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     }
     return nil
   }
-  /// A hand-off: recorded and counted toward its reader's day.
+  /// A hand-off: recorded and counted toward its reader's day. A side seat is recorded only.
   public mutating func admit(_ handoff: AssistantHandoff, now: Date) {
     records.append(handoff)
-    daily[Self.key(handoff.to, now), default: 0] += 1
+    if handoff.side == nil { daily[Self.key(handoff.to, now), default: 0] += 1 }
     trim(now: now)
   }
   /// Hand-offs that waited in the queue longer than a day expire; returns them, each once.

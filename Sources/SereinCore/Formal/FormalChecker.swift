@@ -116,6 +116,7 @@ public enum FormalCheck {
     ("report", { ReportMachine.machine.check() }),
     ("staffing", { StaffingMachine.machine.check() }),
     ("packet", { PacketMachine.machine.check() }),
+    ("seats", { SeatMachine.machine.check() }),
   ]
 
   /// Runs every machine, or only those named in `arguments`, printing one result each; false when any is broken.

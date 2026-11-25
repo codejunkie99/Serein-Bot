@@ -108,6 +108,7 @@ enum AssistantCoreChecks {
     ("seatPacket", AssistantCoreChecks.seatPacket),
     ("channel", AssistantCoreChecks.channel),
     ("groupTurn", AssistantCoreChecks.groupTurn),
+    ("noQueue", AssistantCoreChecks.noQueue),
     ("staffing", AssistantCoreChecks.staffing),
     ("keyFailure", AssistantCoreChecks.keyFailure),
     ("secureField", AssistantCoreChecks.secureField),

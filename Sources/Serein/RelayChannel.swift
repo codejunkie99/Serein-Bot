@@ -40,13 +40,23 @@ extension RelayOrchestrator {
   func postReport(_ record: AssistantHandoff) -> Bool {
     guard !record.isOpen else { return false }
     let origin = originChat(record)
-    var post = AgentMessage(role: "assistant", text: "", notice: true)
+    // A side seat answers the person's message, which a quit may have lost from a busy chat: it
+    // goes in first, under its own id, so the answer has its question.
+    if record.side == .busy, let asked = record.mention?.post {
+      var message = AgentMessage(role: "you", text: record.task)
+      message.id = asked
+      channelPost(message, into: origin)
+    }
+    // A side seat's answer is the assistant's own reply in the chat, whole; a report is a post.
+    var post = AgentMessage(role: "assistant", text: "", notice: record.side == nil)
     post.id = HandoffReport.postID(record.id)
     post.from = record.to
     // A tagged turn answers the message that tagged it; the person who tagged is not a bot to tag.
     post.re = record.mention?.post ?? Self.handoffPostID(record.id)
     if case .byPerson = record.mention {} else { post.mentions = [record.from] }
-    if let words = channelWords(record.result ?? "", personal: agent.readsPersonal(thread: record.threadID), into: origin) {
+    let result = record.result ?? (record.state == .expired ? "It waited a day for a free seat and never ran. Ask again." : "")
+    if let words = channelWords(result, personal: agent.readsPersonal(thread: record.threadID), into: origin,
+                                limit: record.side == nil ? Self.channelCap : HandoffLedger.resultLimit) {
       post.text = words
       if let report = rooms.report(record.id), !report.byHost {
         let parts: [AgentMessage.Part] = [
@@ -80,9 +90,9 @@ extension RelayOrchestrator {
 
   /// `text` capped for the channel, or nil when it carries personal data and the chat's mark
   /// cannot be saved (its words are withheld).
-  func channelWords(_ text: String, personal: Bool, into origin: String) -> String? {
+  func channelWords(_ text: String, personal: Bool, into origin: String, limit: Int = RelayOrchestrator.channelCap) -> String? {
     guard !personal || agent.markPersonalRead(thread: origin) else { return nil }
-    return AgentPrivacy.redact(text, limit: Self.channelCap)
+    return AgentPrivacy.redact(text, limit: limit)
   }
 
   /// Writes `message` into `thread` once: a post whose id is in the chat, or waits to land there,

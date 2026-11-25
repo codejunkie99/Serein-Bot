@@ -177,16 +177,19 @@ extension RelayOrchestrator {
   /// `room`: the room `staff` decided in, so the make it recorded and the seat share one root.
   /// `mention`: a turn an @tag started (`GroupTurn`); the tag is its post, and `rootMessage` the
   /// person's message its room roots at when that is not the newest one in the chat yet.
+  /// `side`: a side seat answering the person's own message (`SideSeat`), asked in `chat`.
   func sendHandoff(from sender: RelayProfile, to target: RelayProfile, task: String, team key: String, teamName: String,
                    personal: Bool = false, parent: AssistantHandoff? = nil, room: Workroom.ID? = nil, how: Activity.How,
-                   mention: AssistantHandoff.Mention? = nil, rootMessage: String? = nil) -> AssistantHandoff
+                   mention: AssistantHandoff.Mention? = nil, rootMessage: String? = nil, side: AssistantHandoff.Side? = nil,
+                   chat asked: String? = nil) -> AssistantHandoff
   {
-    let chat = parent?.threadID ?? threadID
+    let chat = parent?.threadID ?? asked ?? threadID
     var record = AssistantHandoff(
       from: sender.id, to: target.id, task: task, threadID: "", askedIn: chat, team: key, teamName: teamName, parent: parent)
     record.threadID = Self.seatThread(record.id)
     record.room = room
     record.mention = mention
+    record.side = side
     // Asked from a chat that read personal data (or sent again with words that one wrote), or
     // as part of a hand-off that was.
     if personal || parent?.personal == true || agent.readsPersonal(thread: chat)
@@ -199,7 +202,7 @@ extension RelayOrchestrator {
                   sender: how == .user ? nil : agent.hub.run(for: chat))
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
-    note("Handed “\(String(task.prefix(60)))” to \(target.name)", how)
+    note(side == nil ? "Handed “\(String(task.prefix(60)))” to \(target.name)" : "Answering “\(String(task.prefix(60)))” in a side seat", how)
     let admitted = handoffLedger.records.first { $0.id == record.id } ?? record
     // The hand-off is a message in the chat the task started in, from its sender; a tag already is.
     if mention == nil { postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 }) }
@@ -217,20 +220,29 @@ extension RelayOrchestrator {
   /// there, so a relaunch between the two still delivers it once.
   private func claimReport(_ id: String, landed: Bool = false) -> AssistantHandoff? {
     guard let record = handoffLedger.records.first(where: { $0.id == id }), !record.isOpen, record.reported != true else { return nil }
-    guard postReport(record) || !landed, let claimed = handoffLedger.claimReport(id) else { return nil }
+    guard landReport(record) || !landed, let claimed = handoffLedger.claimReport(id) else { return nil }
     saveHandoffs()
     return claimed
   }
+  /// Posts `record`'s report (`postReport`); true once it is in the chat, which settles what it owed.
+  @discardableResult
+  func landReport(_ record: AssistantHandoff) -> Bool {
+    guard postReport(record) else { return false }
+    if handoffLedger.records.first(where: { $0.id == record.id })?.posted == false { updateHandoff(record.id) { $0.posted = true } }
+    return true
+  }
   /// A hand-off ends, done or failed, announced once (a failure notifies). `report` false keeps
-  /// it from starting a turn in the asking chat (one lost to a relaunch is only announced).
-  private func closeHandoff(_ id: String, _ state: AssistantHandoff.State, result: String?, report: Bool = true) {
+  /// it from starting a turn in the asking chat (one lost to a relaunch is only announced). Its
+  /// post is owed until it is in the chat: a busy chat that a quit closes posts it at the next launch.
+  func closeHandoff(_ id: String, _ state: AssistantHandoff.State, result: String?, report: Bool = true) {
     guard let record = handoffLedger.records.first(where: { $0.id == id }), record.isOpen else { return }
     updateHandoff(id) {
       $0.state = state
       $0.finishedAt = Date()
-      $0.result = result.map { String($0.suffix(4_000)) }
+      $0.result = result.map { String($0.suffix(HandoffLedger.resultLimit)) }
+      $0.posted = false
     }
-    if let closed = handoffLedger.records.first(where: { $0.id == id }) { postReport(closed) }
+    if let closed = handoffLedger.records.first(where: { $0.id == id }) { landReport(closed) }
     if !report { _ = claimReport(id) }
     // What its target handed on ends with it: nobody is left to take those results.
     for child in handoffLedger.records where child.isOpen && child.parentID == id {
@@ -260,6 +272,8 @@ extension RelayOrchestrator {
     for record in handoffLedger.records where record.state == .waiting {
       // One hand-off holds a chat at a time, also while it waits there for what it handed on.
       guard chatFree(record.threadID), handoffLedger.running(thread: record.threadID) == nil else { continue }
+      // A side seat starts only under the shared cap; its notice already told the person.
+      if record.side != nil, !sideSeatFree { continue }
       guard let target = team.profiles.first(where: { $0.id == record.to }) else {
         closeHandoff(record.id, .failed, result: "That assistant was deleted.")
         continue
@@ -403,10 +417,12 @@ extension RelayOrchestrator {
     let persona = browser.library.load(RelayPersona.self, from: team.folder(target.id) + "/persona.json")?.prompt() ?? ""
     // A root an @tag started posts its reply in the chat; anything else goes back to its sender.
     let back = record.mention != nil && record.parentID == nil ? "it posts in the chat, answering that message" : "it goes back to \(sender)"
-    let asked = switch record.mention {
-    case .byPerson?: "The user tagged you in the chat they see, in the message below."
-    case .byBot?: "\(sender) tagged you in the chat the user sees, in the message below."
-    case nil: "This task comes from the user's other assistants: \(AssistantHandoff.chainWords(chain))."
+    let asked = switch (record.side, record.mention) {
+    case (.busy?, _): "The user wrote the message below in the chat they see while your reply there was still working. Answer it here, now, beside that reply."
+    case (.background?, _): "The user asked the task below in the chat they see. Your reply there ran past \(Int(SideSeat.foregroundLimit)) seconds, so it moved here, to the background, and the chat is free. Carry it on to the end. The steps already done are in the packet's trail; never do again a step that is already done."
+    case (nil, .byPerson?): "The user tagged you in the chat they see, in the message below."
+    case (nil, .byBot?): "\(sender) tagged you in the chat the user sees, in the message below."
+    case (nil, nil): "This task comes from the user's other assistants: \(AssistantHandoff.chainWords(chain))."
     }
     var lines = [
       asked + " No one else's permissions carry over: you work with only what you may use. Go ahead without asking first; when a step needs the user's OK, Serein shows them a card itself and you carry on with their answer.",
@@ -581,6 +597,9 @@ extension RelayOrchestrator {
     for record in gone {
       closeExpired(record)
     }
+    // A report post a quit lost from a busy chat goes in now (keyed, so once).
+    for record in handoffLedger.records where record.posted == false { landReport(record) }
+    moveLongTurn(now: now)
     startWaitingHandoffs()
     deliverHandoffReports()
   }
@@ -601,7 +620,8 @@ extension RelayOrchestrator {
     let ended = handoffLedger.stop(now: Date())
     saveHandoffs()
     for record in ended {
-      postReport(record)
+      updateHandoff(record.id) { $0.posted = false }
+      landReport(record)
       // A part that only waited holds no chat: a run there is not its own.
       if held.contains(record.id), let run = agent.hub.run(for: record.threadID) { agent.hub.stop(run) }
       announceEnd(record, .failed, record.result)
@@ -619,13 +639,13 @@ extension RelayOrchestrator {
   }
   /// The hand-offs asked in the chat on screen, newest last: their status lines and result cards.
   var handoffsHere: [AssistantHandoff] {
-    Array(handoffLedger.records.filter { $0.askedIn == threadID && $0.from == team.activeID }.suffix(6))
+    Array(handoffLedger.records.filter { $0.askedIn == threadID && $0.from == team.activeID && $0.side == nil }.suffix(6))
   }
 
   // MARK: @mentions
 
   /// Who a mention reaches: the assistant it names, or the responder of the team it names.
-  private func recipient(of text: String) -> (id: String, name: String, mention: TeamMention, rest: String)? {
+  func recipient(of text: String) -> (id: String, name: String, mention: TeamMention, rest: String)? {
     guard let parsed = TeamMention.parse(text, in: team) else { return nil }
     let rest = parsed.rest
     switch parsed.mention {
