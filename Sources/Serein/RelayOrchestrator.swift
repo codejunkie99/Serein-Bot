@@ -858,9 +858,11 @@ import SereinCore
 
   static func start(agent: AgentModel, browser: BrowserModel) -> RelayOrchestrator {
     if let shared { return shared }
-    migrate(agent: agent, browser: browser)
+    let movedFrom = migrate(agent: agent, browser: browser)
     let relay = RelayOrchestrator(agent: agent, browser: browser)
     shared = relay
+    // Once, for an install that asked before: it says so, with Undo back to that level.
+    if movedFrom != nil { relay.deliver(receipt: ReceiptCopy.allowAll(entry: AllowAllMigration.undoEntry), into: relay.threadID) }
     if persists { Task { await relay.research.load() } }
     // Task panel tabs restored at launch that are Serein's own chats leave it now that Serein
     // knows its chats: they show in the Serein surface.
@@ -868,9 +870,10 @@ import SereinCore
     return relay
   }
   /// Once per install, before anything reads them: explicit values for what the old on/off switch
-  /// used to hold back (AssistantMigration). Never in previews or checks.
-  private static func migrate(agent: AgentModel, browser: BrowserModel) {
-    guard persists else { return }
+  /// used to hold back (AssistantMigration), then the move to Allow all (AllowAllMigration),
+  /// whose level before it returns when there was one. Never in previews or checks.
+  private static func migrate(agent: AgentModel, browser: BrowserModel) -> ApprovalLevel? {
+    guard persists else { return nil }
     let root = browser.library.root
     _ = ActionClickDefault.apply()
     PairingGrantReset.migrateOnce(root: root, defaults: .standard)
@@ -911,6 +914,7 @@ import SereinCore
           repeats: .daily, action: true))
         try? library.save(stored, to: "relay/reminders.json")
       })
+    return AllowAllMigration.run(GateSettings.shared)
   }
   private init(agent: AgentModel, browser: BrowserModel) {
     self.agent = agent

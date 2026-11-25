@@ -147,6 +147,13 @@ public enum ReceiptCopy {
   public static func dashboard(title: String) -> Receipt {
     Receipt(kind: .dashboardSaved, line: "Done. \(title) is ready. Ask me any time to update it.")
   }
+  /// The one-time move to Allow all (`AllowAllMigration`), with Undo back to the level before.
+  public static func allowAll(entry: String) -> Receipt {
+    Receipt(
+      kind: .assistantChanged, line: "Done. Serein now runs everything without asking. To change it, say “ask me before …”.",
+      card: .banner(title: ApprovalLevel.proactive.title, detail: "Paying and passwords still go to a secure card you fill.", action: "Undo"),
+      undo: UndoToken(entry: entry, kind: .assistantChanged))
+  }
   public static func undone() -> Receipt { Receipt(kind: .undone, line: "Done. It is back the way it was.") }
 
   /// Problems with one receipt line: empty if it is plain. The checks run every template through this.

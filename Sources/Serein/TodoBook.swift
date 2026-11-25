@@ -217,8 +217,8 @@ import SwiftUI
 
 extension RelayToolHost {
   /// `todo_propose`: one card with the exact title, its deadline and assistant, and the notes
-  /// behind “Show the notes”. It always asks (`.change`), whatever Serein asks before, so a card
-  /// is never added silently; Add puts it in Next and starts nothing.
+  /// behind “Show the notes”. Below Allow all it asks (`.change`), so a card is never added
+  /// silently; at Allow all it is added with no ask. Either way it lands in Next and starts nothing.
   func proposeTodo(_ a: [String: Any]) async throws -> [String: Any] {
     // A check-in is not the person's turn: like the schedule tools, it proposes no card.
     if relay.working, !frame.byPerson, !frame.unattended { throw SereinError.invalid(Self.lowerTrust) }
@@ -252,11 +252,14 @@ extension RelayToolHost {
     if a["steps"] != nil || a["kind"] != nil || a["target"] != nil {
       card.goal = try PersonalGoalTools.details(a)
     }
-    let copy = TodoBoard.proposal(card, assistant: assistant?.name)
-    let human = await relay.confirmAnswer(
-      copy.title, copy.detail, button: "Add", thread: frame.thread, more: [notes, card.goal.map { $0.steps.map(\.title).joined(separator: "\n") }].compactMap { $0 }.joined(separator: "\n"), moreName: "the plan", effect: .change)
-    guard human == .yes else {
-      throw SereinError.invalid(human == .no ? "The user declined the card. Nothing was added." : ActionAdmission.needsPerson)
+    // At Allow all the card goes on the Board with no ask; the person moves or deletes it there.
+    if relay.level != .proactive {
+      let copy = TodoBoard.proposal(card, assistant: assistant?.name)
+      let human = await relay.confirmAnswer(
+        copy.title, copy.detail, button: "Add", thread: frame.thread, more: [notes, card.goal.map { $0.steps.map(\.title).joined(separator: "\n") }].compactMap { $0 }.joined(separator: "\n"), moreName: "the plan", effect: .change)
+      guard human == .yes else {
+        throw SereinError.invalid(human == .no ? "The user declined the card. Nothing was added." : ActionAdmission.needsPerson)
+      }
     }
     try book.add(card)
     relay.note("Added “\(String(title.prefix(60)))” to Goals", .allowed)

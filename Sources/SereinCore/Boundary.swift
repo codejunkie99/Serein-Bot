@@ -43,13 +43,14 @@ public enum Boundary: Sendable, Equatable {
   case codeRunner
   /// The person set this site to Never (SiteRules).
   case siteNever
-  /// The person set this site to Ask every step: a card per changing step, at every level (R18).
+  /// The person set this site to Ask every step: each changing step there waits for their yes on
+  /// a person_step confirm card, never a held card, at every level (R18). Their yes covers that
+  /// one call (`PersonStep`, R16).
   case siteAsk
   /// A changed SSH host key blocks that host only (R21).
   case hostKey(host: String)
 
-  /// nil for siteAsk, which carries on behind a card instead.
-  public var blocked: Blocked? {
+  public var blocked: Blocked {
     switch self {
     case .secret:
       return Blocked(
@@ -77,7 +78,11 @@ public enum Boundary: Sendable, Equatable {
         "the person set this site to Never", routes: .init("another site, a search, or the service's API"),
         after: "Do not open this site.")
     case .siteAsk:
-      return nil
+      return Blocked(
+        "the person set this site to ask before each change",
+        routes: .init(
+          "call person_step with kind confirm, this tool's name and these same arguments, carry on with every other part, and make this same call again once the person says yes",
+          "reach the same result on another site"))
     case .hostKey(let host):
       return Blocked(
         "the key for \(host) changed",

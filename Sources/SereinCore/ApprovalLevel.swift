@@ -14,9 +14,9 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
   public static let chatChoices: [ApprovalLevel] = [.everyStep, .riskyOnly, .proactive]
   /// What a new install starts with. Raising it is the product owner's decision; a change here
   /// affects only installs whose key is still unset.
-  /// Only risky steps (decided 2026-11-12): like Grok Bot, ordinary steps go ahead and the fresh
-  /// install says so once (`defaultedKey`) before the first one; setup offers the choice too.
-  public static let newInstallDefault: ApprovalLevel = .riskyOnly
+  /// Allow all (owner 2026-11-25): Serein asks nothing; the person changes it by saying so.
+  /// Installs from before move to it once (`AllowAllMigration`).
+  public static let newInstallDefault: ApprovalLevel = .proactive
   /// Set on every change the user makes, so a later default never overrides their choice.
   public static let userSetKey = "serein.approvals.userSet"
   /// Set only when a fresh install was given a raised default it never confirmed; the one-time

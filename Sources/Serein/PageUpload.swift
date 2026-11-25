@@ -68,7 +68,7 @@ extension BrowserModel {
       kind: "upload", label: live.label, effect: .upload, elementID: live.bind, pageVersion: tab.pageVersion,
       site: host)
     let decision = try ApprovalDoor.answer(
-      .init(.action(gate), standing, site: SiteRules.rule(for: tab.address), taskID: id),
+      .init(.action(gate), standing, site: siteRule(tab.address, tool: "upload", arguments: a, task: id), taskID: id),
       facts: .init(
         secureField: false, botCheck: false, pays: .no, covered: false, path: nil, hostKeyChanged: nil,
         runsAnything: false, ref: "")

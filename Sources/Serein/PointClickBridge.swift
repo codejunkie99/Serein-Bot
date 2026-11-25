@@ -96,7 +96,7 @@ extension BrowserModel {
       effect != .pay ? .no : readback.readable ? .yes(amount: readback.amount) : .unreadable
     let decision = try ApprovalDoor.answer(
       .init(.action(judged), standing(task: id, else: RelayOrchestrator.standing(relay, present: !isUnattended(task: id))),
-            site: SiteRules.rule(for: tab.address), taskID: id),
+            site: siteRule(tab.address, tool: "click_point", arguments: a, task: id), taskID: id),
       facts: .init(
         secureField: false, botCheck: false, pays: pays, covered: false, path: nil, hostKeyChanged: nil,
         runsAnything: false, ref: "")

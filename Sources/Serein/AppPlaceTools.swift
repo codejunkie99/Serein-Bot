@@ -195,9 +195,9 @@ extension RelayToolHost {
   // MARK: board_update
 
   /// Moves one of the person's Board cards. `Admission.decide(.board)` refuses any turn the
-  /// person did not start; words that name the move apply it; otherwise the person decides on a
-  /// card, whatever Serein asks before, as `todo_propose` does. Either way it lands as a receipt
-  /// with Undo (`AssistantDesk.Undo.board`). Moving starts no task.
+  /// person did not start; words that name the move apply it, and so does Allow all; otherwise
+  /// the person decides on a card, as `todo_propose` does. Either way it lands as a receipt with
+  /// Undo (`AssistantDesk.Undo.board`). Moving starts no task.
   private func updateBoard(_ a: [String: Any]) async throws -> [String: Any] {
     let book = TodoBook.shared
     guard let id = requestedID(a) else { throw SereinError.invalid("id is required: a card id from app_read board.") }
@@ -210,6 +210,7 @@ extension RelayToolHost {
     switch relay.admission(.board) {
     case .refuse(let why): throw SereinError.invalid(why)
     case .apply: break
+    case .ask where relay.level == .proactive: break
     case .ask:
       let human = await relay.confirmAnswer(
         "Move “\(short)” to \(column.title)?", "On your Board. Moving it starts no work.", button: "Move",

@@ -351,14 +351,14 @@ import SereinCore
       if threadID == nil {
         let card = ApprovalCopy.startTask(provider: provider.name, destination: "here", place: site, edits: false, task: task)
         // A task in the user's own tab clicks and types there: always asks.
-        try await gateRun(.change, title: card.title, detail: card.detail, button: "Start", more: task, moreName: "the task", site: .ask)
+        try await gateRun(.change, title: card.title, detail: card.detail, button: "Start", more: task, moreName: "the task", ownTab: true)
       }
     } else {
       // Working in the user's own tab grants access to it: an access effect, which always asks.
       let card = CurrentPageContext.workHereCard(title: AgentPrivacy.redact(tab.title), site: site)
       try await gateRun(
         .access, title: card.title, detail: card.detail, button: card.button, more: task, moreName: "the task",
-        declined: "The user said no to working in their tab. Offer to do it in your own tabs instead.", site: .ask)
+        declined: "The user said no to working in their tab. Offer to do it in your own tabs instead.", ownTab: true)
     }
     // An answer covers the displayed site, not a different site reached while it waited.
     guard isCurrent(), browser.tabs.contains(where: { $0.id == tab.id }), !tab.privateMode,
@@ -578,7 +578,7 @@ import SereinCore
         saved: thread.permission, edits: child.edits, fullAccessConfirmed: FullAccessConsent.confirmed(thread.projectID)))
     try await gateRun(
       Self.runEffect(target), title: card.title, detail: card.detail, button: "Send", more: text, moreName: "the message",
-      task: true, site: thread.mode == .page ? .ask : .normal)
+      task: true, ownTab: thread.mode == .page)
     /// New work is the acting assistant's: its steps follow that assistant's scope.
     relay.childOwners[id] = relay.actingProfile?.id ?? ""
     // And its standing yeses follow the turn that sent it (RoutineGrants.standsIn).
@@ -1330,18 +1330,20 @@ import SereinCore
 
   /// Asks before a delegated run starts or takes new instructions, by `ApprovalDoor.answer`.
   /// The one-time consent card comes only before a routine step, which is then judged again.
-  /// A no, a timeout or an error starts and sends nothing.
+  /// `ownTab`: the run works in the person's own tab, which asks first below Allow all; at Allow
+  /// all the person's words that sent it from that tab are the yes. A no, a timeout or an error
+  /// starts and sends nothing.
   private func gateRun(
     _ effect: ApprovalGate.Effect, title: String, detail: String, button: String, more: String? = nil,
     moreName: String = "the details", declined: String = "The user declined this delegated run.",
-    task: Bool = false, site: SiteRule = .normal
+    task: Bool = false, ownTab: Bool = false
   ) async throws {
     // `task`: a task started or steered in the person's own turn stands at Proactive, at any chat level.
     let today = relay.standing
     let standing: ApprovalDoor.Standing = task && today.levelStands && today.present ? .proactiveTask(present: true) : today
     let judge = { (standing: ApprovalDoor.Standing) throws -> RelayAutonomy.Decision in
       try ApprovalDoor.answer(
-        .init(.effect(effect), standing, site: site),
+        .init(.effect(effect), standing),
         facts: .init(
           secureField: false, botCheck: false, pays: .no, covered: false, path: nil,
           hostKeyChanged: nil, runsAnything: false, ref: "")
@@ -1352,7 +1354,7 @@ import SereinCore
       guard await relay.settleConsent(thread: frame.thread) else { throw SereinError.invalid(RelayOrchestrator.stoppedStep) }
       decision = try judge(relay.standing)
     }
-    if decision == .auto { return }
+    if decision == .auto, !ownTab || relay.level == .proactive { return }
     let human = await relay.confirmAnswer(
       title, detail, button: button, thread: frame.thread, more: more, moreName: moreName)
     guard human == .yes else {

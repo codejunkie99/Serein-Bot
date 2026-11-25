@@ -88,7 +88,7 @@ import WebKit
 struct VerificationCheck: LocalizedError {
   /// The site the person is on, not the check provider's.
   let host: String
-  var message: String { Boundary.botCheck.blocked!.text }
+  var message: String { Boundary.botCheck.blocked.text }
   var errorDescription: String? { message }
   /// What the agent gets instead of the action.
   func result(tab: String) -> [String: Any] {

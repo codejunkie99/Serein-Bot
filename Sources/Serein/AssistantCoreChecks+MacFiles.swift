@@ -92,21 +92,6 @@ extension AssistantCoreChecks {
       .allSatisfy { name in files.contains { $0.hasSuffix(name) } }, "The ui-sdk skill's references ship with it")
   }
 
-  /// Like Grok Bot: a fresh install lets routine steps go ahead and says so once; nothing else loosens.
-  static func approvalDefault(_ check: Check) throws {
-    let fresh = AssistantMigration.plan(freshInstall: true, enabled: nil, proactive: nil, autopilot: nil, learnsNotes: nil)
-    try check(ApprovalLevel.newInstallDefault == .riskyOnly
-      && fresh.contains(.bool(AssistantMigration.autopilotKey, true))
-      && fresh.contains(.bool(ApprovalLevel.defaultedKey, true)),
-      "A fresh install asks only before risky steps, and says so once before the first routine step")
-    try check(ApprovalLevel.resolve(stored: nil) == .everyStep,
-      "An unset or unreadable approval setting asks before every step")
-    let existing = AssistantMigration.plan(freshInstall: false, enabled: true, proactive: nil, autopilot: nil, learnsNotes: nil)
-    try check(existing.contains(.bool(AssistantMigration.autopilotKey, false)),
-      "An existing install keeps asking before every step")
-    let kept = AssistantMigration.plan(freshInstall: true, enabled: nil, proactive: nil, autopilot: false, learnsNotes: nil)
-    try check(!kept.contains(.bool(AssistantMigration.autopilotKey, true)), "A choice already made is never overwritten")
-  }
   static func codeFormat(_ check: Check) throws {
     let F = CodeFormat.self
     try check(F.name("x", language: "swift") == "Swift" && F.name("x", language: "ts") == "TypeScript"

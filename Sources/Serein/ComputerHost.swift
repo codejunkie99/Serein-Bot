@@ -1145,7 +1145,7 @@ import SereinCore
       }
       // Nothing runs there before the person trusted its host key, and, as it is, its helper.
       // A changed key blocks this host only: the task carries on with other hosts (R21).
-      if computer.keyChanged { throw Boundary.hostKey(host: own.link.name).blocked! }
+      if computer.keyChanged { throw Boundary.hostKey(host: own.link.name).blocked }
       try await trustHostKey(computer, own.link, task: task)
       if computer.place == .ownMachine { try await consentInstall(computer, target: settings.target.text, task: task) }
       machine = own

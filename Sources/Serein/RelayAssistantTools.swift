@@ -579,6 +579,15 @@ extension RelayOrchestrator {
       suggestsRoutines = true
       return .success(ReceiptCopy.undone())
     }
+    // The move to Allow all goes back to the level before, unless the level changed since.
+    if id == AllowAllMigration.undoEntry {
+      desk.undo.remove(id)
+      guard level == .proactive, let before = AllowAllMigration.previous(GateSettings.shared), before != .proactive else {
+        return .failure("The level changed since. Say how much Serein should ask.")
+      }
+      setLevel(before)
+      return .success(ReceiptCopy.undone())
+    }
     let action: AssistantDesk.Undo? = desk.undoActions[id]
     if case .link(let linkID)? = action {
       desk.undo.remove(id)

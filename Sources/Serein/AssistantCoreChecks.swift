@@ -22,7 +22,7 @@ enum AssistantCoreChecks {
     ("workspaceSignals", AssistantCoreChecks.workspaceSignals),
     ("stepLabels", AssistantCoreChecks.stepLabels),
     ("reels", AssistantCoreChecks.reels),
-    ("macFiles", AssistantCoreChecks.macFiles), ("approvalDefault", AssistantCoreChecks.approvalDefault), ("cardPlacement", AssistantCoreChecks.cardPlacement), ("codeFormat", AssistantCoreChecks.codeFormat), ("macRun", AssistantCoreChecks.macRun), ("assistantWeb", AssistantCoreChecks.assistantWeb), ("everydayApps", AssistantCoreChecks.everydayApps), ("connectionStatus", AssistantCoreChecks.connectionStatus), ("uiSDKSkill", AssistantCoreChecks.uiSDKSkill), ("waitingPrompt", AssistantCoreChecks.waitingPrompt), ("decisionDock", AssistantCoreChecks.decisionDock), ("alwaysOn", AssistantCoreChecks.alwaysOn),
+    ("macFiles", AssistantCoreChecks.macFiles), ("allowAll", AssistantCoreChecks.allowAll), ("cardPlacement", AssistantCoreChecks.cardPlacement), ("codeFormat", AssistantCoreChecks.codeFormat), ("macRun", AssistantCoreChecks.macRun), ("assistantWeb", AssistantCoreChecks.assistantWeb), ("everydayApps", AssistantCoreChecks.everydayApps), ("connectionStatus", AssistantCoreChecks.connectionStatus), ("uiSDKSkill", AssistantCoreChecks.uiSDKSkill), ("waitingPrompt", AssistantCoreChecks.waitingPrompt), ("decisionDock", AssistantCoreChecks.decisionDock), ("alwaysOn", AssistantCoreChecks.alwaysOn),
     ("setupHoldsCheckIns", AssistantCoreChecks.setupHoldsCheckIns),
     ("setupName", AssistantCoreChecks.setupName),
     ("sessionStatus", AssistantCoreChecks.sessionStatus),
@@ -162,6 +162,7 @@ enum AssistantCoreChecks {
       (ReceiptCopy.connected(app: "Gmail"), nil),
       (ReceiptCopy.dashboard(title: "The trip dashboard"), nil),
       (ReceiptCopy.undone(), nil),
+      (ReceiptCopy.allowAll(entry: "e7"), nil),
     ]
     for (receipt, name) in all {
       let problems = ReceiptCopy.lint(receipt.line, name: name)
