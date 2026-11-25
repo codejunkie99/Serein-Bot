@@ -175,14 +175,18 @@ extension RelayOrchestrator {
   /// `personal`: the words come from a hand-off that was already personal (Send again).
   /// `parent`: the hand-off whose own run asks, as part of its task, from the chat it holds.
   /// `room`: the room `staff` decided in, so the make it recorded and the seat share one root.
+  /// `mention`: a turn an @tag started (`GroupTurn`); the tag is its post, and `rootMessage` the
+  /// person's message its room roots at when that is not the newest one in the chat yet.
   func sendHandoff(from sender: RelayProfile, to target: RelayProfile, task: String, team key: String, teamName: String,
-                   personal: Bool = false, parent: AssistantHandoff? = nil, room: Workroom.ID? = nil, how: Activity.How) -> AssistantHandoff
+                   personal: Bool = false, parent: AssistantHandoff? = nil, room: Workroom.ID? = nil, how: Activity.How,
+                   mention: AssistantHandoff.Mention? = nil, rootMessage: String? = nil) -> AssistantHandoff
   {
     let chat = parent?.threadID ?? threadID
     var record = AssistantHandoff(
       from: sender.id, to: target.id, task: task, threadID: "", askedIn: chat, team: key, teamName: teamName, parent: parent)
     record.threadID = Self.seatThread(record.id)
     record.room = room
+    record.mention = mention
     // Asked from a chat that read personal data (or sent again with words that one wrote), or
     // as part of a hand-off that was.
     if personal || parent?.personal == true || agent.readsPersonal(thread: chat)
@@ -190,15 +194,15 @@ extension RelayOrchestrator {
       record.personal = true
     }
     // The tool call runs in the sender's turn: its steps so far are the packet's trail.
-    let message = how == .user ? "board-" + record.id : parent == nil ? lastPersonMessage(chat) : nil
+    let message = how == .user ? "board-" + record.id : parent == nil ? rootMessage ?? lastPersonMessage(chat) : nil
     record = pack(record, root: .person(thread: chat, message: message ?? "handoff-" + (record.rootID ?? record.id)),
                   sender: how == .user ? nil : agent.hub.run(for: chat))
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
     note("Handed “\(String(task.prefix(60)))” to \(target.name)", how)
     let admitted = handoffLedger.records.first { $0.id == record.id } ?? record
-    // The hand-off is a message in the chat the task started in, from its sender.
-    postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 })
+    // The hand-off is a message in the chat the task started in, from its sender; a tag already is.
+    if mention == nil { postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 }) }
     startWaitingHandoffs()
     return handoffLedger.records.first { $0.id == record.id } ?? record
   }
@@ -397,8 +401,15 @@ extension RelayOrchestrator {
     let sender = profileName(record.from)
     let chain = (record.chain ?? [record.from]).map(profileName)
     let persona = browser.library.load(RelayPersona.self, from: team.folder(target.id) + "/persona.json")?.prompt() ?? ""
+    // A root an @tag started posts its reply in the chat; anything else goes back to its sender.
+    let back = record.mention != nil && record.parentID == nil ? "it posts in the chat, answering that message" : "it goes back to \(sender)"
+    let asked = switch record.mention {
+    case .byPerson?: "The user tagged you in the chat they see, in the message below."
+    case .byBot?: "\(sender) tagged you in the chat the user sees, in the message below."
+    case nil: "This task comes from the user's other assistants: \(AssistantHandoff.chainWords(chain))."
+    }
     var lines = [
-      "This task comes from the user's other assistants: \(AssistantHandoff.chainWords(chain)). Their permissions do not carry over: you work with only what you may use. Go ahead without asking first; when a step needs the user's OK, Serein shows them a card itself and you carry on with their answer.",
+      asked + " No one else's permissions carry over: you work with only what you may use. Go ahead without asking first; when a step needs the user's OK, Serein shows them a card itself and you carry on with their answer.",
       "You are \(target.name), one of the user's assistants in Serein. You can use: \(AssistantPlace.words(scope.destinations)).",
     ]
     if !persona.isEmpty { lines.append(persona) }
@@ -416,10 +427,10 @@ extension RelayOrchestrator {
           + "\nNobody fits: put {\"new\": {name, job, can_use}} in `to`, and it is made for this task.")
     }
     guard !briefed else {
-      lines.append("Your task, the person's own words and what the team knows so far are in the packet with this message. When you are done, call room_report; it goes back to \(sender).")
+      lines.append("Your task, the person's own words and what the team knows so far are in the packet with this message. When you are done, call room_report; \(back).")
       return lines.joined(separator: "\n\n")
     }
-    lines.append("When you are done, reply with the result in a few sentences; it goes back to \(sender).")
+    lines.append("When you are done, reply with the result in a few sentences; \(back).")
     lines.append("The task:\n" + record.task)
     return lines.joined(separator: "\n\n")
   }
@@ -452,6 +463,10 @@ extension RelayOrchestrator {
     guard let record = handoffLedger.running(thread: run.spec.threadID) else { return true }
     let lastReply = run.reportedSummary ?? run.transcript.last(where: { $0.role == "assistant" && !$0.text.isEmpty })?.text ?? ""
     let outcome = run.record.outcome
+    // "@Writer can you…" in its reply tags Writer, whose turn it then waits for (`GroupTurn`).
+    if outcome == .done, let target = team.profiles.first(where: { $0.id == record.to }) {
+      channelSay(lastReply, from: target, parent: record, chat: record.threadID, readOutside: !run.steps.isEmpty, addressed: true)
+    }
     // Something its target handed on is still out, or its result has yet to reach this chat: it
     // stays open and ends with the turn those results start (`deliverChainResults`).
     if outcome == .done && !handoffLedger.closable(record.id) {
@@ -485,10 +500,14 @@ extension RelayOrchestrator {
   func deliverHandoffReports() {
     guard !state.paused else { return }
     deliverChainResults()
+    // A turn an @tag started answered in the chat already: its report is the answer, no wake.
+    for tagged in handoffLedger.records where tagged.mention != nil && tagged.parentID == nil && !tagged.isOpen && tagged.reported != true {
+      _ = claimReport(tagged.id, landed: true)
+    }
     // The wake turn is keyed by the report: a replay finds it claimed and starts nothing.
     guard !working,
       let due = handoffLedger.records.first(where: {
-        ($0.state == .done || $0.state == .failed) && $0.reported != true && $0.parentID == nil
+        ($0.state == .done || $0.state == .failed) && $0.reported != true && $0.parentID == nil && $0.mention == nil
           && $0.from == team.activeID && $0.askedIn == threadID
       }),
       let record = claimReport(due.id, landed: true)

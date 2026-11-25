@@ -282,7 +282,14 @@ public enum TeamMention: Equatable, Sendable {
   public static func parse(_ text: String, in team: RelayTeam) -> (mention: TeamMention, rest: String)? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.hasPrefix("@") else { return nil }
-    let body = String(trimmed.dropFirst())
+    let body = trimmed.dropFirst()
+    guard let best = longest(body, in: team) else { return nil }
+    let rest = String(body[best.end...]).trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
+    return (best.mention, rest)
+  }
+
+  /// The roster name `body` opens with: the longest wins, and an assistant wins a tie with a team.
+  static func longest(_ body: Substring, in team: RelayTeam) -> (mention: TeamMention, end: String.Index)? {
     var candidates: [(TeamMention, String)] = team.profiles.map { (TeamMention.assistant($0.id), $0.name) }
     for group in team.groups ?? [] {
       candidates.append((.team(group.id), group.name + " team"))
@@ -296,21 +303,19 @@ public enum TeamMention: Equatable, Sendable {
       let wins = best.map { length > $0.length || (length == $0.length && $0.mention.isTeam && !mention.isTeam) } ?? true
       if wins { best = (mention, length, range.upperBound) }
     }
-    guard let best else { return nil }
-    let rest = String(body[best.end...]).trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
-    return (best.mention, rest)
+    return best.map { ($0.mention, $0.end) }
   }
 
   /// Where `name` starts in `text` as a whole word (case-insensitive), or nil.
   static func find(_ name: String, in text: String) -> String.Index? {
     var from = text.startIndex
     while let range = text.range(of: name, options: .caseInsensitive, range: from..<text.endIndex) {
-      if boundary(text, at: range.upperBound) { return range.lowerBound }
+      if boundary(text[...], at: range.upperBound) { return range.lowerBound }
       from = range.upperBound
     }
     return nil
   }
-  private static func boundary(_ text: String, at index: String.Index) -> Bool {
+  private static func boundary(_ text: Substring, at index: String.Index) -> Bool {
     guard index < text.endIndex else { return true }
     let next = text[index]
     return next.isWhitespace || next.isPunctuation
@@ -318,6 +323,51 @@ public enum TeamMention: Equatable, Sendable {
   private var isTeam: Bool {
     if case .team = self { return true }
     return false
+  }
+}
+
+/// One channel: every "@Name" in a message, anywhere in it, names a bot who takes a turn there.
+public enum GroupTurn {
+  /// Each tag that names someone on the roster: an "@" at the start or after a character that is
+  /// not a letter or digit, then the longest roster name. A team stands for its responder.
+  /// Unknown names are plain text.
+  public static func tags(in text: String, team: RelayTeam) -> [(id: String, range: Range<String.Index>)] {
+    var out: [(id: String, range: Range<String.Index>)] = []
+    var from = text.startIndex
+    while let at = text[from...].firstIndex(of: "@") {
+      let after = text.index(after: at)
+      let opens = at == text.startIndex || !text[text.index(before: at)].isLetter && !text[text.index(before: at)].isNumber
+      guard opens, let hit = TeamMention.longest(text[after...], in: team) else {
+        from = after
+        continue
+      }
+      let id: String?
+      switch hit.mention {
+      case .assistant(let profile): id = profile
+      case .team(let group): id = team.teams.first { $0.id == group }?.responder(for: text, profiles: team.profiles)
+      }
+      if let id { out.append((id, at..<hit.end)) }
+      from = hit.end
+    }
+    return out
+  }
+
+  /// Who takes a turn, in the order they are tagged, each once. `addressed` keeps only tags with
+  /// words after them, so "thanks @Writer" in a bot's reply sends nothing but "@Writer can you…" does.
+  public static func speakers(of text: String, in team: RelayTeam, addressed: Bool = false) -> [String] {
+    var seen: [String] = []
+    for tag in tags(in: text, team: team) where !seen.contains(tag.id) {
+      if addressed, !words(of: String(text[tag.range.upperBound...]), in: team).contains(where: \.isLetter) { continue }
+      seen.append(tag.id)
+    }
+    return seen
+  }
+
+  /// The message without its tags; empty for a bare "@Writer".
+  public static func words(of text: String, in team: RelayTeam) -> String {
+    var rest = text
+    for tag in tags(in: text, team: team).reversed() { rest.removeSubrange(tag.range) }
+    return rest.trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
   }
 }
 
@@ -610,6 +660,20 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   /// and `packet` nil when its packet could not be sealed, so nothing trusts a missing file.
   public var room: String? = nil
   public var packet: Int? = nil
+  /// Started by an @tag in the channel, not a hand-off: the tagging message stands for its post,
+  /// its reply answers that message, and it never wakes its sender. nil for a hand-off.
+  public var mention: Mention? = nil
+  public enum Mention: Codable, Equatable, Sendable {
+    case byPerson(message: String)
+    case byBot(post: String)
+    /// The channel message that tagged it.
+    public var post: String {
+      switch self {
+      case .byPerson(let message): message
+      case .byBot(let post): post
+      }
+    }
+  }
 
   /// `parent`: the hand-off whose target sends this one as part of its own task.
   public init(

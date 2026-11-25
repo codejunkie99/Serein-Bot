@@ -112,6 +112,7 @@ public enum FormalCheck {
   public static let machines: [(String, @Sendable () -> FormalResult)] = [
     ("chain", { ChainMachine.machine.check() }),
     ("chain-caps", { ChainMachine.capMachine.check() }),
+    ("mentions", { ChainMachine.mentionMachine.check() }),
     ("report", { ReportMachine.machine.check() }),
     ("staffing", { StaffingMachine.machine.check() }),
     ("packet", { PacketMachine.machine.check() }),

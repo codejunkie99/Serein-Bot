@@ -29,7 +29,20 @@ public enum RelayTools {
   ]).union(assistantNames).union(researchNames).union(MacFiles.toolNames).union(AppPlaces.toolNames)
   /// Offered only while the assistant has someone to hand work to (the helper's `--team`): the
   /// active one in Serein's run, a hand-off's target in its own. The host checks again on every call.
-  public static let teamNames: Set<String> = ["assistant_handoff"]
+  public static let teamNames: Set<String> = ["assistant_handoff", "channel_say"]
+  /// The chat's one channel: any assistant posts there and tags others by name, who each take a
+  /// turn there (`GroupTurn`).
+  public static var channelSayTool: [String: Any] {
+    [
+      "name": "channel_say",
+      "description": "Post a message in the chat the person sees, under your name. Tag another assistant with @Name anywhere in it, and that assistant takes a turn: its reply posts in the chat, answering your message. When you work on a hand-off, those replies also come back to you before you finish. Use it to ask a teammate something in the open; use assistant_handoff to give one a task of its own. You can't tag yourself or an assistant that already holds this work. At most 600 characters show.",
+      "inputSchema": [
+        "type": "object",
+        "properties": ["text": ["type": "string"]],
+        "required": ["text"], "additionalProperties": false,
+      ],
+    ]
+  }
   public static var handoffTool: [String: Any] {
     [
       "name": "assistant_handoff",

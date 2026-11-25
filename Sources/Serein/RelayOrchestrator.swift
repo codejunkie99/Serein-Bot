@@ -1383,6 +1383,8 @@ import SereinCore
     // The person's next message replaces the connect cards; a paired app's request does not.
     if userMessage { clearConnectCards() }
     stopNotice = nil
+    // "@Writer and @Scout, …": each one tagged takes a turn in this chat (RelayGroupTurn.swift).
+    if userMessage, attachments.isEmpty, trail == nil, page == nil, startGroupTurn(prompt) { return true }
     // “@Writer …” goes to Writer's Main chat and “@Trip …” to that team's responder: the person's
     // own words only, never automation (TeamMention).
     if userMessage, TeamMention.parse(prompt, in: team) != nil {
@@ -2338,6 +2340,8 @@ import SereinCore
       objectWillChange.send()
       // This turn's receipts, system lines and answers land on its reply (RelayAssistantTools.swift).
       if run.spec.relay { landTurnFacts(run) }
+      // Its reply tagged others ("@Writer can you…"): each takes a turn (RelayGroupTurn.swift).
+      if run.spec.relay { tagFromReply(run) }
       // The person's third such request: the reply offers a routine (RelayRoutineOffers.swift).
       if run.spec.relay { offerRoutineIfDue(run) }
       // A turn in the active assistant's chat (the person's, a link's or routine's, a late

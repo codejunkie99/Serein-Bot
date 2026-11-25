@@ -43,8 +43,9 @@ extension RelayOrchestrator {
     var post = AgentMessage(role: "assistant", text: "", notice: true)
     post.id = HandoffReport.postID(record.id)
     post.from = record.to
-    post.re = Self.handoffPostID(record.id)
-    post.mentions = [record.from]
+    // A tagged turn answers the message that tagged it; the person who tagged is not a bot to tag.
+    post.re = record.mention?.post ?? Self.handoffPostID(record.id)
+    if case .byPerson = record.mention {} else { post.mentions = [record.from] }
     if let words = channelWords(record.result ?? "", personal: agent.readsPersonal(thread: record.threadID), into: origin) {
       post.text = words
       if let report = rooms.report(record.id), !report.byHost {
@@ -79,7 +80,7 @@ extension RelayOrchestrator {
 
   /// `text` capped for the channel, or nil when it carries personal data and the chat's mark
   /// cannot be saved (its words are withheld).
-  private func channelWords(_ text: String, personal: Bool, into origin: String) -> String? {
+  func channelWords(_ text: String, personal: Bool, into origin: String) -> String? {
     guard !personal || agent.markPersonalRead(thread: origin) else { return nil }
     return AgentPrivacy.redact(text, limit: Self.channelCap)
   }

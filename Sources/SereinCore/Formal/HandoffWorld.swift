@@ -43,12 +43,16 @@ struct HandoffWorld: Encodable, Equatable {
     var finishes: Bool
     /// Most hand-offs the person's assistant starts (roots).
     var roots: Int
+    /// One channel (`GroupTurn`, RelayGroupTurn.swift): the person tags everyone once, and every
+    /// run that ends done tags everyone else; a tagged root never wakes its sender.
+    var mentions = false
   }
 
   /// What any step or property reads; times and result words are left out, since nothing reads them.
   var key: String {
     let rows = ledger.records.map { r in
-      [r.id, r.from, r.to, r.state.rawValue, r.reported == true ? "R" : "", r.parentID ?? "", r.createdAt == Self.base ? "" : "L"]
+      [r.id, r.from, r.to, r.state.rawValue, r.reported == true ? "R" : "", r.parentID ?? "", r.createdAt == Self.base ? "" : "L",
+       r.mention == nil ? "" : "M"]
         .joined(separator: ",")
     }
     let counts = [claims, readerTurns, wakes].map { $0.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",") }
@@ -78,7 +82,7 @@ struct HandoffWorld: Encodable, Equatable {
 
   /// `sendHandoff` after the `assistant_handoff` tool's checks: the chain rule for a part, then the
   /// sender's open limit and the reader's daily one. nil when refused.
-  func sending(from sender: String, to target: String, parent: AssistantHandoff?) -> HandoffWorld? {
+  func sending(from sender: String, to target: String, parent: AssistantHandoff?, mention: AssistantHandoff.Mention? = nil) -> HandoffWorld? {
     if let parent, ledger.chainRefusal(parent: parent, fromName: sender, to: target, toName: target) != nil { return nil }
     guard ledger.refusal(from: sender, fromName: sender, to: target, toName: target, now: now) == nil else { return nil }
     var next = self
@@ -86,7 +90,9 @@ struct HandoffWorld: Encodable, Equatable {
     let record = AssistantHandoff(
       id: id, from: sender, to: target, task: "task", threadID: Self.seat(id),
       askedIn: parent?.threadID ?? Self.thread(sender), team: "", teamName: "All assistants", createdAt: now, parent: parent)
-    next.ledger.admit(record, now: now)
+    var tagged = record
+    tagged.mention = mention
+    next.ledger.admit(tagged, now: now)
     return next
   }
 
@@ -163,13 +169,38 @@ struct HandoffWorld: Encodable, Equatable {
   /// first (`postReport`, the asking chat is idle): one step, so a relaunch can fall between the
   /// post and the claim (`claimReport(landed:)`).
   func waking(_ id: String) -> HandoffWorld? {
-    guard let r = record(id), r.parentID == nil, r.state == .done || r.state == .failed, r.reported != true else { return nil }
+    guard let r = record(id), r.parentID == nil, r.mention == nil, r.state == .done || r.state == .failed, r.reported != true
+    else { return nil }
     guard posted.contains(HandoffReport.postID(id)) else {
       var next = self
       next.post(id, busy: false)
       return next
     }
     return wake(id)
+  }
+
+  /// `finishHandoff` for a run that ended done: `channelSay(addressed:)` tags everyone its reply
+  /// names, never itself nor one its tag still holds, each through the chain rules, then it ends.
+  func tagging(_ thread: String, _ assistants: [String], rows: Int) -> HandoffWorld {
+    var next = self
+    if let p = ledger.running(thread: thread) {
+      for to in assistants where to != p.to && next.ledger.records.count < rows {
+        guard !next.ledger.records.contains(where: { $0.isOpen && $0.mention != nil && $0.from == p.to && $0.to == to && $0.parentID == p.id })
+        else { continue }
+        if let n = next.sending(from: p.to, to: to, parent: p, mention: .byBot(post: "say-" + p.id)) { next = n }
+      }
+    }
+    return next.finishing(thread, done: true)
+  }
+
+  /// `deliverHandoffReports` for a tagged root that ended: its post lands, then it is claimed with
+  /// no wake turn (`claimReport(landed: true)`), since the reply in the chat is the answer.
+  func quieting(_ id: String) -> HandoffWorld? {
+    guard let r = record(id), r.mention != nil, r.parentID == nil, !r.isOpen, r.reported != true else { return nil }
+    var next = self
+    next.post(id, busy: heldPosts)
+    if next.posted.contains(HandoffReport.postID(id)) { _ = next.claim(id) }
+    return next == self ? nil : next
   }
 
   /// A replayed delivery of hand-off `id`: it holds only the id, so `claimReport` alone decides.
@@ -263,11 +294,12 @@ struct HandoffWorld: Encodable, Equatable {
       var out: [(label: String, next: HandoffWorld)] = []
       let lead = c.assistants[0]
       if w.ledger.records.count < c.rows {
-        for to in c.assistants.dropFirst() where w.ledger.records.filter({ $0.parentID == nil }).count < c.roots {
+        for to in c.assistants.dropFirst() where !c.mentions && w.ledger.records.filter({ $0.parentID == nil }).count < c.roots {
           if let n = w.sending(from: lead, to: to, parent: nil) { out.append(("\(lead) hands h\(w.ledger.records.count + 1) to \(to)", n)) }
         }
-        // A part is sent from inside the run of the hand-off that holds the chat.
-        for p in w.ledger.records where p.state == .running && w.live.contains(p.threadID) {
+        // A part is sent from inside the run of the hand-off that holds the chat (in the mention
+        // storm, only by tags, so the caps alone bound it).
+        for p in w.ledger.records where !c.mentions && p.state == .running && w.live.contains(p.threadID) {
           for to in c.assistants where to != p.to {
             if let n = w.sending(from: p.to, to: to, parent: p) {
               out.append(("\(p.to) hands part h\(w.ledger.records.count + 1) of \(p.id) to \(to)", n))
@@ -287,6 +319,18 @@ struct HandoffWorld: Encodable, Equatable {
         }
         if !w.held.isEmpty { out.append(("the busy chat goes idle and held posts land", w.landing())) }
         if c.replays { for r in w.ledger.records { out.append(("replayed delivery of \(r.id)", w.replaying(r.id))) } }
+      }
+      if c.mentions {
+        // One person message tags the first `roots` others; each tag is a root (`startGroupTurn`).
+        if !w.ledger.records.contains(where: { $0.parentID == nil && $0.mention != nil }) {
+          var n = w
+          for to in c.assistants.dropFirst().prefix(c.roots) {
+            if let m = n.sending(from: lead, to: to, parent: nil, mention: .byPerson(message: "m")) { n = m }
+          }
+          if n != w { out.append(("the person tags \(c.assistants.dropFirst().prefix(c.roots).joined(separator: " and "))", n)) }
+        }
+        if c.finishes { for t in w.live { out.append(("the run in \(t) ends done, tagging everyone", w.tagging(t, c.assistants, rows: c.rows))) } }
+        for r in w.ledger.records { if let n = w.quieting(r.id) { out.append(("\(r.id)'s tagged reply lands with no wake", n)) } }
       }
       if w.ledger.records.contains(where: \.isOpen) { out.append(("Stop Everything", w.stoppingEverything())) }
       if w.crashes < c.crashes && !(w.live.isEmpty && w.held.isEmpty) { out.append(("Serein quits mid-run", w.crashing())) }

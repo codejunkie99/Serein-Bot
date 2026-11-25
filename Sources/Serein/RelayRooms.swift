@@ -296,8 +296,9 @@ extension RelayOrchestrator {
   /// `Staffing.decide` for `sender`, with no card. The seat is `parent`'s, for a hand-off's own run;
   /// else the lead of the room `chat`'s turn roots, opened now as `pack` would open it, so the make
   /// budget is the root's. Returns the room too, for the verdict's caller to apply.
+  /// `message`: the person's message the room roots at, when it is not the chat's newest yet.
   func staff(_ wanted: Staffing.Wanted, sender: RelayProfile, parent: AssistantHandoff?, chat: String,
-             readOutside: Bool) -> (verdict: Staffing.Verdict, room: Workroom.ID) {
+             readOutside: Bool, message: String? = nil) -> (verdict: Staffing.Verdict, room: Workroom.ID) {
     let room: Workroom
     let seat: Workroom.Seat
     if let parent, let id = parent.room {
@@ -310,7 +311,7 @@ extension RelayOrchestrator {
         ?? Workroom.Seat(id: "h-" + parent.id, who: sender.id, thread: parent.threadID,
                          reach: room.ceiling.narrowed(to: sender.scope), parent: room.seats[0].id, handoff: parent.id)
     } else {
-      let root = Workroom.Root.person(thread: chat, message: lastPersonMessage(chat) ?? "turn-" + UUID().uuidString)
+      let root = Workroom.Root.person(thread: chat, message: message ?? lastPersonMessage(chat) ?? "turn-" + UUID().uuidString)
       let id = rooms.open(root) { newRoom(nil, root: root, lead: sender.id, thread: chat, now: Date()) }
       room = rooms.room(id) { newRoom(id, root: root, lead: sender.id, thread: chat, now: Date()) }
       seat = room.seats[0]

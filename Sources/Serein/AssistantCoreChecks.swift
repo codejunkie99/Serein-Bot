@@ -107,6 +107,7 @@ enum AssistantCoreChecks {
     ("roomFiles", AssistantCoreChecks.roomFiles),
     ("seatPacket", AssistantCoreChecks.seatPacket),
     ("channel", AssistantCoreChecks.channel),
+    ("groupTurn", AssistantCoreChecks.groupTurn),
     ("staffing", AssistantCoreChecks.staffing),
     ("keyFailure", AssistantCoreChecks.keyFailure),
     ("secureField", AssistantCoreChecks.secureField),

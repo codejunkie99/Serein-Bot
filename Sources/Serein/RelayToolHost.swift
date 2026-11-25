@@ -172,6 +172,7 @@ import SereinCore
     // Teams and hand-offs are staffed with no card (`Staffing.decide`, RelayTeams.swift).
     case "team_make": return try await makeTeam(a)
     case "assistant_handoff": return try await handOff(a)
+    case "channel_say": return try await channelSay(a)
     // One assistant at a time, judged by the admission rule; each change lands as a receipt
     // with Undo (RelayAssistantTools.swift).
     case "assistant_list": return listAssistants()

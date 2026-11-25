@@ -1756,7 +1756,9 @@ struct BrowserTask {
     if RelayTools.teamNames.contains(raw), let relay = RelayOrchestrator.shared,
       let run = relay.agent.hub.runs.first(where: { $0.taskID == id }), run.spec.initiator == .handoff
     {
-      return try await relay.tools.handOff(request["arguments"] as? [String: Any] ?? [:], handoffChat: run.spec.threadID)
+      let args = request["arguments"] as? [String: Any] ?? [:]
+      if raw == "channel_say" { return try await relay.tools.channelSay(args, handoffChat: run.spec.threadID) }
+      return try await relay.tools.handOff(args, handoffChat: run.spec.threadID)
     }
     // A hand-off's own run and its team room: the host finds the seat from the run (Rooms).
     if RelayTools.roomNames.contains(raw) {

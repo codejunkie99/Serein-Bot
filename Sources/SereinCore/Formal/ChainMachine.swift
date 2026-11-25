@@ -12,7 +12,26 @@ enum ChainMachine {
     assistants: ["serein", "a", "b", "c", "d"], rows: HandoffLedger.maxPerRoot + 1, crashes: 0, expiry: false,
     replays: false, finishes: false, roots: 1)
 
+  /// The mention storm: the person tags both bots and every run that ends done tags everyone else,
+  /// results turns too. Rows are bounded past what the caps allow, so only the shipped caps end it.
+  static let mentionConfig = HandoffWorld.Config(
+    assistants: ["serein", "a", "b"], rows: HandoffLedger.maxPerRoot + 1, crashes: 1, expiry: false, replays: false,
+    finishes: true, roots: 1, mentions: true)
+
   static var machine: FormalMachine<HandoffWorld> { machine(config, name: "chain", bounds: "4 assistants, 1 root, 4 rows, 1 relaunch, 1 day") }
+  static var mentionMachine: FormalMachine<HandoffWorld> {
+    var m = machine(mentionConfig, name: "mentions", bounds: "3 assistants, 1 person message tagging a, every done run tags everyone, \(HandoffLedger.maxPerRoot + 1) rows, 1 relaunch")
+    m.invariants += [
+      ("nobody tags itself", { w in w.ledger.records.allSatisfy { $0.from != $0.to } }),
+      ("a tagged root never gets a wake turn", { w in w.wakes.keys.allSatisfy { id in w.record(id)?.mention == nil } }),
+      ("each reply is posted at most once", { w in Set(w.posted).count == w.posted.count }),
+      ("a report is claimed at most once", { w in w.claims.values.allSatisfy { $0 <= 1 } }),
+    ]
+    m.eventually.append(("every tagged reply lands and is claimed", { w in
+      w.ledger.records.allSatisfy { !$0.isOpen && $0.reported == true }
+    }))
+    return m
+  }
   static var capMachine: FormalMachine<HandoffWorld> {
     machine(capConfig, name: "chain-caps", bounds: "5 assistants, 1 root, \(HandoffLedger.maxPerRoot + 1) rows, sends only")
   }
