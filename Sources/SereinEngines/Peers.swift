@@ -54,17 +54,13 @@ public struct PeerReply: Sendable, Equatable {
   }
 }
 
-/// Runs the team tools (`PeerTools`): who may call whom, how many run at once, how long a call
-/// waits, and stopping a whole tree of calls.
+/// Runs the team tools (`PeerTools`): who may call whom, when each callee starts, how long a call
+/// waits, and stopping a whole tree of calls. Memory paces how many run at once: every callee start
+/// waits for room like any CLI start (`Engines.waitForRoom`).
 public actor Peers {
   public struct Limits: Sendable {
-    /// A task is depth 0. Depth 1 may call once more; depth 2 has no team tools.
+    /// A task is depth 0. Depth 1 may call once more, one call at a time; depth 2 has no team tools.
     public var maxDepth = 2
-    /// Callee turns running at once for one top task's own calls...
-    public var perTask = 4
-    /// ...and across Serein. A callee's own calls run one at a time outside both caps, so they
-    /// never wait on slots their caller holds.
-    public var overall = 6
     /// Longest a call waits inline: the caller CLI's tool-call limit less a margin, at most this.
     public var inlineCap: Duration = .seconds(100)
     public var inlineMargin: Duration = .seconds(5)
@@ -249,7 +245,7 @@ public actor Peers {
     return index
   }
 
-  /// Starts queued jobs, oldest first, while the caps allow. A CLI past its limit starts none until it resets.
+  /// Starts queued jobs, oldest first. A CLI past its limit starts none until it resets.
   private func pump() {
     let now = Date()
     for id in order {
@@ -261,13 +257,7 @@ public actor Peers {
         }
         runs[id]!.jobs[index].state = .queued
         if let folder = runs[id]!.jobs[index].shares, writing(in: folder) { continue }
-        if run.owner.depth > 0 {
-          guard working(where: { $0.owner.caller.thread == run.owner.caller.thread }) == 0 else { break }
-        } else {
-          guard working(where: { $0.owner.depth == 0 }) < limits.overall,
-            working(where: { $0.owner.depth == 0 && $0.owner.root == run.owner.root }) < limits.perTask
-          else { break }
-        }
+        if run.owner.depth > 0, working(where: { $0.owner.caller.thread == run.owner.caller.thread }) > 0 { break }
         runs[id]!.jobs[index].state = .working
         runs[id]!.jobs[index].work = Task { await self.run(id, index) }
       }
@@ -275,11 +265,11 @@ public actor Peers {
   }
 
   private func working(where match: (Run) -> Bool) -> Int {
-    runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter { $0.state == .working }.count }
+    runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter(\.state.running).count }
   }
 
   private func writing(in folder: URL) -> Bool {
-    runs.values.contains { $0.jobs.contains { $0.state == .working && $0.shares == folder } }
+    runs.values.contains { $0.jobs.contains { $0.state.running && $0.shares == folder } }
   }
 
   private func run(_ id: String, _ index: Int) async {
@@ -335,6 +325,8 @@ public actor Peers {
 
   private func saw(_ event: EngineEvent, _ id: String, _ index: Int) {
     if case .limitReached(let limit) = event { runs[id]?.jobs[index].limit = limit }
+    guard runs[id]?.jobs[index].state.running == true else { return }
+    if case .waiting = event { runs[id]!.jobs[index].state = .waitingForMemory } else { runs[id]!.jobs[index].state = .working }
   }
 
   /// `cli` reached its limit: its jobs wait for the reset it named, else for `wait`, then start by themselves.
@@ -662,4 +654,6 @@ extension PeerJobState {
     if case .limited = self { return true }
     return self == .queued
   }
+  /// Started: its turn runs, or its CLI waits for memory to start.
+  fileprivate var running: Bool { self == .working || self == .waitingForMemory }
 }

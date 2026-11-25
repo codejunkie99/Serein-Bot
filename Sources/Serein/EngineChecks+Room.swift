@@ -278,7 +278,7 @@ extension AssistantCoreChecks {
   }
 }
 
-private final class RoomReading: @unchecked Sendable {
+final class RoomReading: @unchecked Sendable {
   private let lock = NSLock()
   private var current: RoomSnapshot?
   init(_ value: RoomSnapshot?) { current = value }

@@ -59,12 +59,15 @@ extension AssistantCoreChecks {
       let self_ = await peers.handle(.ask(agents: [.codex], question: "q"), task: "top")
       notes.check(!self_.isError && self_.text.hasPrefix("Blocked: ") && self_.text.contains("already in this chain"), "An agent cannot call its own CLI")
 
+      // Room for two CLIs on an 8 GB Mac: floor 819 MB, two 700 MB shares, 100 MB over.
+      world.memory.value = RoomSnapshot(totalBytes: 8 << 30, availableBytes: 2_320 * EngineRoom.mb)
       let held = await peers.handle(.burst((1...6).map { PeerJob(agent: .grok, prompt: "HOLD \($0)") }), task: "top")
       notes.check(
-        held.text.components(separatedBy: "grok: working").count - 1 == 4
-          && held.text.components(separatedBy: "queued, not started yet").count - 1 == 2 && held.text.contains("still working")
+        held.text.components(separatedBy: "grok: working").count - 1 == 2
+          && held.text.components(separatedBy: "grok: waiting for memory").count - 1 == 4 && held.text.contains("still working")
           && held.text.contains("Call peer_wait"),
-        "A burst runs four at once for one task and queues the rest, and a call that outlasts its wait says how to keep waiting")
+        "A burst runs as many at once as memory has room for and the rest say they wait for memory, and a call that outlasts its wait says how to keep waiting")
+      world.memory.value = PeerWorld.plenty
       let stopped = await peers.handle(.stop(run: nil), task: "top")
       notes.check(stopped.text.components(separatedBy: "grok: stopped").count - 1 == 6, "Stopping ends the running jobs and the queued ones")
       notes.check(await eventually { world.processes.spawned.allSatisfy { !$0.groupAlive } }, "Every stopped callee's process group is gone")
@@ -93,7 +96,7 @@ extension AssistantCoreChecks {
       let nested = await peers.handle(.burst([PeerJob(agent: .claude, prompt: "HOLD a"), PeerJob(agent: .opencode, prompt: "HOLD b")]), task: grok)
       notes.check(
         nested.text.contains("claude: working") && nested.text.contains("opencode: queued"),
-        "A callee's own calls run one at a time, outside its caller's slots")
+        "A callee's own calls run one at a time")
       notes.check(world.host.callees.first { $0.cli == .claude }?.mayCall == false, "The second level down is not given the team tools")
       guard let claude = world.host.task(of: .claude) else { return notes.check(false, "The nested callee got a browser task") }
       let deep = await peers.handle(.ask(agents: [.opencode], question: "q"), task: claude)
@@ -155,9 +158,12 @@ extension AssistantCoreChecks {
   }
 
   private struct PeerWorld: Sendable {
+    static let plenty = RoomSnapshot(totalBytes: 64 << 30, availableBytes: 48 << 30)
     let peers: Peers
     let host: FakePeerHost
     let processes: PeerProcesses
+    /// The memory reading every callee start sees.
+    let memory: RoomReading
   }
 
   private static func peerWorld(_ check: Check, _ body: @escaping @Sendable (PeerWorld, PeerNotes) async throws -> Void) throws {
@@ -165,11 +171,14 @@ extension AssistantCoreChecks {
     defer { try? FileManager.default.removeItem(at: records.root) }
     let processes = PeerProcesses()
     let drivers: [any Driver] = [HarnessDriver.claude, .codex, .grok, .opencode].map(PeerScript.init)
-    let engines = Engines(drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600))
+    let memory = RoomReading(PeerWorld.plenty)
+    let engines = Engines(
+      drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600),
+      room: EngineRoom(sample: { memory.value }, footprint: { _ in nil }, tick: .milliseconds(5)))
     var limits = Peers.Limits()
     limits.inlineCap = .milliseconds(400)
     let host = FakePeerHost()
-    let world = PeerWorld(peers: Peers(engines: engines, host: host, limits: limits), host: host, processes: processes)
+    let world = PeerWorld(peers: Peers(engines: engines, host: host, limits: limits), host: host, processes: processes, memory: memory)
     let done = DispatchSemaphore(value: 0)
     let box = PeerResult()
     let notes = PeerNotes()
