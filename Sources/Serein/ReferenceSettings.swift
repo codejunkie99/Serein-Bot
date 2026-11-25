@@ -176,8 +176,6 @@ struct ReferenceSettings: View {
     switch selected {
     case "Agents": agents
     case "Relay": RelaySettings(agent: agent)
-    case "Connections": ConnectionSettings()
-    case "Plugins": PluginSettings()
     case "Computer": ComputerSettings()
     case "Talking": talking
     case "Privacy": privacy

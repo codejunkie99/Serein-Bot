@@ -92,11 +92,12 @@ public actor Peers {
     var role: String?
     var prompt: String
     var thread: ThreadKey
+    var accessOverride: Access? = nil
     var state: PeerJobState = .queued
     var work: Task<Void, Never>?
   }
 
-  private enum Kind { case ask, bridge, burst }
+  private enum Kind { case ask, bridge, burst, swarm }
 
   private struct Run {
     var id: String
@@ -104,10 +105,13 @@ public actor Peers {
     var owner: Seat
     var ownerTask: String
     var jobs: [Job] = []
-    /// A bridge decides when it is done; an ask or burst is done when every job is.
+    /// A bridge or swarm decides when it is done; an ask or burst is done when every job is.
     var finished = false
     var approved = false
-    var settled: Bool { kind == .bridge ? finished : jobs.allSatisfy(\.state.settled) }
+    var board: SwarmBoard? = nil
+    var plan: SwarmPlan? = nil
+    var coordinatorTask: Task<Void, Never>? = nil
+    var settled: Bool { (kind == .bridge || kind == .swarm) ? finished : jobs.allSatisfy(\.state.settled) }
   }
 
   private var seats: [String: Seat] = [:]
@@ -130,9 +134,18 @@ public actor Peers {
   }
 
   /// The caller's run stopped or finished: every run it started stops, and theirs in turn.
+  /// Settled runs for this caller are evicted so `Peers` does not grow without bound.
   public func callerEnded(_ thread: ThreadKey) {
     seats = seats.filter { $0.value.caller.thread != thread }
     for id in order where runs[id]?.owner.caller.thread == thread { stop(id) }
+    let evicted = Set(order.filter { id in
+      guard let r = runs[id] else { return true }
+      return r.owner.caller.thread == thread && r.settled
+    })
+    if !evicted.isEmpty {
+      for id in evicted { runs.removeValue(forKey: id) }
+      order.removeAll { evicted.contains($0) }
+    }
   }
 
   public func handle(_ call: PeerCall, task: String) async -> PeerReply {
@@ -151,7 +164,14 @@ public actor Peers {
     case .bridge(let writer, let reviewer, let brief, let rounds):
       if let blocked = blocked(seat, [writer, reviewer]) { return PeerReply(blocked.text) }
       let id = open(.bridge, seat, task, [])
-      Task { await self.bridge(id, writer: writer, reviewer: reviewer, brief: brief, rounds: rounds) }
+      runs[id]?.coordinatorTask = Task { await self.bridge(id, writer: writer, reviewer: reviewer, brief: brief, rounds: rounds) }
+      return await answer([id], within: window)
+    case .swarm(let spec):
+      // Swarms allow same-CLI workers and verifiers so single-subscription users are never locked out;
+      // only recursion depth is bounded.
+      if let blocked = blockedDepth(seat) { return PeerReply(blocked.text) }
+      let id = open(.swarm, seat, task, [])
+      runs[id]?.coordinatorTask = Task { await self.swarm(id, spec: spec) }
       return await answer([id], within: window)
     case .wait(let asked, let seconds):
       let mine = order.filter { runs[$0]?.owner.caller.thread == seat.caller.thread }
@@ -170,13 +190,18 @@ public actor Peers {
 
   // MARK: Rules
 
-  /// A normal result with routes, never `isError` (R17): the call is the one thing that does not run.
-  private func blocked(_ seat: Seat, _ agents: [HarnessDriver]) -> Blocked? {
+  private func blockedDepth(_ seat: Seat) -> Blocked? {
     if seat.depth >= limits.maxDepth {
       return Blocked(
         "team tools stop \(limits.maxDepth) calls deep, and this agent was called that deep",
         routes: .init("do this part yourself", "put what is left in your reply, and the agent that called you hands it on"))
     }
+    return nil
+  }
+
+  /// A normal result with routes, never `isError` (R17): the call is the one thing that does not run.
+  private func blocked(_ seat: Seat, _ agents: [HarnessDriver]) -> Blocked? {
+    if let depthBlocked = blockedDepth(seat) { return depthBlocked }
     let looped = agents.filter(seat.chain.contains)
     if !looped.isEmpty {
       let chain = seat.chain.map(\.rawValue).joined(separator: " > ")
@@ -205,9 +230,12 @@ public actor Peers {
   }
 
   @discardableResult
-  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String) -> Int {
+  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String, accessOverride: Access? = nil) -> Int {
     let index = runs[id]!.jobs.count
-    runs[id]!.jobs.append(Job(agent: agent, role: role, prompt: prompt, thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)")))
+    runs[id]!.jobs.append(Job(
+      agent: agent, role: role, prompt: prompt,
+      thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)"),
+      accessOverride: accessOverride))
     return index
   }
 
@@ -243,7 +271,7 @@ public actor Peers {
     let keepGoing = await host.keepsGoing(task: owner.rootTask)
     if keepGoing { stable += " " + Self.askMark }
     let callee = PeerCallee(
-      thread: job.thread, cli: job.agent, access: owner.caller.access,
+      thread: job.thread, cli: job.agent, access: job.accessOverride ?? owner.caller.access,
       prompt: TurnPrompt(stable: stable, volatile: "", message: job.prompt, recovery: nil),
       callerTask: run.ownerTask, mayCall: mayCall)
     var task: String?
@@ -289,11 +317,115 @@ public actor Peers {
   /// Stops a run: its queued jobs never start, its running ones stop with their whole tree.
   private func stop(_ id: String) {
     guard let run = runs[id] else { return }
+    run.coordinatorTask?.cancel()
     for index in run.jobs.indices where !run.jobs[index].state.settled {
       run.jobs[index].work?.cancel()
       runs[id]!.jobs[index].state = .stopped
     }
     runs[id]!.finished = true
+    changed()
+  }
+
+  private static func readOnlyAccess(_ access: Access) -> Access {
+    switch access {
+    case .task(let folder): return .project(folder: folder, level: .review)
+    case .project(let folder, _): return .project(folder: folder, level: .review)
+    case .answer, .web, .library, .ownSetup: return access
+    }
+  }
+
+  /// Runs parallel swarm workers over a shared `SwarmBoard` with an optional read-only verifier
+  /// checking `#seq` outputs and requesting targeted revisions.
+  private func swarm(_ id: String, spec: PeerSwarmRequest) async {
+    guard let ownerAccess = runs[id]?.owner.caller.access else { return }
+    var board = SwarmBoard()
+    board.register(name: "coordinator", role: .coordinator, workspace: .inherit)
+    var workerTasks: [String: String] = [:]
+    for w in spec.workers {
+      let ws: SwarmWorkspaceMode = w.write ? .worktree : .readOnly
+      board.register(name: w.name.lowercased(), role: .worker, workspace: ws)
+      workerTasks[w.name.lowercased()] = w.task
+      let brief = "@\(w.name.lowercased()) Goal: \(spec.goal)\nYour slice: \(w.task)"
+      board.post(author: "coordinator", text: brief, kind: .brief)
+    }
+    if spec.verifier != nil {
+      board.register(name: "verifier", role: .verifier, workspace: .readOnly)
+      workerTasks["verifier"] = "Verify worker outputs"
+    }
+    var threads = [
+      SwarmPlan.Thread(id: "t-workers", title: "Execute slices", goal: spec.goal, tasks: spec.workers.map { $0.name.lowercased() }),
+    ]
+    if spec.verifier != nil {
+      threads.append(SwarmPlan.Thread(id: "t-verify", title: "Verify outputs", goal: "Check accuracy and completion", tasks: ["verifier"]))
+    }
+    runs[id]?.plan = SwarmPlan(goal: .init(title: String(spec.goal.prefix(64)), line: spec.goal), tasks: workerTasks, threads: threads)
+    runs[id]?.board = board
+
+    // Launch all workers in parallel.
+    let workerIndices: [(worker: PeerSwarmWorker, index: Int)] = spec.workers.map { w in
+      let access = w.write ? ownerAccess : Self.readOnlyAccess(ownerAccess)
+      let prompt = "Swarm Goal: \(spec.goal)\nYou are '\(w.name)'. Your slice: \(w.task)\nPost a concise completion summary."
+      let idx = add(id, agent: w.agent, role: w.name, prompt: prompt, accessOverride: access)
+      return (w, idx)
+    }
+    pump()
+    for (_, idx) in workerIndices {
+      while let state = runs[id]?.jobs[idx].state, !state.settled {
+        if Task.isCancelled || runs[id]?.finished == true { break }
+        await next(until: .now + .seconds(86_400))
+      }
+    }
+
+    var workerSeqs: [Int] = []
+    for (w, idx) in workerIndices {
+      if let state = runs[id]?.jobs[idx].state, case .answered(let answer) = state {
+        let target = spec.verifier == nil ? "@coordinator" : "@verifier"
+        let posted = board.post(author: w.name.lowercased(), text: "\(target) [done] \(answer)", kind: .done)
+        workerSeqs.append(posted.seq)
+      }
+    }
+
+    if let verifierCLI = spec.verifier, runs[id]?.finished == false && !Task.isCancelled {
+      let readOnly = Self.readOnlyAccess(ownerAccess)
+      var latestSeqs = workerSeqs
+      for round in 1...spec.rounds {
+        let refs = latestSeqs.map { "#\($0)" }.joined(separator: ", ")
+        let postsText = board.posts(seqs: latestSeqs).map { "#\($0.seq) (\($0.author)): \($0.text)" }.joined(separator: "\n\n")
+        let verifyPrompt = "You are the read-only verifier (round \(round)). Goal: \(spec.goal)\nVerify \(refs):\n\n\(postsText)\n\nIf all claims and outputs are verified, start your reply with \(PeerTools.approved). Otherwise state exact fixes needed."
+        guard case .answered(let verdict) = await turn(id, verifierCLI, "verifier, round \(round)", verifyPrompt, accessOverride: readOnly) else {
+          break
+        }
+        let vPost = board.post(author: "verifier", text: "@coordinator \(verdict)")
+        if verdict.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix(PeerTools.approved) {
+          runs[id]?.approved = true
+          break
+        }
+        if round == spec.rounds { break }
+        // Ask workers to revise once on the verifier's notes (#vPost.seq).
+        var revisedIndices: [(PeerSwarmWorker, Int)] = []
+        for w in spec.workers {
+          let access = w.write ? ownerAccess : readOnly
+          let revPrompt = "Swarm Goal: \(spec.goal)\nVerifier feedback (#\(vPost.seq)):\n\(verdict)\n\nRevise your slice (\(w.task)) and post the updated result."
+          let idx = add(id, agent: w.agent, role: "\(w.name), rev \(round)", prompt: revPrompt, accessOverride: access)
+          revisedIndices.append((w, idx))
+        }
+        pump()
+        latestSeqs = []
+        for (w, idx) in revisedIndices {
+          while let state = runs[id]?.jobs[idx].state, !state.settled {
+            if Task.isCancelled || runs[id]?.finished == true { break }
+            await next(until: .now + .seconds(86_400))
+          }
+          if let state = runs[id]?.jobs[idx].state, case .answered(let answer) = state {
+            latestSeqs.append(board.post(author: w.name.lowercased(), text: "@verifier [done] \(answer)", kind: .done).seq)
+          }
+        }
+      }
+    }
+
+    board.post(author: "coordinator", text: "[done] Swarm finished.", kind: .done)
+    runs[id]?.board = board
+    runs[id]?.finished = true
     changed()
   }
 
@@ -319,10 +451,10 @@ public actor Peers {
     changed()
   }
 
-  /// One bridge turn, queued like any job; `.stopped` once the run was stopped.
-  private func turn(_ id: String, _ agent: HarnessDriver, _ role: String, _ prompt: String) async -> PeerJobState {
+  /// One bridge or verifier turn, queued like any job; `.stopped` once the run was stopped.
+  private func turn(_ id: String, _ agent: HarnessDriver, _ role: String, _ prompt: String, accessOverride: Access? = nil) async -> PeerJobState {
     guard runs[id]?.finished == false else { return .stopped }
-    let index = add(id, agent: agent, role: role, prompt: prompt)
+    let index = add(id, agent: agent, role: role, prompt: prompt, accessOverride: accessOverride)
     pump()
     while let state = runs[id]?.jobs[index].state, !state.settled { await next(until: .now + .seconds(86_400)) }
     return runs[id]?.jobs[index].state ?? .stopped
@@ -363,6 +495,7 @@ public actor Peers {
       case .ask: kind = .ask(count: run.jobs.count)
       case .bridge: kind = .bridge(approved: run.approved)
       case .burst: kind = .burst
+      case .swarm: kind = .swarm(verified: run.approved, plan: run.plan)
       }
       return PeerRunReport(
         id: run.id, kind: kind, jobs: run.jobs.map { PeerJobReport(agent: $0.agent, role: $0.role, state: $0.state) },

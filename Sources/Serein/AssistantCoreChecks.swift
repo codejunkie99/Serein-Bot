@@ -110,6 +110,7 @@ enum AssistantCoreChecks {
     ("harnessRules", AssistantCoreChecks.harnessRules),
     ("engines", AssistantCoreChecks.engines),
     ("peers", AssistantCoreChecks.peers),
+    ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("grokEngine", AssistantCoreChecks.grokEngine),
     ("cursorEngine", AssistantCoreChecks.cursorEngine),
     ("geminiEngine", AssistantCoreChecks.geminiEngine),

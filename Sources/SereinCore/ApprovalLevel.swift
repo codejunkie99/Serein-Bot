@@ -12,15 +12,15 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
   case proactive
   /// The levels the person can choose for Serein's own chat.
   public static let chatChoices: [ApprovalLevel] = [.everyStep, .riskyOnly, .proactive]
-  /// What a new install starts with. Raising it is the product owner's decision; a change here
-  /// affects only installs whose key is still unset.
-  /// Only risky steps (decided 2026-11-12): like Grok Bot, ordinary steps go ahead and the fresh
-  /// install says so once (`defaultedKey`) before the first one; setup offers the choice too.
-  public static let newInstallDefault: ApprovalLevel = .riskyOnly
+  /// Allow all by default so Serein and its teams act autonomously; payments and passwords still
+  /// route to the secure card (`ApprovalDoor.answer`). A change here affects only installs whose
+  /// key is still unset or awaiting one-time upgrade (`allowAllMigratedKey`).
+  public static let newInstallDefault: ApprovalLevel = .proactive
   /// Set on every change the user makes, so a later default never overrides their choice.
   public static let userSetKey = "serein.approvals.userSet"
-  /// Set only when a fresh install was given a raised default it never confirmed; the one-time
-  /// consent card shows then (and clears it).
+  /// Set once after the one-time Allow all upgrade runs, with an Undo receipt back to the prior level.
+  public static let allowAllMigratedKey = "serein.approvals.allowAllMigrated"
+  /// Set only when a fresh install or one-time upgrade received a raised default without confirming it.
   public static let defaultedKey = "serein.approvals.defaulted"
 
   /// The level a stored `serein.relay.autopilot` value means; nil (unset or unreadable) and any

@@ -96,11 +96,12 @@ struct CodexDriver: Driver {
       profile(plan, folder: plan.folder ?? Self.emptyFolder, request: request, network: network),
       request.browser.map(browserConfig) ?? [:],
     ])
-    environment["SEREIN_CODEX_THREAD"] = SHA256.hash(data: Data(thread.utf8)).map { String(format: "%02x", $0) }.joined()
-    return LaunchContract(
+    var contract = LaunchContract(
       request, arguments: serverArguments(network), environment: environment,
       expectedMode: .reports(["approvalPolicy": plan.approvalPolicy, "activePermissionProfile.id": Self.profile]),
       network: network)
+    contract.warmTags["codexThread"] = SHA256.hash(data: Data(thread.utf8)).map { String(format: "%02x", $0) }.joined()
+    return contract
   }
 
   /// Codex drops root-level -c once the subcommand has its own, so every -c goes after app-server.

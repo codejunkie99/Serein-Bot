@@ -70,8 +70,13 @@ public enum AssistantMigration {
         writes.append(.bool(ComputerPolicy.autoSetUpKey, true))
       }
       if autopilot == nil {
-        writes.append(.bool(autopilotKey, approvalDefault.autopilot))
-        if approvalDefault == .riskyOnly { writes.append(.bool(ApprovalLevel.defaultedKey, true)) }
+        if approvalDefault == .proactive {
+          writes.append(.string(autopilotKey, ApprovalLevel.proactive.rawValue))
+          writes.append(.bool(ApprovalLevel.defaultedKey, true))
+        } else {
+          writes.append(.bool(autopilotKey, approvalDefault.autopilot))
+          if approvalDefault == .riskyOnly { writes.append(.bool(ApprovalLevel.defaultedKey, true)) }
+        }
       }
       if proactive == nil { writes.append(.string(proactiveKey, RelayProactive.Level.newInstallDefault.rawValue)) }
       if learnsNotes == nil { writes.append(.bool(learnsKey, RelayMemory.learnsNewInstallDefault)) }
@@ -139,7 +144,10 @@ public enum AssistantMigration {
       learnsNotes: defaults.object(forKey: learnsKey) as? Bool,
       computer: gates.object(forKey: ComputerPolicy.enabledKey) as? Bool, canRunBuiltIn: canRunBuiltIn)
     func store(_ key: String) -> any SettingsStore {
-      [autopilotKey, proactiveKey, ApprovalLevel.defaultedKey, ComputerPolicy.enabledKey, ComputerPolicy.autoSetUpKey].contains(key)
+      [
+        autopilotKey, proactiveKey, ApprovalLevel.defaultedKey, ApprovalLevel.allowAllMigratedKey,
+        ComputerPolicy.enabledKey, ComputerPolicy.autoSetUpKey,
+      ].contains(key)
         ? gates : defaults as any SettingsStore
     }
     for write in writes {
@@ -153,5 +161,21 @@ public enum AssistantMigration {
     }
     defaults.set(1, forKey: flagKey)
     return writes
+  }
+
+  /// One-time upgrade to Allow all (`ApprovalLevel.proactive`), returning the writes and the
+  /// previous level so the app can show a receipt with Undo. Passwords and payments stay behind
+  /// the secure card. Returns nil if already migrated or if the user explicitly set a level.
+  public static func allowAllUpgrade(
+    stored: Any?, userSet: Bool, migrated: Bool
+  ) -> (writes: [Write], previous: ApprovalLevel)? {
+    guard !migrated, !userSet else { return nil }
+    let previous = ApprovalLevel.resolve(stored: stored)
+    let writes: [Write] = [
+      .string(autopilotKey, ApprovalLevel.proactive.rawValue),
+      .bool(ApprovalLevel.allowAllMigratedKey, true),
+      .bool(ApprovalLevel.defaultedKey, true),
+    ]
+    return (writes, previous)
   }
 }

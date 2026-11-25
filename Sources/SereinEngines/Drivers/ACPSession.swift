@@ -30,19 +30,25 @@ struct ACPDialect: Sendable {
   var permissionKind: (@Sendable (HarnessPermissionRequest, [String: Any]) -> HarnessPermissionRequest.Kind)? = nil
   /// The CLI's own notification method that carries `retry_state` updates.
   var extensionUpdates: String? = nil
+  /// Optional ACP notification method used for mid-turn steering (or nil when advertised dynamically).
+  var steerMethod: String? = nil
+  /// Fallback mid-turn steer by cancelling the current turn and handing text back for the next turn.
+  var supportsCancelResumeSteer: Bool = false
 }
 
 /// One ACP agent process after its handshake: one session, reused by every turn while warm.
 final class ACPSession: EngineSession {
   let mode: VerifiedMode
   let wire: AsyncStream<WireEvent>
-  /// ACP has no steer method: words typed mid-turn go back to the caller for the next turn.
-  var steers: Bool { false }
+  /// Whether this ACP session accepts mid-turn steering (via steer method or cancel-and-resume).
+  var steers: Bool { supportsSteer }
+  private let supportsSteer: Bool
   private let link: ACPLink
 
-  private init(mode: VerifiedMode, link: ACPLink) {
+  private init(mode: VerifiedMode, link: ACPLink, supportsSteer: Bool) {
     self.mode = mode
     self.link = link
+    self.supportsSteer = supportsSteer
     wire = link.wire
   }
 
@@ -58,8 +64,10 @@ final class ACPSession: EngineSession {
     } catch JSONRPCError.closed {
       throw StopReason.failed("\(dialect.cli.displayName) quit while starting.")
     }
+    let advertisedSteer = await link.advertisesSteer
+    let canSteer = dialect.steerMethod != nil || dialect.supportsCancelResumeSteer || advertisedSteer
     switch ModeCheck.verify(contract.expectedMode, reported: await link.reported, argv: contract.argv) {
-    case .success(let mode): return ACPSession(mode: mode, link: link)
+    case .success(let mode): return ACPSession(mode: mode, link: link, supportsSteer: canSteer)
     case .failure(let reason): throw reason
     }
   }
@@ -68,7 +76,7 @@ final class ACPSession: EngineSession {
     await link.prompt(prompt, request: request)
   }
 
-  func steer(_ text: String) async -> SteerOutcome { .handedBack(text) }
+  func steer(_ text: String) async -> SteerOutcome { await link.steer(text) }
 
   func cancel() async { await link.cancel() }
 }
@@ -87,6 +95,7 @@ private actor ACPLink {
   private var sessionID: String?
   private var loadSession = false
   private var acceptsImages = false
+  private(set) var advertisesSteer = false
   /// A new session: the stable prompt still has to lead its first prompt.
   private var fresh = true
   /// `resume` was asked for and not loaded, so the first prompt carries `prompt.recovery`.
@@ -148,6 +157,7 @@ private actor ACPLink {
     let agent = initialized["agentCapabilities"]
     loadSession = agent?["loadSession"]?.bool == true
     acceptsImages = agent?["promptCapabilities"]?["image"]?.bool == true
+    advertisesSteer = agent?["steer"]?.bool == true
     // Never `authenticate`: Cursor answers it by opening its sign-in page in the browser. A
     // signed-out CLI says so at session/new instead.
     let mcp = Self.mcpServers(request)
@@ -330,6 +340,25 @@ private actor ACPLink {
     stopAsked = true
     try? await rpc.notify("session/cancel", .object(["sessionId": .string(sessionID)]))
     for _ in 0..<100 where promptSent { try? await Task.sleep(for: .milliseconds(20)) }
+  }
+
+  /// Steer the running turn when the agent or dialect supports a steer notification, or cancel the
+  /// in-flight turn and hand the text back so the caller runs it cleanly on the warm session.
+  func steer(_ text: String) async -> SteerOutcome {
+    guard promptSent, let sessionID else { return .handedBack(text) }
+    if let method = dialect.steerMethod ?? (advertisesSteer ? "session/steer" : nil) {
+      do {
+        try await rpc.notify(method, .object(["sessionId": .string(sessionID), "prompt": .array([Self.text(text)])]))
+        return .steered
+      } catch {
+        return .handedBack(text)
+      }
+    }
+    if dialect.supportsCancelResumeSteer {
+      await cancel()
+      return .handedBack(text)
+    }
+    return .handedBack(text)
   }
 
   /// A fresh session's first prompt leads with the stable part, unless the CLI took it on its

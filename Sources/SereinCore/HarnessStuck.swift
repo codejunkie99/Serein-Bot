@@ -13,6 +13,13 @@ public struct HarnessStuck: Equatable, Sendable {
   /// CPU seconds per minute above which the tree counts as busy.
   public static let busyCPU: TimeInterval = 3
 
+  /// Loopback endpoints (such as Serein's local ShellGuard proxy or local MCP sockets) never
+  /// represent active upstream model I/O and should be excluded when sampling `openTCP`.
+  public static func isLoopbackAddress(_ host: String) -> Bool {
+    let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "127.0.0.1" || normalized == "::1" || normalized == "[::1]" || normalized == "localhost"
+  }
+
   public struct Evidence: Equatable, Sendable {
     /// CPU seconds the CLI's process tree used per minute since the last tick; nil when unknown.
     public var cpuPerMinute: TimeInterval?

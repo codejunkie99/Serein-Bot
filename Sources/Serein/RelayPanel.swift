@@ -3417,7 +3417,7 @@ private struct RelayMessages: View {
     let chips: [String] = message.chips ?? parsed.chips
     let later: ArraySlice<AgentMessage> = messages[min(messages.count, layout.offset + index + 1)...]
     let newestReceipt: Bool = !later.contains { !($0.receipts ?? []).isEmpty }
-    let started: RelayAutomatic.Kind? = shown[..<index].last(where: { $0.role != "assistant" })
+    let started: RelayAutomatic.Kind? = shown[..<index].last(where: { $0.role == "you" })
       .flatMap { RelayAutomatic.kind(of: $0.text) }
     return RelayReplyFacts(
       message: message, index: index, first: first, last: last, newest: newest,

@@ -273,7 +273,13 @@ struct PasswordSettings: View {
         isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible
       ) {
         Button("Delete", role: .destructive) {
-          if let record = forgetting { status = relay?.forgetSecret(record) ?? "Deleted from your Keychain." }
+          if let record = forgetting {
+            if let relay {
+              status = relay.forgetSecret(record) ?? "Deleted from your Keychain."
+            } else {
+              status = "Serein is not running in this window yet."
+            }
+          }
           forgetting = nil
         }
       } message: {

@@ -8,8 +8,8 @@ import SwiftUI
   static var all: [String] {
     // Built in typed steps: as one chained expression the type checker gives up.
     var keys: [String] = [
-      // Serein asks before (the approval level and Autopilot) and its one-time consent card.
-      RelayOrchestrator.autopilotKey, ApprovalLevel.defaultedKey,
+      // Serein asks before (the approval level and Autopilot) and its one-time consent/upgrade flags.
+      RelayOrchestrator.autopilotKey, ApprovalLevel.defaultedKey, ApprovalLevel.allowAllMigratedKey,
       // What a new task may do: clicks and typing (with its one-time reset), project edits, Mac apps.
       ActionClickDefault.key, ActionClickDefault.migratedKey,
       AgentModel.AccessToggle.edits.rawValue, AgentModel.AccessToggle.mac.rawValue,
