@@ -9,7 +9,7 @@ extension AssistantCoreChecks {
     try toolsRoster(check)
     try toolsChange(check)
     try toolsPause(check)
-    try toolsProposals(check)
+    try toolsFirstWords(check)
     try toolsUndo(check)
     try toolsApps(check)
     try toolsLinks(check)
@@ -155,36 +155,9 @@ extension AssistantCoreChecks {
     try check(AgentHistoryRun.Initiator.ask.isUnattended, "A light ask's run is judged as unattended")
   }
 
-  // MARK: proposals
+  // MARK: first words
 
-  private static func toolsProposals(_ check: Check) throws {
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    var book = MakeProposals()
-    func draft(_ name: String) -> AssistantDraft { AssistantDraft(name: name, job: "It watches fares.", places: [.web]) }
-    try check(book.add(.init(by: "scout", draft: draft("Fare watcher"), createdAt: now), byName: "Scout", now: now) == nil, "A first proposal waits")
-    try check(book.add(.init(by: "scout", draft: draft("fare watcher"), createdAt: now), byName: "Scout", now: now) == .waiting("fare watcher"), "The same name cannot wait twice")
-    try check(book.add(.init(by: "scout", draft: draft("Hotel finder"), createdAt: now), byName: "Scout", now: now) == nil, "A second proposal waits")
-    try check(book.add(.init(by: "scout", draft: draft("Third"), createdAt: now), byName: "Scout", now: now) == .tooMany("Scout"), "At most two proposals wait per assistant")
-    try check(book.add(.init(by: "planner", draft: draft("Third"), createdAt: now), byName: "Planner", now: now) == nil, "Another assistant has its own two")
-    guard let first = book.open.first else {
-      try check(false, "The proposals are kept")
-      return
-    }
-    try check(book.decline(first.id, now: now)?.name == "Fare watcher", "Not now takes the proposal away")
-    let later = now.addingTimeInterval(86_400)
-    let blocked = book.refusal(by: "scout", byName: "Scout", name: "FARE WATCHER", now: later)
-    try check(blocked == .blocked("FARE WATCHER", days: 6), "Not now blocks that name for seven days")
-    try check(book.refusal(by: "planner", byName: "Planner", name: "Fare watcher", now: later) == nil, "The block is for the assistant that asked")
-    let free = book.refusal(by: "scout", byName: "Scout", name: "Fare watcher", now: now.addingTimeInterval(7 * 86_400 + 1))
-    try check(free == nil, "After seven days the name may come back")
-    try check(MakeProposals.title(draft("Fare watcher")) == "Make Fare watcher?", "The card asks to make it by name")
-    let detail = MakeProposals.detail(draft("Fare watcher"), byName: "Scout")
-    try check(detail == "Scout wants a helper that watches fares.\nIt starts with no apps.", "The card says who asks and that it starts with no apps")
-    let own = MakeProposals.detail(AssistantDraft(name: "Bob 3000", job: nil, places: [.web]), byName: nil)
-    try check(own == "It will ask what to do.\nIt starts with no apps.", "The person's own card says the new assistant will ask")
-    try check(MakeProposals.declined("Fare watcher") == "You said no to Fare watcher.", "Not now leaves one line")
-    try check(asksPlainWords(detail) && asksPlainWords(MakeProposals.more(draft("Fare watcher"))), "The proposal card has no feature words")
-
+  private static func toolsFirstWords(_ check: Check) throws {
     // The first message of a new assistant (SPEC 2.2).
     let named: [String] = ["Inbox Zero", "Calendar", "Trip planner", "Fare watcher", "Writer", "Notes", "Researcher", "News", "Budget", "Fitness", "Recipes", "Shopper"]
     for name in named {
@@ -222,9 +195,7 @@ extension AssistantCoreChecks {
     try check(AskLines.asked(["Planner", "Scout", "Writer"]) == "Asked 3 assistants", "Three targets are counted")
     try check(AskLines.stillAnswering("Scout") == "Scout is still answering. I will add it here.", "A late answer says it comes here")
     try check(AskLines.noAnswer("Scout") == "Scout did not answer.", "An ask over the time cap says so")
-    try check(AskLines.messaged("Writer") == "Messaged Writer", "A hand-off's line names the assistant")
-    let lines = [AskLines.askedYou("Serein"), AskLines.answering("Serein"), AskLines.personalFold]
-    try check(lines.allSatisfy { asksPlainWords($0) }, "The lines of working together have no feature words")
+    try check(asksPlainWords(AskLines.answering("Serein")), "The lines of working together have no feature words")
   }
 
   // MARK: apps

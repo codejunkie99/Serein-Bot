@@ -46,7 +46,7 @@ extension RelayToolHost {
 
   /// Moves the window, never data, so it needs no ask; only while the person is answering.
   private func openPlace(_ a: [String: Any]) throws -> [String: Any] {
-    if let refusal = AppPlaces.openRefusal(personStarted: relay.startedByPerson, unattended: relay.runsUnattended) {
+    if let refusal = AppPlaces.openRefusal(personStarted: frame.byPerson, unattended: frame.unattended) {
       throw SereinError.invalid(refusal)
     }
     let place = try requestedPlace(a)
@@ -150,7 +150,7 @@ extension RelayToolHost {
   }
 
   private func markPersonal() throws {
-    guard relay.agent.markPersonalRead(thread: relay.turnThread) else {
+    guard relay.agent.markPersonalRead(thread: frame.thread) else {
       throw SereinError.invalid(BrowserModel.personalMarkWithheld)
     }
   }
@@ -197,9 +197,9 @@ extension RelayToolHost {
   // MARK: board_update
 
   /// Moves one of the person's Board cards. `Admission.decide(.board)` refuses any turn the
-  /// person did not start; words that name the move apply it; otherwise the person decides on a
-  /// card, whatever Serein asks before, as `todo_propose` does. Either way it lands as a receipt
-  /// with Undo (`AssistantDesk.Undo.board`). Moving starts no task.
+  /// person did not start; words that name the move apply it, and so does Allow all; otherwise
+  /// the person decides on a card, as `todo_propose` does. Either way it lands as a receipt with
+  /// Undo (`AssistantDesk.Undo.board`). Moving starts no task.
   private func updateBoard(_ a: [String: Any]) async throws -> [String: Any] {
     let book = TodoBook.shared
     guard let id = requestedID(a) else { throw SereinError.invalid("id is required: a card id from app_read board.") }
@@ -209,13 +209,14 @@ extension RelayToolHost {
     guard let card = book.cards.first(where: { $0.id == id }) else { throw TodoBook.gone }
     guard card.column != column else { return ["moved": false, "column": column.title, "note": "It is in \(column.title) already."] }
     let short = String(card.title.prefix(60))
-    switch relay.admission(.board) {
+    switch frame.admission(.board) {
     case .refuse(let why): throw SereinError.invalid(why)
     case .apply: break
+    case .ask where relay.level == .proactive: break
     case .ask:
       let human = await relay.confirmAnswer(
         "Move “\(short)” to \(column.title)?", "On your Board. Moving it starts no work.", button: "Move",
-        thread: relay.turnThread, effect: .change)
+        thread: frame.thread, effect: .change)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person kept the card where it is." : ActionAdmission.needsPerson)
       }
@@ -228,7 +229,7 @@ extension RelayToolHost {
     try book.move(id, to: column)
     let entry = "board-" + UUID().uuidString
     relay.desk.undoActions[entry] = .board(card: id, column: card.column, task: card.taskID)
-    relay.deliver(receipt: ReceiptCopy.boardMoved(title: card.title, to: column.title, entry: entry), into: relay.turnThread)
+    relay.deliver(receipt: ReceiptCopy.boardMoved(title: card.title, to: column.title, entry: entry), into: frame.thread)
     relay.note("Moved “\(short)” to \(column.title) in Goals", .allowed)
     return ["moved": true, "id": id, "column": column.title, "undo": entry, "note": HostFacts.receiptNote]
   }

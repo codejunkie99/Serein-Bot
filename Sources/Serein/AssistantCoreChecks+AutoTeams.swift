@@ -2,7 +2,7 @@
 import Foundation
 import SereinCore
 
-/// Teams assistants make on their own (team_propose, `AutoTeams`): no card, every member admitted
+/// Teams assistants make on their own (`AutoTeams`): no card, every member admitted
 /// by `AutoTeamPolicy`, and the end of the root task stops what was made for it and nothing else.
 extension AssistantCoreChecks {
   static func autoTeams(_ check: Check) throws {
@@ -30,13 +30,9 @@ extension AssistantCoreChecks {
         team: "", teamName: "Trip", state: state, parent: parent)
     }
 
-    let schema = RelayTools.tools.first { $0["name"] as? String == "team_propose" }
-    let items = ((((schema?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any])?["members"] as? [String: Any])?["items"]
-      as? [String: Any])
-    try check((items?["required"] as? [String])?.contains("role") == true,
-      "auto teams: team_propose asks every member for its role")
-    try check((schema?["description"] as? String)?.contains("press Create team") == false,
-      "auto teams: team_propose tells the model it is created at once, with no Create team card to wait for")
+    let schema = RelayTools.tools.first { $0["name"] as? String == "team_make" }
+    try check((schema?["description"] as? String)?.contains("with no card") == true,
+      "auto teams: team_make tells the model it is saved with no card")
 
     // Turn 1 makes a team: two members admitted, three refused with reasons, all in one call.
     let rootA = teams.turnRoot()

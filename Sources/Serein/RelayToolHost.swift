@@ -17,32 +17,63 @@ import SereinCore
     "reminder_create", "reminder_update", "goal_create", "goal_update", "reminder_cancel", "watch_create", "watch_cancel",
   ]
 
-  func call(_ name: String, _ a: [String: Any]) async throws -> [String: Any] {
+  /// The frame of the turn this call came from (`call`), never another running turn's. Only
+  /// `call` and `clicked` enter the host's tools, and each binds one; with none (a path that
+  /// skipped both) it is a frame of nobody's turn, which the person's checks refuse.
+  var frame: TurnFrame {
+    if let frame = relay.frames.frame(for: TurnFrame.calling) { return frame }
+    assertionFailure("A tool host read outside call or clicked")
+    return Self.nobody
+  }
+  private static let nobody = TurnFrame(
+    thread: "", serial: 0, admission: .unattended, unattended: true, personWords: nil, readOutside: true, profile: "",
+    acting: nil)
+  /// The assistant the calling turn acts for: nil for a schedule of the person's own.
+  var acting: RelayProfile? { frame.acting.map(relay.profile(id:)) }
+  /// The refusal for `place` for the assistant this turn acts for (AssistantScope).
+  func placeRefusal(_ place: AssistantPlace) -> String? { acting.flatMap { relay.placeRefusal(place, for: $0) } }
+  /// Who is asking, for the approval door: the calling turn, at the level as it is at this step.
+  func standing(present: Bool? = nil) -> ApprovalDoor.Standing { RelayOrchestrator.standing(frame, level: relay.level, present: present) }
+
+  static let noTurn = "No turn of Serein's runs in this chat, so nothing was done."
+
+  /// `thread`: the chat of the run that called. A call from a chat with no turn of Serein's
+  /// running refuses; everything else the call reads is its own turn's frame.
+  func call(_ name: String, _ a: [String: Any], thread: String?) async throws -> [String: Any] {
+    guard let entry = thread.flatMap({ relay.frames[$0] }) else { throw SereinError.invalid(Self.noTurn) }
+    return try await TurnFrame.$calling.withValue(entry) { try await answer(name, a) }
+  }
+  /// The person's own click outside any turn runs `body` as their frame on the chat on screen.
+  func clicked<T>(_ body: () async throws -> T) async rethrows -> T {
+    try await TurnFrame.$calling.withValue(relay.clickFrame) { try await body() }
+  }
+
+  private func answer(_ name: String, _ a: [String: Any]) async throws -> [String: Any] {
     if RelayTools.personalNames.contains(name) { return try await personalTool(name, a) }
     if RelayTools.researchNames.contains(name) { return try await researchTool(name, a) }
     // A turn the person did not start changes no schedule, with no card: a check-in, a report,
     // a hand-off's result, and every unattended turn (a routine, a watch, a link; SPEC 3.6, 3.9).
     // The one exception: a scheduled run acting on the person's words sets one follow-up for
     // itself (RelayFollowUp); a link's run has no such words.
-    if Self.scheduleTools.contains(name), relay.working, !relay.startedByPerson {
-      guard name == "reminder_create", relay.runsUnattended, let words = relay.turnAuthority else {
+    if Self.scheduleTools.contains(name), !frame.byPerson {
+      guard name == "reminder_create", frame.unattended, let words = frame.authority else {
         throw SereinError.invalid(Self.lowerTrust)
       }
-      return try followUp(a, source: words, profileID: relay.scheduledProfileID)
+      return try followUp(a, source: words, profileID: frame.acting)
     }
     // In the person's own turn, a check-back on something Serein did needs no card either: it
     // acts only on what they typed in this turn.
-    if name == "reminder_create", a["follow_up"] as? Bool == true, relay.working, relay.startedByPerson,
-      !relay.typedWords.isEmpty
+    if name == "reminder_create", a["follow_up"] as? Bool == true, frame.byPerson,
+      !frame.typedWords.isEmpty
     {
-      return try followUp(a, source: relay.typedWords, profileID: relay.actingProfile?.id)
+      return try followUp(a, source: frame.typedWords, profileID: frame.acting)
     }
     if MacFiles.toolNames.contains(name) {
       let gate = MacFiles.call(
-        on: MacFiles.readsWholeMac(), personStarted: !relay.working || relay.startedByPerson,
+        on: MacFiles.readsWholeMac(), personStarted: frame.byPerson,
         // The card is drawn in the chat on screen, so the turn must be that chat's own.
-        mayOffer: SereinSetup.mayOffer(personStarted: relay.startedByPerson, unattended: relay.runsUnattended)
-          && relay.turnThread == relay.threadID,
+        mayOffer: SereinSetup.mayOffer(personStarted: frame.byPerson, unattended: frame.unattended)
+          && frame.thread == relay.threadID,
         declinedHere: relay.dismissedSetupOffersHere.contains(.files))
       // Asked about their files while reading is off: the card goes up at the moment of use. It
       // only shows; the person's click on it is what turns reading on.
@@ -50,7 +81,7 @@ import SereinCore
       let result = try await RelayFileTools.call(name, a, gate: gate)
       // The person's files are personal, like their mail: a chat that saw them keeps out of
       // Serein's computer, so nothing read here can leave through it. Withheld if not saved.
-      guard relay.agent.markPersonalRead(thread: relay.turnThread) else {
+      guard relay.agent.markPersonalRead(thread: frame.thread) else {
         throw SereinError.invalid(BrowserModel.personalMarkWithheld)
       }
       return result
@@ -59,7 +90,7 @@ import SereinCore
     if AppPlaces.toolNames.contains(name) { return try await appTool(name, a) }
     switch name {
     case "setup_offer":
-      guard SereinSetup.mayOffer(personStarted: relay.startedByPerson, unattended: relay.runsUnattended) else {
+      guard SereinSetup.mayOffer(personStarted: frame.byPerson, unattended: frame.unattended) else {
         throw SereinError.invalid("Setup controls can be offered only while answering the person, never by an automatic turn.")
       }
       let topic = try SereinSetup.topic(a)
@@ -80,10 +111,14 @@ import SereinCore
     case "agent_stop": return try stop(a) // Stopping a run Serein started only ends work; it never acts.
     // Shared memory (RelayMemoryShell.swift): `Admission` decides each change; recall reads.
     case "remember": return try await remember(a)
-    case "recall": return try await relay.recallFacts(a["query"] as? String, limit: a["limit"] as? Int ?? 10)
-    case "chats_search": return try relay.searchChats(a["query"] as? String, limit: a["limit"] as? Int)
+    case "recall": return try await relay.recallFacts(a["query"] as? String, limit: a["limit"] as? Int ?? 10, frame: frame)
+    case "chats_search": return try relay.searchChats(a["query"] as? String, limit: a["limit"] as? Int, frame: frame)
     case "forget": return try await forget(a)
+    case "rule_save": return try await saveRule(a)
+    // A rule is a memory record: removing one is a forget, with the same Undo.
+    case "rule_undo": return try await forget(a)
     case "memory_share": return try await shareMemory(a)
+    case ChatSettings.tool: return try await changeSetting(a)
     case "instructions_propose": return try await proposeInstructions(a)
     // A plain reminder only shows in the user's own UI; a request for later (action) is gated in createReminder.
     case "reminder_create": return try await createReminder(a)
@@ -105,7 +140,7 @@ import SereinCore
       return ["cancelled": id]
     case "notify": // Notify only changes the user's own UI and can't act on a site.
       // A goal check notifies only for new findings, so a page cannot turn each check into a ping.
-      guard !relay.checkingGoal else {
+      guard !frame.checkingGoal else {
         throw SereinError.invalid("A goal check reports new findings with NEW: lines; Serein notifies for them.")
       }
       guard let text = (a["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
@@ -113,9 +148,9 @@ import SereinCore
       }
       // The body holds the assistant's name only (SPEC I14): the words can come from mail, pages
       // or another app, so they stay in the chat, in the reply.
-      let name = relay.notificationName(thread: relay.turnThread)
+      let name = relay.notificationName(thread: frame.thread)
       TaskNotifications.shared.post(
-        threadID: relay.turnThread, title: name, body: RelayOrchestrator.updateBody(name), always: true)
+        threadID: frame.thread, title: name, body: RelayOrchestrator.updateBody(name), always: true)
       return ["notified": true, "note": "The notification says only that \(name) has an update. Say what it is about in your reply."]
     case "skill_list":
       return ["skills": PluginHost.shared.skills.map { ["name": $0.name, "description": $0.description] }]
@@ -136,7 +171,7 @@ import SereinCore
     case "ask_user":
       let parsed = try RelayAsk.parse(a)
       // Nobody watches the run: no form waits, and the question goes in the reply's NEEDS INPUT.
-      if let unattended = RelayAsk.unattended(relay.runsUnattended) { return unattended }
+      if let unattended = RelayAsk.unattended(frame.unattended) { return unattended }
       relay.note("Asked: \(String(parsed.title.prefix(80)))", .auto)
       if let answers = await relay.ask(parsed.title, parsed.questions) {
         return RelayAsk.result(answers)
@@ -155,11 +190,13 @@ import SereinCore
       relay.changeWatch(id, actor: "relay", "Cancelled \(RelayOrchestrator.short(watch.name))") { $0 = nil }
       return ["cancelled": id]
     case "current_page":
-      if let refusal = relay.placeRefusal(.page) { throw SereinError.invalid(refusal) }
+      if let refusal = placeRefusal(.page) { throw SereinError.invalid(refusal) }
       return try await currentPage(a)
-    // Teams and hand-offs need no card, only a turn the person started (RelayTeams.swift).
-    case "team_propose": return try await proposeTeam(a)
+    // Teams and hand-offs are staffed with no card (`Staffing.decide`, RelayTeams.swift).
+    case "team_make": return try await makeTeam(a)
     case "assistant_handoff": return try await handOff(a)
+    case "channel_say": return try await channelSay(a)
+    case "swarm_start": return try await swarmStart(a)
     // One assistant at a time, judged by the admission rule; each change lands as a receipt
     // with Undo (RelayAssistantTools.swift).
     case "assistant_list": return listAssistants()
@@ -222,7 +259,7 @@ import SereinCore
     }
     var project: Project?
     if let wanted = (a["project"] as? String)?.trimmingCharacters(in: .whitespaces), !wanted.isEmpty {
-      if let refusal = relay.placeRefusal(.project) { throw SereinError.invalid(refusal) }
+      if let refusal = placeRefusal(.project) { throw SereinError.invalid(refusal) }
       guard let id = RelayTools.project(wanted, among: browser.shareableProjects.map { ($0.id, $0.name) }),
         let found = browser.shareableProjects.first(where: { $0.id == id })
       else { throw SereinError.invalid("Name a project from agent_status: " + projectNames()) }
@@ -267,7 +304,7 @@ import SereinCore
       throw SereinError.invalid("destination is project, web, mac, answer or here")
     }
     // The active assistant's own places (AssistantScope): refused before any card.
-    if let refusal = relay.placeRefusal(destination.place) { throw SereinError.invalid(refusal) }
+    if let refusal = placeRefusal(destination.place) { throw SereinError.invalid(refusal) }
     if destination == .here { return try await startHere(task, a) }
     let provider = try harness(a["agent"] as? String)
     var projectID: String?
@@ -300,11 +337,11 @@ import SereinCore
       actions: destination != .answer, edits: edits, mac: destination == .mac,
       permission: Self.startPermission(edits: edits, fullAccessConfirmed: FullAccessConsent.confirmed(projectID)),
       initiator: .delegated)
-    target.byPerson = relay.startedByPerson
+    target.byPerson = frame.byPerson
     try await gateRun(Self.runEffect(target), title: card.title, detail: card.detail, button: "Start", task: true)
     let model = choice.model.isEmpty ? "default" : choice.model
     let id = try await agent.dispatch(task, into: nil, as: target)
-    relay.adopt(id, edits: edits)
+    relay.adopt(id, edits: edits, frame: frame)
     try carryPersonalMark(to: id)
     relay.note("Asked \(provider.name) to work on \(place): \(String(task.prefix(80)))", .auto)
     return ["run": id, "agent": provider.name, "destination": raw, "place": place, "state": "working",
@@ -317,7 +354,7 @@ import SereinCore
   /// “Do it here”: a task in the tab the user's own message carried (the host binding), never one
   /// a tool call names. It always asks first, once per chat per site, whatever Serein asks before.
   private func startHere(_ task: String, _ a: [String: Any], into threadID: String? = nil) async throws -> [String: Any] {
-    guard let page = relay.turnPage, !page.isPrivate else {
+    guard let page = frame.page, !page.isPrivate else {
       throw SereinError.invalid(CurrentPageContext.noChipRefusal + " Or work in your own tabs (destination web).")
     }
     guard let tab = browser.tabs.first(where: { $0.id == page.tabID }), !tab.privateMode, !tab.hiddenFromAgents,
@@ -328,9 +365,9 @@ import SereinCore
         throw SereinError.invalid("This task can continue only from its original tab and site. Send the request from that tab, or start a new task.")
       }
     }
-    let chat = relay.threadID
+    let chat = frame.thread
     let approvedPage = SereinPageChip.page(tab)
-    let isCurrent = { [weak relay] in relay?.threadID == chat && relay?.turnPage == page }
+    let isCurrent = { [weak relay] in relay?.threadID == chat && relay?.frames[chat]?.page == page }
     let provider = try harness(a["agent"] as? String)
     let key = CurrentPageContext.workHereKey(chat: chat, url: approvedPage.url)
     if let key, relay.workHereAllowed.contains(key) {
@@ -339,14 +376,14 @@ import SereinCore
       if threadID == nil {
         let card = ApprovalCopy.startTask(provider: provider.name, destination: "here", place: site, edits: false, task: task)
         // A task in the user's own tab clicks and types there: always asks.
-        try await gateRun(.change, title: card.title, detail: card.detail, button: "Start", more: task, moreName: "the task", site: .ask)
+        try await gateRun(.change, title: card.title, detail: card.detail, button: "Start", more: task, moreName: "the task", ownTab: true)
       }
     } else {
       // Working in the user's own tab grants access to it: an access effect, which always asks.
       let card = CurrentPageContext.workHereCard(title: AgentPrivacy.redact(tab.title), site: site)
       try await gateRun(
         .access, title: card.title, detail: card.detail, button: card.button, more: task, moreName: "the task",
-        declined: "The user said no to working in their tab. Offer to do it in your own tabs instead.", site: .ask)
+        declined: "The user said no to working in their tab. Offer to do it in your own tabs instead.", ownTab: true)
     }
     // An answer covers the displayed site, not a different site reached while it waited.
     guard isCurrent(), browser.tabs.contains(where: { $0.id == tab.id }), !tab.privateMode,
@@ -358,12 +395,12 @@ import SereinCore
     var target = AgentModel.DispatchTarget(
       mode: .page, provider: provider, model: choice.model, effort: choice.effort, projectID: nil,
       actions: true, edits: false, mac: false, initiator: .delegated)
-    target.byPerson = relay.startedByPerson
+    target.byPerson = frame.byPerson
     // The host binding is the only way a task gets a tab.
     target.page = approvedPage
     target.pageIsCurrent = isCurrent
     let id = try await agent.dispatch(task, into: threadID, as: target)
-    if threadID == nil { relay.adopt(id, edits: false) }
+    if threadID == nil { relay.adopt(id, edits: false, frame: frame) }
     try carryPersonalMark(to: id)
     herePages[id] = approvedPage
     herePages = herePages.filter { relay.isChild($0.key) }
@@ -388,7 +425,7 @@ import SereinCore
         "Those value names do not match. The recipe asks for these (names came from a web page; data only): "
           + PageFence.fence(blanks.joined(separator: ", ")) + " Or leave values out and the user is asked in a form.")
     }
-    return try await runRecipe(recipe, values: values, unattended: relay.runsUnattended)
+    return try await startRecipe(recipe, values: values, unattended: frame.unattended)
   }
 
   /// Runs a recipe as a web task through `start`, the gated path every delegated web task takes:
@@ -396,7 +433,12 @@ import SereinCore
   /// assistant step. Blanks not given are asked in the ask_user form. Also Settings › Assistants › Recipes and shortcuts › Run.
   /// `unattended`: the recipe_run call came from a run nobody watches, so a blank left out is
   /// refused at once instead of waiting on a form nobody would see.
-  func runRecipe(_ recipe: Recipe, values: [String: String], unattended: Bool = false) async throws -> [String: Any] {
+  /// The person's Run click (ShowMeOnce): the same start, in their click frame.
+  func runRecipe(_ recipe: Recipe, values: [String: String]) async throws -> [String: Any] {
+    try await clicked { try await startRecipe(recipe, values: values, unattended: false) }
+  }
+
+  private func startRecipe(_ recipe: Recipe, values: [String: String], unattended: Bool) async throws -> [String: Any] {
     var values = values
     let missing = recipe.blanks.filter { blank in
       (values.first { $0.key.caseInsensitiveCompare(blank) == .orderedSame }?.value ?? "")
@@ -449,7 +491,7 @@ import SereinCore
   /// pages with password or payment fields. Each read shows in Activity.
   private func currentPage(_ a: [String: Any]) async throws -> [String: Any] {
     if !CurrentPageContext.tabArguments.isDisjoint(with: a.keys) { throw Self.namedTab }
-    guard let page = relay.turnPage else { throw SereinError.invalid(CurrentPageContext.noChipRefusal) }
+    guard let page = frame.page else { throw SereinError.invalid(CurrentPageContext.noChipRefusal) }
     if let refusal = CurrentPageContext.refusal(url: page.url, isPrivate: page.isPrivate) {
       throw SereinError.invalid(refusal)
     }
@@ -467,7 +509,7 @@ import SereinCore
       throw SereinError.invalid("The tab changed sites. Ask again from the page you want to read.")
     }
     let captured = await ComposerContext.capture(tab)
-    guard relay.turnPage == page, browser.tabs.contains(where: { $0.id == tab.id }), !tab.hiddenFromAgents else {
+    guard let live = relay.frames[frame.thread], live.serial == frame.serial, live.page == page, browser.tabs.contains(where: { $0.id == tab.id }), !tab.hiddenFromAgents else {
       throw SereinError.invalid("That page is no longer shared with this message.")
     }
     if let refusal = CurrentPageContext.refusal(url: captured.url, isPrivate: tab.privateMode)
@@ -531,7 +573,7 @@ import SereinCore
   /// starting one, else Serein's); `modelAndEffort` keeps it only when the AI app lists it.
   private func withAssistantModel(_ a: [String: Any], provider: Provider) -> [String: Any] {
     guard ((a["model"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      let route = relay.actingProfile.flatMap(relay.team.route(of:)), route.provider == provider.rawValue
+      let route = acting.flatMap(relay.team.route(of:)), route.provider == provider.rawValue
     else { return a }
     var named = a
     named["model"] = route.model
@@ -546,13 +588,13 @@ import SereinCore
       throw SereinError.invalid("Serein did not start that run. Use agent_status to list yours.")
     }
     // More work in a place the active assistant may no longer use is refused like a new start.
-    if let place = AssistantPlace.of(runKey: thread.mode.runKey), let refusal = relay.placeRefusal(place) {
+    if let place = AssistantPlace.of(runKey: thread.mode.runKey), let refusal = placeRefusal(place) {
       throw SereinError.invalid(refusal)
     }
     // A task in the user's tab continues only from its original tab and site: a send from any
     // other tab is refused before anything is asked. startHere checks again after the card.
     if thread.mode == .page {
-      guard let page = relay.turnPage else { throw SereinError.invalid(CurrentPageContext.noChipRefusal) }
+      guard let page = frame.page else { throw SereinError.invalid(CurrentPageContext.noChipRefusal) }
       if herePages[id].map({ $0.tabID != page.tabID || $0.host != CurrentPageContext.host(page.url) }) ?? true {
         throw SereinError.invalid("This task can continue only from its original tab and site. Send the request from that tab, or start a new task.")
       }
@@ -566,11 +608,11 @@ import SereinCore
         saved: thread.permission, edits: child.edits, fullAccessConfirmed: FullAccessConsent.confirmed(thread.projectID)))
     try await gateRun(
       Self.runEffect(target), title: card.title, detail: card.detail, button: "Send", more: text, moreName: "the message",
-      task: true, site: thread.mode == .page ? .ask : .normal)
+      task: true, ownTab: thread.mode == .page)
     /// New work is the acting assistant's: its steps follow that assistant's scope.
-    relay.childOwners[id] = relay.actingProfile?.id ?? ""
+    relay.childOwners[id] = frame.acting ?? ""
     // And its standing yeses follow the turn that sent it (RoutineGrants.standsIn).
-    relay.noteSteered(id)
+    relay.noteSteered(id, byPerson: frame.byPerson)
     if thread.mode == .page {
       return try await startHere(text, ["agent": thread.provider.rawValue, "model": thread.model ?? "",
                                        "effort": thread.effort ?? "medium"], into: id)
@@ -586,7 +628,7 @@ import SereinCore
   /// `stopRun` also stops the task it just started.
   private func carryPersonalMark(to id: String, stopRun: Bool = true) throws {
     // The chat whose turn starts or steers it: another assistant's while its routine runs there.
-    guard agent.readsPersonal(thread: relay.turnThread), !agent.markPersonalRead(thread: id) else { return }
+    guard agent.readsPersonal(thread: frame.thread), !agent.markPersonalRead(thread: id) else { return }
     if stopRun, let run = agent.hub.run(for: id) { agent.hub.stop(run) }
     throw SereinError.invalid(BrowserModel.personalMarkFailed)
   }
@@ -647,7 +689,7 @@ import SereinCore
     if detailed {
       // The child's words come back into Serein's chat: a marked child marks it too, and its
       // words are withheld when that mark cannot be saved.
-      if agent.readsPersonal(thread: id), !agent.markPersonalRead(thread: relay.turnThread) {
+      if agent.readsPersonal(thread: id), !agent.markPersonalRead(thread: frame.thread) {
         out["error"] = BrowserModel.personalMarkWithheld
         return out
       }
@@ -656,7 +698,7 @@ import SereinCore
         out["reply_untrusted"] = String(last.text.suffix(2400))
         // What the child read joins Serein's own reply, so a chart of its numbers names their source.
         let names: [String] = last.read?.names ?? []
-        for name in names { agent.hub.run(for: relay.turnThread)?.noteRead(name) }
+        for name in names { agent.hub.run(for: frame.thread)?.noteRead(name) }
       }
     }
     return out
@@ -666,7 +708,7 @@ import SereinCore
     let ready = Provider.allCases.filter { $0.thinksForSerein && agent.available[$0] != nil }
     guard let name, !name.isEmpty else {
       // Delegated work defaults to the acting assistant's own engine (its route), else Relay's.
-      return relay.assistantEngine(relay.actingProfile).provider
+      return relay.assistantEngine(acting).provider
     }
     if let id = RelayTools.harness(name, among: ready.map(\.rawValue)) { return Provider(rawValue: id) }
     if let display = RelayTools.harness(name, among: ready.map(\.name)), let p = ready.first(where: { $0.name == display }) {
@@ -732,10 +774,10 @@ import SereinCore
     if let id = (a["keep"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
       // Only the person's own yes keeps an idea (SPEC 4.3, R1): `typedWords` is empty in every
       // turn the person did not start, and an idea's text never counts.
-      guard MemoryTools.saysKeep(relay.typedWords) else { throw SereinError.invalid(MemoryTools.keepNeedsYes) }
-      let idea = try await relay.memoryRecord(id)
+      guard MemoryTools.saysKeep(frame.typedWords) else { throw SereinError.invalid(MemoryTools.keepNeedsYes) }
+      let idea = try await relay.memoryRecord(id, owner: frame.profile)
       try await admit(.memory, effect: AgentWrite.memoryEffect(), title: "Serein wants to keep a note", detail: String(idea.text.prefix(240)))
-      let receipt = try await relay.keepIdea(idea)
+      let receipt = try await relay.keepIdea(idea, into: frame.thread)
       relay.note("Kept the note “\(String(idea.text.prefix(60)))”", .auto)
       return ["kept": id, "done": receipt.line]
     }
@@ -752,10 +794,10 @@ import SereinCore
       scope = try shareScope(raw)
     }
     // A wider scope is a share: the person's words must name it. Keeping it to itself is not.
-    let wider = scope.map { $0 != .assistant(relay.turnProfileID) } ?? false
+    let wider = scope.map { $0 != .assistant(frame.profile) } ?? false
     let title = wider ? "Serein wants to remember this for more assistants" : "Serein wants to remember this"
     try await admit(wider ? .shareMemory : .memory, effect: AgentWrite.memoryEffect(), title: title, detail: String(text.prefix(240)))
-    let saved = try await relay.rememberFact(text, quote: a["quote"] as? String, scope: scope, expires: expires)
+    let saved = try await relay.rememberFact(text, quote: a["quote"] as? String, scope: scope, expires: expires, frame: frame)
     relay.note("Remembered: \(String(text.prefix(80)))", .auto)
     var out: [String: Any] = ["saved": saved.record.id, "text": saved.record.text]
     if let receipt = saved.receipt {
@@ -778,15 +820,27 @@ import SereinCore
     }
     var records: [MemoryRecord] = []
     for id in wanted {
-      let record = try await relay.memoryRecord(id)
+      let record = try await relay.memoryRecord(id, owner: frame.profile)
       records.append(record)
     }
     let detail = records.map { "“\(String($0.text.prefix(120)))”" }.joined(separator: ", ")
     let title = records.count == 1 ? "Serein wants to forget a note" : "Serein wants to forget \(records.count) notes"
     try await admit(.memory, effect: AgentWrite.memoryEffect(), title: title, detail: detail)
-    let receipt = try await relay.forgetFacts(records)
+    let receipt = try await relay.forgetFacts(records, into: frame.thread)
     relay.note("Forgot \(records.count == 1 ? "a note" : "\(records.count) notes")", .auto)
     return ["forgotten": wanted, "done": receipt.line]
+  }
+
+  /// rule_save (harness v2 unit 1): a rule the person typed holds at once, with a receipt. No
+  /// card: the guard is the quote, which must be the person's own words from this turn.
+  private func saveRule(_ a: [String: Any]) async throws -> [String: Any] {
+    guard let rule = a["rule"] as? String else { throw SereinError.invalid("rule is required") }
+    guard let quote = a["quote"] as? String else { throw SereinError.invalid(Rules.quoteWordsMissing) }
+    try await admit(.memory, effect: AgentWrite.memoryEffect(), title: "Serein wants to keep a rule", detail: String(rule.prefix(240)))
+    let saved = try await relay.saveRule(rule, scope: a["scope"] as? String, quote: quote, frame: frame)
+    guard let receipt = saved.receipt else { return ["saved": saved.record.id, "already": "That rule is already in force."] }
+    relay.note("Rule: \(String(saved.record.text.prefix(80)))", .auto)
+    return ["saved": saved.record.id, "rule": saved.record.text, "done": receipt.line]
   }
 
   /// memory_share: one note to every assistant, to one of the person's teams, or back to this
@@ -800,7 +854,7 @@ import SereinCore
       throw SereinError.invalid("with is required: everyone, the name of one of the person's teams, or only you")
     }
     let scope = try shareScope(raw)
-    let record = try await relay.memoryRecord(id)
+    let record = try await relay.memoryRecord(id, owner: frame.profile)
     // A note typed by hand is not filtered, but it does not go wider through the model if it fails.
     if let why = SavedText.problem(record.text) { throw SereinError.invalid(why) }
     let narrow = scope == .assistant(record.owner)
@@ -808,13 +862,13 @@ import SereinCore
     try await admit(
       narrow ? .memory : .shareMemory, effect: AgentWrite.memoryEffect(), title: "Serein wants to share a note",
       detail: "\(whom) can use it: \(String(record.text.prefix(200)))")
-    let receipt = try await relay.shareFact(record, with: scope)
+    let receipt = try await relay.shareFact(record, with: scope, into: frame.thread)
     return ["shared": id, "with": whom, "done": receipt.line]
   }
 
   /// The scope a `share` or `with` names, or a refusal that says what it may name.
   private func shareScope(_ raw: String) throws -> MemoryScope {
-    guard let scope = MemoryTools.scope(with: raw, in: relay.team, assistant: relay.turnProfileID) else {
+    guard let scope = MemoryTools.scope(with: raw, in: relay.team, assistant: frame.profile) else {
       let teams = relay.team.teams.map(\.name)
       let named = teams.isEmpty ? "" : " Teams: " + teams.joined(separator: ", ") + "."
       throw SereinError.invalid("Share with everyone, one of the person's teams, or only you." + named)
@@ -830,7 +884,7 @@ import SereinCore
     _ change: Admission.Change, effect: ApprovalGate.Effect, title: String, detail: String, scheduled: Bool = false,
     named: Bool = true
   ) async throws {
-    var verdict = relay.admission(change)
+    var verdict = frame.admission(change)
     if verdict == .apply, !named { verdict = .ask }
     switch verdict {
     case .apply: return
@@ -845,7 +899,7 @@ import SereinCore
   /// assistant changes only its own (SPEC 5.9): nil when the one `owner` names (nil is the
   /// person's own, which is Serein's) may change in this turn, else the words that say why not.
   private func ownerRefusal(_ owner: String?) -> String? {
-    let acting: String = relay.turnProfileID
+    let acting: String = frame.profile
     let main: String = relay.team.mainProfileID ?? RelayTeam.mainID
     guard acting != main else { return nil }
     let whose: String = owner ?? main
@@ -884,7 +938,7 @@ import SereinCore
     let repeats = RelayReminder.Repeat(rawValue: a["repeat"] as? String ?? "none") ?? .none
     let cron = (a["cron"] as? String).flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
     if let refusal = RelayFollowUp.refusal(
-      repeats: repeats, cron: cron, due: due, now: now, setThisRun: relay.followedUpThisRun ? 1 : 0,
+      repeats: repeats, cron: cron, due: due, now: now, setThisRun: relay.followedUp(inTurn: frame.serial) ? 1 : 0,
       open: RelayFollowUp.open(relay.reminders))
     {
       throw SereinError.invalid(refusal)
@@ -898,7 +952,7 @@ import SereinCore
     var reminder = RelayReminder(text: text, due: due, action: true, profileID: profileID)
     reminder.selfSet = true
     reminder.source = source
-    relay.markFollowUp()
+    relay.markFollowUp(inTurn: frame.serial)
     let made = reminder
     relay.changeReminder(made.id, actor: "relay", "Serein set a follow-up: \(RelayOrchestrator.short(text))") { $0 = made }
     relay.note(
@@ -945,7 +999,7 @@ import SereinCore
     }
     // Whose it is: the assistant the request names, else the one acting now. Its runs happen in
     // that assistant's own chat, with its engine and scope (SPEC I10).
-    let acting = relay.actingProfile
+    let acting = self.acting
     var owner = acting
     if let name = (a["assistant"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
       guard let named = relay.team.profile(named: name) else {
@@ -977,7 +1031,7 @@ import SereinCore
     }
     // Typed words approve what they name: the routine's owner, and, for a request Serein carries
     // out, a schedule.
-    let words = relay.typedWords
+    let words = frame.typedWords
     let ownerNamed: Bool = !other || ScheduleRequest.wordsName(owner?.name ?? "", in: words)
     let scheduleNamed: Bool = !reminder.action || ScheduleRequest.namesSchedule(words)
     if reminder.action {
@@ -1008,7 +1062,7 @@ import SereinCore
     relay.note("Scheduled “\(String(text.prefix(60)))” for \(made.due.formatted(date: .abbreviated, time: .shortened))", .auto)
     // A routine whose words name an app that is not connected carries its connect pill (board 13).
     let missing: [ConnectLink] = made.action ? Array(relay.missingApps(in: text).prefix(1)) : []
-    let receipt = relay.scheduleReceipt(for: made, owner: other ? owner?.name : nil, connect: missing)
+    let receipt = relay.scheduleReceipt(for: made, owner: other ? owner?.name : nil, connect: missing, into: frame.thread)
     var out = Self.reminder(made)
     out["done"] = receipt.line
     return out
@@ -1080,7 +1134,7 @@ import SereinCore
     if old.action, preview.weeklyTokens != old.weeklyTokens || preview.cron != old.cron || preview.repeats != old.repeats {
       detail += relay.costEstimate(preview).map { "\n" + $0 } ?? ""
     }
-    let named: Bool = ScheduleRequest.namesSchedule(relay.typedWords)
+    let named: Bool = ScheduleRequest.namesSchedule(frame.typedWords)
     try await admit(
       .schedule(signIns: !signedIn.isEmpty), effect: effect,
       title: "Serein wants to change \(old.action ? "a scheduled request" : "a reminder")", detail: detail,
@@ -1100,10 +1154,10 @@ import SereinCore
     }
     relay.note("Changed “\(String(updated.text.prefix(60)))”: " + lines.replacingOccurrences(of: "\n", with: "; "), .allowed)
     var ownerName: String?
-    if let ownerID = updated.profileID, ownerID != relay.actingProfile?.id {
+    if let ownerID = updated.profileID, ownerID != frame.acting {
       ownerName = relay.team.profiles.first(where: { $0.id == ownerID })?.name
     }
-    let receipt = relay.scheduleReceipt(for: updated, owner: ownerName)
+    let receipt = relay.scheduleReceipt(for: updated, owner: ownerName, into: frame.thread)
     var out = Self.reminder(updated)
     out["done"] = receipt.line
     return out
@@ -1184,7 +1238,7 @@ import SereinCore
     // The schedule's own rules: a cron runs at its next match, a time already past moves on.
     let draft = RelayReminder(
       text: text, due: first, repeats: repeats, action: true, goal: RelayGoal(ends: ends, quietLimit: quietLimit),
-      profileID: relay.actingProfile?.id)
+      profileID: frame.acting)
     let goal = try draft.editing(
       text: text, due: first, repeats: repeats, cron: cron, limit: nil, skipIfBusy: true, now: now)
     guard goal.due < ends else { throw SereinError.invalid("The first check must come before the end date.") }
@@ -1196,7 +1250,7 @@ import SereinCore
       .schedule(signIns: false), effect: AgentWrite.requestEffect(), title: "Serein wants to track a goal",
       detail: "From \(date), \(goal.scheduleTitle.lowercased()), until \(until)\(quiet), Serein checks this on its own and tells you only what is new. Checks read; any other step asks you. Goal: \(text)"
         + Self.costLines(goal, relay: relay),
-      scheduled: true, named: ScheduleRequest.namesGoal(relay.typedWords))
+      scheduled: true, named: ScheduleRequest.namesGoal(frame.typedWords))
     guard relay.reminders.filter({ $0.goal != nil }).count < RelayGoal.maxGoals else {
       throw SereinError.invalid("\(RelayGoal.maxGoals) goals are the limit. End or delete one first.")
     }
@@ -1204,7 +1258,7 @@ import SereinCore
     relay.changeReminder(goal.id, actor: "relay", "Added goal \(RelayOrchestrator.short(text))") { $0 = goal }
     relay.noteReminderCreated(goal)
     relay.note("Tracking goal “\(String(text.prefix(60)))” \(goal.scheduleTitle.lowercased()) until \(until)", .allowed)
-    let receipt = relay.scheduleReceipt(for: goal, owner: nil)
+    let receipt = relay.scheduleReceipt(for: goal, owner: nil, into: frame.thread)
     var out = Self.reminder(goal)
     out["done"] = receipt.line
     return out
@@ -1274,8 +1328,8 @@ import SereinCore
     }
     if kind == .url { try SiteRules.check(source) }
     // The assistant's own places and Never sites, as for any step it takes (AssistantScope).
-    if let refusal = relay.placeRefusal(kind == .url ? .web : .mac) { throw SereinError.invalid(refusal) }
-    if kind == .url, let profile = relay.actingProfile, relay.effectiveScope(profile)?.blocks(source) == true {
+    if let refusal = placeRefusal(kind == .url ? .web : .mac) { throw SereinError.invalid(refusal) }
+    if kind == .url, let profile = acting, relay.effectiveScope(profile)?.blocks(source) == true {
       throw SereinError.invalid(AssistantScope.siteRefusal(name: profile.name, address: source))
     }
     guard relay.watches.count < RelayWatch.maxWatches else {
@@ -1283,7 +1337,7 @@ import SereinCore
     }
     let watch = RelayWatch(
       name: name, kind: kind, source: source, minutes: RelayWatch.clamped(minutes: a["minutes"] as? Int ?? 15),
-      profileID: relay.actingProfile?.id, request: relay.typedWords.isEmpty ? nil : relay.typedWords)
+      profileID: frame.acting, request: frame.typedWords.isEmpty ? nil : frame.typedWords)
     try await gateAgentWrite(
       AgentWrite.watchEffect(), title: "Serein wants to watch “\(name)”",
       detail: "This checks later and can start a run. \(String(source.prefix(180)))")
@@ -1306,18 +1360,20 @@ import SereinCore
 
   /// Asks before a delegated run starts or takes new instructions, by `ApprovalDoor.answer`.
   /// The one-time consent card comes only before a routine step, which is then judged again.
-  /// A no, a timeout or an error starts and sends nothing.
+  /// `ownTab`: the run works in the person's own tab, which asks first below Allow all; at Allow
+  /// all the person's words that sent it from that tab are the yes. A no, a timeout or an error
+  /// starts and sends nothing.
   private func gateRun(
     _ effect: ApprovalGate.Effect, title: String, detail: String, button: String, more: String? = nil,
     moreName: String = "the details", declined: String = "The user declined this delegated run.",
-    task: Bool = false, site: SiteRule = .normal
+    task: Bool = false, ownTab: Bool = false
   ) async throws {
     // `task`: a task started or steered in the person's own turn stands at Proactive, at any chat level.
-    let today = relay.standing
+    let today = self.standing()
     let standing: ApprovalDoor.Standing = task && today.levelStands && today.present ? .proactiveTask(present: true) : today
     let judge = { (standing: ApprovalDoor.Standing) throws -> RelayAutonomy.Decision in
       try ApprovalDoor.answer(
-        .init(.effect(effect), standing, site: site),
+        .init(.effect(effect), standing),
         facts: .init(
           secureField: false, botCheck: false, pays: .no, covered: false, path: nil,
           hostKeyChanged: nil, runsAnything: false, ref: "")
@@ -1325,12 +1381,12 @@ import SereinCore
     }
     var decision = try judge(standing)
     if decision == .auto, standing.level != .proactive {
-      guard await relay.settleConsent(thread: relay.turnThread) else { throw SereinError.invalid(RelayOrchestrator.stoppedStep) }
-      decision = try judge(relay.standing)
+      guard await relay.settleConsent(thread: frame.thread) else { throw SereinError.invalid(RelayOrchestrator.stoppedStep) }
+      decision = try judge(self.standing())
     }
-    if decision == .auto { return }
+    if decision == .auto, !ownTab || relay.level == .proactive { return }
     let human = await relay.confirmAnswer(
-      title, detail, button: button, thread: relay.turnThread, more: more, moreName: moreName)
+      title, detail, button: button, thread: frame.thread, more: more, moreName: moreName)
     guard human == .yes else {
       throw SereinError.invalid(human == .no ? declined : ActionAdmission.needsPerson)
     }
@@ -1345,14 +1401,14 @@ import SereinCore
     more: String? = nil, moreName: String = "the script"
   ) async throws {
     let decision = try ApprovalDoor.answer(
-      .init(.effect(effect), relay.standing(present: !(scheduled || relay.runsUnattended))),
+      .init(.effect(effect), standing(present: !(scheduled || frame.unattended))),
       facts: .init(
         secureField: false, botCheck: false, pays: .no, covered: false, path: nil,
         hostKeyChanged: nil, runsAnything: false, ref: "")
     ).decision()
     if decision == .auto { return }
     let human = await relay.confirmAnswer(
-      title, ApprovalGate.askLine(effect) + " " + detail, thread: relay.turnThread, more: more, moreName: moreName)
+      title, ApprovalGate.askLine(effect) + " " + detail, thread: frame.thread, more: more, moreName: moreName)
     guard human == .yes else {
       throw SereinError.invalid(human == .no ? ActionAdmission.declined : ActionAdmission.needsPerson)
     }

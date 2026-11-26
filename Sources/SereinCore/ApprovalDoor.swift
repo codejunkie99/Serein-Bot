@@ -135,7 +135,7 @@ public enum ApprovalDoor {
       switch self {
       case .run, .card: return nil
       case .checkFirst(let line): return line
-      case .blocked(let boundary): return boundary.blocked?.text
+      case .blocked(let boundary): return boundary.blocked.text
       }
     }
     public var runs: Bool { self == .run }
@@ -152,9 +152,7 @@ public enum ApprovalDoor {
       case .run: return .auto
       case .card: return .ask
       case .checkFirst(let line): throw CheckFirst(text: line)
-      case .blocked(let boundary):
-        guard let blocked = boundary.blocked else { return .ask }
-        throw blocked
+      case .blocked(let boundary): throw boundary.blocked
       }
     }
   }
@@ -172,8 +170,8 @@ public enum ApprovalDoor {
   /// The one door. Reads all of Standing; Allow all unattended runs as attended (R15).
   public static func answer(_ request: Request, facts: Facts) -> Answer {
     if let boundary = boundary(request, facts) {
-      guard boundary == .siteAsk else { return .blocked(boundary) }
-      return reads(request.step) ? journaled(request) : .card(wait(request.standing))
+      // An Ask every step site parks only its changes: reading there goes ahead.
+      return boundary == .siteAsk && reads(request.step) ? journaled(request) : .blocked(boundary)
     }
     if request.standing.level == .everyStep, !reads(request.step) { return .card(wait(request.standing)) }
     return journaled(request)

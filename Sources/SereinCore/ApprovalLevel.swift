@@ -12,9 +12,9 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
   case proactive
   /// The levels the person can choose for Serein's own chat.
   public static let chatChoices: [ApprovalLevel] = [.everyStep, .riskyOnly, .proactive]
-  /// Allow all by default so Serein and its teams act autonomously; payments and passwords still
-  /// route to the secure card (`ApprovalDoor.answer`). A change here affects only installs whose
-  /// key is still unset or awaiting one-time upgrade (`allowAllMigratedKey`).
+  /// Allow all (owner 2026-11-25): Serein and its teams go ahead without asking; paying and
+  /// passwords still go to the secure card (`ApprovalDoor.answer`). Existing installs move to
+  /// it once (`AllowAllMigration`), and the person changes it by saying so.
   public static let newInstallDefault: ApprovalLevel = .proactive
   /// Set on every change the user makes, so a later default never overrides their choice.
   public static let userSetKey = "serein.approvals.userSet"

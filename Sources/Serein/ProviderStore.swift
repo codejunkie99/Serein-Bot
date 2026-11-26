@@ -273,6 +273,18 @@ import SereinEngines
     catch StopReason.failed(let message) { throw SereinError.invalid(message) }
   }
 
+  /// OpenRouter's own count of what its key has left (`GET /key`), nil when it is not connected, the
+  /// key has no limit, or the read fails. The key goes only to OpenRouter's own https address.
+  func openRouterLeft() async -> Double? {
+    guard let c = connection("openrouter"), c.enabled, let base = URL(string: c.baseURL), base.scheme == "https",
+      base.host == "openrouter.ai", let key = key(c) else { return nil }
+    var request = URLRequest(url: base.appendingPathComponent("key"), timeoutInterval: 8)
+    request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+    guard let (body, response) = try? await EphemeralHTTP.session(resourceTimeout: 8).data(for: request),
+      (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+    return UsageTally.openRouterKey(body)
+  }
+
   func setDirectHTTP(_ id: String, enabled: Bool) throws {
     guard let library, let i = connections.connections.firstIndex(where: { $0.id == id && $0.wire == .openai }) else { return }
     let old = connections.connections[i].directHTTP

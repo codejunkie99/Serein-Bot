@@ -53,7 +53,7 @@ public enum AssistantMigration {
   /// The writes for one install. A key that is already set is never touched, with one
   /// exception: an existing install that had the assistant off gets check-ins and note
   /// suggestions off whatever they held, since that is what it had in effect. `approvalDefault`
-  /// is `ApprovalLevel.newInstallDefault` (a parameter so the raised default can be tested): a
+  /// is `ApprovalLevel.newInstallDefault` (a parameter so another default can be tested): a
   /// fresh install given Only risky steps also gets `serein.approvals.defaulted`, so Serein says
   /// so once before its first routine step instead of going ahead silently. `canRunBuiltIn`: this
   /// Mac and build can run the built-in computer, so a fresh install starts with it on, setting
@@ -70,13 +70,9 @@ public enum AssistantMigration {
         writes.append(.bool(ComputerPolicy.autoSetUpKey, true))
       }
       if autopilot == nil {
-        if approvalDefault == .proactive {
-          writes.append(.string(autopilotKey, ApprovalLevel.proactive.rawValue))
-          writes.append(.bool(ApprovalLevel.defaultedKey, true))
-        } else {
-          writes.append(.bool(autopilotKey, approvalDefault.autopilot))
-          if approvalDefault == .riskyOnly { writes.append(.bool(ApprovalLevel.defaultedKey, true)) }
-        }
+        writes.append(approvalDefault == .proactive
+          ? .string(autopilotKey, approvalDefault.rawValue) : .bool(autopilotKey, approvalDefault.autopilot))
+        if approvalDefault == .riskyOnly { writes.append(.bool(ApprovalLevel.defaultedKey, true)) }
       }
       if proactive == nil { writes.append(.string(proactiveKey, RelayProactive.Level.newInstallDefault.rawValue)) }
       if learnsNotes == nil { writes.append(.bool(learnsKey, RelayMemory.learnsNewInstallDefault)) }

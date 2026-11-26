@@ -161,11 +161,34 @@ public struct TurnPrompt: Hashable, Sendable {
   /// A session command the CLI advertised (ACP `/compact`), sent instead of `message` on a resumed
   /// session only.
   public var command: String? = nil
+  /// The chat registry's slice for a cold session (ChatRegistry.slice). ACP takes it as an
+  /// embedded resource; every other engine reads it ahead of `volatile` (`contextInVolatile`).
+  public var registry: String? = nil
+  /// A seat's hand-off packet (HandoffPacket.brief) on its first turn. ACP takes it as an
+  /// embedded resource on every turn it rides; every other engine reads it ahead of `volatile`.
+  public var packet: Embedded? = nil
+  public struct Embedded: Hashable, Sendable {
+    public var uri: String
+    public var text: String
+    public init(uri: String, text: String) {
+      self.uri = uri
+      self.text = text
+    }
+  }
   public init(stable: String, volatile: String, message: String, recovery: String?) {
     self.stable = stable
     self.volatile = volatile
     self.message = message
     self.recovery = recovery
+  }
+  /// The slice and the packet moved into `volatile`; `stable` is never touched, so the warm key holds.
+  public var contextInVolatile: TurnPrompt {
+    guard registry != nil || packet != nil else { return self }
+    var moved = self
+    moved.volatile = [registry ?? "", packet?.text ?? "", volatile].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    moved.registry = nil
+    moved.packet = nil
+    return moved
   }
 }
 
@@ -206,6 +229,8 @@ public enum EngineEvent: Sendable, Equatable {
   case notice(String)
   /// The app's usage limit refused a request (LimitFailover reads it when the turn fails).
   case limitReached(UsageLimit)
+  /// The provider's own count of the share it has left, 0 to 1 (UsageTally reads it when the turn ends).
+  case usageLeft(Double)
   /// The CLI has not started: the Mac is short of memory (EngineRoom). The run is waiting, not silent.
   case waiting(String)
   case usage(input: Int, output: Int, cachedInput: Int?)

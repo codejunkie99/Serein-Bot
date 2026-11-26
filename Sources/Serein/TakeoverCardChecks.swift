@@ -36,7 +36,7 @@ import WebKit
     await page.settle(limit: 3)
   }
   func title() async -> String { (try? await tab.web.evaluateJavaScript("document.title")) as? String ?? "" }
-  let line = Boundary.botCheck.blocked!.text
+  let line = Boundary.botCheck.blocked.text
 
   await load(tab, UIPreview.takeoverCheckPage)
   await load(other, "<!doctype html><title>Other</title><p>Order summary</p>")

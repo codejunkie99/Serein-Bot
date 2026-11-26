@@ -1461,7 +1461,7 @@ struct BrowserTask {
     var task = task
     let raw = request["name"] as? String ?? ""
     // What Serein's own turn uses, so a note it keeps knows whether the turn read outside text.
-    if task.allowRelay { RelayOrchestrator.shared?.noteTurnTool(raw) }
+    if task.allowRelay { RelayOrchestrator.shared?.noteTurnTool(raw, thread: threadID(forTask: id)) }
     // Serein's own assistant has no built-in tabs (AssistantWeb): it works on websites through a Mac.
     if task.allowRelay && (AssistantWeb.tabTools.contains(raw)
       || raw == "person_step" && (request["arguments"] as? [String: Any])?["kind"] as? String != "confirm") {
@@ -1503,6 +1503,7 @@ struct BrowserTask {
         ? MacBackgroundAsk(
           thread: owner ?? agentTabs.hub?.runs.first { $0.taskID == id }?.spec.threadID,
           unattended: { [weak self] in self?.isUnattended(task: id) ?? true },
+          allowsAll: { [weak self] in self?.allowsAll(task: id) ?? false },
           ask: { [weak self] title, detail, button in
             if let relay { return await relay.confirmAnswer(title, detail, button: button, thread: self?.threadID(forTask: id)) }
             return await MacBackgroundAsk.alert(title, detail, button: button, thread: owner)
@@ -1763,14 +1764,24 @@ struct BrowserTask {
     if RelayTools.teamNames.contains(raw), let relay = RelayOrchestrator.shared,
       let run = relay.agent.hub.runs.first(where: { $0.taskID == id }), run.spec.initiator == .handoff
     {
-      return try await relay.tools.handOff(request["arguments"] as? [String: Any] ?? [:], handoffChat: run.spec.threadID)
+      let args = request["arguments"] as? [String: Any] ?? [:]
+      if raw == "channel_say" { return try await relay.tools.channelSay(args, handoffChat: run.spec.threadID) }
+      if raw == "swarm_start" { return try await relay.tools.swarmStart(args, handoffChat: run.spec.threadID) }
+      return try await relay.tools.handOff(args, handoffChat: run.spec.threadID)
+    }
+    // A hand-off's own run and its team room: the host finds the seat from the run (Rooms).
+    if RelayTools.roomNames.contains(raw) {
+      guard let relay = RelayOrchestrator.shared,
+        let run = relay.agent.hub.runs.first(where: { $0.taskID == id }), run.spec.initiator == .handoff
+      else { throw SereinError.invalid("Only an assistant working on a hand-off has a team room.") }
+      return try relay.roomTool(raw, request["arguments"] as? [String: Any] ?? [:], seatThread: run.spec.threadID)
     }
     // Relay's orchestration tools: only its own run holds them (RelayToolHost).
     if RelayTools.names.contains(raw) || RelayTools.teamNames.contains(raw) {
       guard task.allowRelay, let relay = RelayOrchestrator.shared else {
         throw SereinError.invalid("Serein’s tools are only available to Serein.")
       }
-      return try await relay.tools.call(raw, request["arguments"] as? [String: Any] ?? [:])
+      return try await relay.tools.call(raw, request["arguments"] as? [String: Any] ?? [:], thread: threadID(forTask: id))
     }
     // Serein's own settings, when the user asks (AgentSettings): no tab and no website action.
     if ToolSchema.settingsToolNames.contains(raw) {
@@ -1860,8 +1871,8 @@ struct BrowserTask {
       guard task.tabs.filter({ $0.owner == id }).count < AgentTabPolicy.maxTabs else {
         throw SereinError.invalid(AgentTabPolicy.capMessage())
       }
-      try await authorizeSite(u, taskID: id, navigating: true)
-      try await useKeptSignIn(u, taskID: id, into: task.store, tool: raw, operationID: operationID)
+      try await authorizeSite(u, taskID: id)
+      try await useKeptSignIn(u, taskID: id, into: task.store, tool: raw, arguments: a, operationID: operationID)
       task.pass = tasks[id]?.pass
       task.keptAsked = tasks[id]?.keptAsked ?? task.keptAsked
       let tab = BrowserTab(privateMode: task.isolated, owner: id, store: task.store)
@@ -1925,8 +1936,9 @@ struct BrowserTask {
     case "go":
       guard let url = a["url"] as? String else { throw SereinError.invalid("Missing URL") }
       try Self.check(try BrowserPolicy.url(url), task)
-      try await authorizeSite(url, taskID: id, navigating: true)
-      try await useKeptSignIn(url, taskID: id, into: tab.web.configuration.websiteDataStore, tool: raw, operationID: operationID)
+      try await authorizeSite(url, taskID: id)
+      try await useKeptSignIn(
+        url, taskID: id, into: tab.web.configuration.websiteDataStore, tool: raw, arguments: a, operationID: operationID)
       // Its card can wait: a tab the person took over meanwhile is theirs, never driven.
       guard AgentTabGate.mayDrive(
         owner: tab.owner, task: id, defaultStore: tab.web.configuration.websiteDataStore === WKWebsiteDataStore.default())
@@ -1982,7 +1994,7 @@ struct BrowserTask {
       }
       if let landed = tab.web.url, landed.host != previous.host {
         do {
-          try await authorizeSite(landed.absoluteString, taskID: id, navigating: true)
+          try await authorizeSite(landed.absoluteString, taskID: id)
         } catch {
           tab.web.goForward()
           throw error
@@ -2160,9 +2172,20 @@ struct BrowserTask {
     tasks[taskID] = task
   }
 
-  /// `navigating` marks a move onto the site (open, go, back): on an Ask every step site each
-  /// such move asks, even after the task's first yes there.
-  func authorizeSite(_ raw: String, taskID: String, navigating: Bool = false) async throws {
+  /// The person's rule for `address` as the door reads it for this exact call: Ask every step
+  /// reads as normal once the person said yes to this call on its person_step confirm card,
+  /// which only their answer grants (`personStepAnswered`, R16). The yes covers one call.
+  func siteRule(_ address: String?, tool: String, arguments: [String: Any], task: String) -> SiteRule {
+    let rule = SiteRules.rule(for: address)
+    guard rule == .ask, let relay = RelayOrchestrator.shared,
+      relay.takesConfirm(tool: tool, argsHash: PersonStep.argsHash(arguments), path: nil, task: task)
+    else { return rule }
+    return .normal
+  }
+
+  /// An Ask every step site asks nothing here: moving there reads, and each changing step there
+  /// goes to the person's confirm card (`ApprovalDoor`, `siteRule`).
+  func authorizeSite(_ raw: String, taskID: String) async throws {
     // A Never rule refuses before any card, for every task (SiteRules), and so does a site turned
     // off for the assistant whose task this is (AssistantScope).
     try SiteRules.check(raw)
@@ -2171,15 +2194,13 @@ struct BrowserTask {
     if pass.ended { throw SereinError.invalid(ActionAdmission.needsPerson) }
     let host = TaskPass.host(raw)
     guard !host.isEmpty else { return }
-    let everyStep = navigating && SiteRules.rule(for: raw) == .ask
-    let known = !pass.needsSiteAsk(site: host)
     switch TaskPass.admit(pass: &pass, site: host) {
-    case .already where !everyStep:
+    case .already:
       tasks[taskID]?.pass = pass
       return
-    case .already, .ask:
-      // A task at Proactive goes to a new site without a card. An Ask every step site still asks.
-      if !everyStep, taskStandsProactive(taskID) {
+    case .ask:
+      // At Allow all, and in a task at Proactive, a new site takes no card.
+      if taskStandsProactive(taskID) || RelayOrchestrator.shared?.level == .proactive {
         pass.allow(site: host)
         tasks[taskID]?.pass = pass
         return
@@ -2189,11 +2210,9 @@ struct BrowserTask {
       let first = pass.sites.isEmpty
       let human = await relay.confirmAnswer(
         "Serein wants to act on \(host)",
-        everyStep && known
-          ? "You set Serein to ask every step on \(host)."
-          : (first
-            ? "Allow this task to act on \(host). A yes covers only this task."
-            : "This task did not start on this site. A yes covers only this task."),
+        first
+          ? "Allow this task to act on \(host). A yes covers only this task."
+          : "This task did not start on this site. A yes covers only this task.",
         thread: threadID(forTask: taskID))
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? ActionAdmission.declined : ActionAdmission.needsPerson)
@@ -2238,8 +2257,9 @@ struct BrowserTask {
     // field, list, slider or switch changes a value, so it is not a key move.
     let moves = name != "key" || UnattendedAuthority.keyMoves(on: live.reading)
     let covered: Bool = moves && relay?.wordsCover(effect, site: tab.actionSite(arguments)) == true
-    // The site rule only raises: Ask every step makes a step Autopilot would run ask.
-    let rule = SiteRules.rule(for: tab.address)
+    // The site rule only raises: Ask every step parks a change on person_step until the
+    // person's yes covers this exact call.
+    let rule = siteRule(tab.address, tool: name, arguments: arguments, task: taskID)
     let request = ApprovalDoor.Request(
       .action(gate), standing(task: taskID, else: RelayOrchestrator.standing(relay, present: !scheduled)), site: rule,
       taskID: taskID)

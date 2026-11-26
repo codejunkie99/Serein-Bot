@@ -269,14 +269,17 @@ enum Recovery: Equatable {
     case .limitReached(let limit):
       // Kept only if the turn then fails (AgentHub.finish); the exact reset beats the error's words.
       run.usageLimit = limit
+    case .usageLeft(let share):
+      run.usageLeft = share
     case .waiting(let text):
       run.phase = text
       run.record.lastEventAt = Date()
     case .usage(let input, let output, let cached):
       run.record.tokens = input + output
       if input + (cached ?? 0) > 0 { run.contextTokens = input + (cached ?? 0) }
-    case .context(let used, _, _):
+    case .context(let used, _, let estimated):
       run.contextTokens = used
+      if !estimated { run.reportedContext = used }
     case .commands, .ended:
       break
     }

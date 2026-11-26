@@ -143,7 +143,7 @@ extension SmokeTest {
       "The real setup tool offers a native card without changing any setting")
     relay.dismissSetupOffer(.anywhere)
     try check(relay.dismissedSetupOffersHere == [.anywhere]
-      && RelayPrompt.volatile(request: "Continue my task").contains("Setup offers the person dismissed in this chat: anywhere"),
+      && RelayPrompt.volatile(request: "Continue my task", thread: relay.threadID).contains("Setup offers the person dismissed in this chat: anywhere"),
       "Not now remains visible to the assistant as declined setup context")
     relay.newChat()
     relay.ask("SETUP OFFER AUTOMATIC", inWindow: false, userMessage: false)

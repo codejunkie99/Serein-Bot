@@ -111,7 +111,9 @@ public enum ToolSchema {
     if args.contains("--relay") && args.contains("--connected-apps") { list += connectedAppTools }
     // Hand-off between assistants, only while this run's assistant has someone to hand work to:
     // Serein's run, or a hand-off's own (which holds none of Relay's other tools).
-    if args.contains("--team") { list.append(RelayTools.handoffTool) }
+    if args.contains("--team") { list += [RelayTools.handoffTool, RelayTools.channelSayTool, RelayTools.swarmStartTool] }
+    // A hand-off's own run reads its room, notes and reports (RelayTools.roomNames).
+    if args.contains("--room") { list += RelayTools.roomTools }
     // Team tools (PeerTools): a task's agent calls other agent CLIs; Peers runs them.
     if args.contains(PeerTools.flag) { list += PeerTools.tools }
     // Mail and Messages (Marketplace › On this Mac), for Serein's own run; the host checks each call.

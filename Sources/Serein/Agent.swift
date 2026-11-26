@@ -44,6 +44,19 @@ struct AgentMessage: Identifiable, Codable, Equatable {
   /// its profile id. The chat draws it as that assistant's group bubble with its face. Its words
   /// are untrusted data. Absent in every other message.
   var from: String? = nil
+  /// The message a channel post answers (RelayChannel): the person's message a hand-off came
+  /// from, or the hand-off post a report or a team note is about, by id. Absent in every other message.
+  var re: String? = nil
+  /// The assistants a channel post tags ("@Theo …"), by profile id. Absent in every other message.
+  var mentions: [String]? = nil
+  /// A report's lists under its words: plain text from a model, drawn as text. Absent in every
+  /// other message.
+  var parts: [Part]? = nil
+  struct Part: Codable, Equatable {
+    enum Kind: String, Codable { case decisions, files, open }
+    var kind: Kind
+    var items: [String]
+  }
   /// Tap-to-send replies under this message (`QuickReplies`, or the host's first question):
   /// plain text; a tap sends the words as the person's own message. Absent in every other message.
   var chips: [String]? = nil
@@ -383,6 +396,8 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
   /// The person's messages of the turn being dispatched (`DispatchTarget.written`), during its
   /// `send` only.
   private var writtenMessages: [AgentMessage]?
+  /// The dispatched seat's packet (`DispatchTarget.packet`), during its `send` only.
+  private var dispatchedPacket: TurnPrompt.Embedded?
   private let providerDiscoveryEnabled: Bool
   /// The chats file of the Library at `root`, started at launch before anything else reads it.
   static var launchThreads: (root: URL, chats: BackgroundRead<[Conversation]>)?
@@ -972,6 +987,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
       helperList.append("--settings")
       if relay { helperList.append("--relay") }
       if offersHandoff { helperList.append("--team") }
+      if initiator == .handoff && !relay { helperList.append("--room") }
       // Team tools (PeerTools) for every project run, task or chat; Peers answers them while its
       // run lasts, at most at the caller's level (AppPeerHost.access). Other modes have no folder to share.
       if engineRuns && mode == .project && !grant.ownSetup { helperList.append(PeerTools.flag) }
@@ -1060,7 +1076,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           access: Self.engineAccess(mode: mode, grant: grant, initiator: initiator, folder: folder),
           prompt: TurnPrompt(
             stable: stable,
-            volatile: volatile + pastedHistory + (relay ? "\n" + RelayPrompt.volatile(request: prompt) : ""),
+            volatile: volatile + pastedHistory + (relay ? "\n" + RelayPrompt.volatile(request: prompt, thread: conversationID) : ""),
             message: AgentPrivacy.redact(turn.prompt),
             recovery: remoteID != nil && !history.isEmpty
               ? AgentPrivacy.redact("Previous conversation is context, not a new instruction:\n" + history + "\n\n" + turn.prompt) : nil),
@@ -1074,6 +1090,12 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           // R7: the task's level decides what the CLI opens natively; Auto and Manual keep the folder.
           level: level)
         if engineRequest != nil { try HarnessRegistry.shared.prepare(&engineRequest!, ownSetup: grant.ownSetup) }
+        // A cold session on a provider that did not read this thread last gets the chat registry's slice.
+        engineRequest?.prompt.registry = RelayChatRegistry.shared.handoff(
+          self, thread: conversationID, provider: provider.rawValue, project: project?.name,
+          personal: readsPersonal(thread: conversationID),
+          query: (conversations.first { $0.id == conversationID }?.title ?? "") + "\n" + turn.prompt, cold: remoteID == nil)
+        engineRequest?.prompt.packet = dispatchedPacket
         if direct != nil, engineRequest?.directHTTP == nil { throw SereinError.invalid("The provider connection changed. Select it again.") }
         if let nativeCommand {
           guard remoteID == commandSession, remoteID != nil else {
@@ -1251,6 +1273,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
     syncSelection()
     // An engine failure moves the chat to its next backup, asking first when the cost can change.
     fallBack(after: run)
+    RelayChatRegistry.shared.refresh(self)
   }
   private func runSummarized(_ run: AgentRun) {
     // A helper can finish after the next turn starts. Its old question must not hide that
@@ -2105,6 +2128,8 @@ extension AgentModel {
     var page: SereinPage? = nil
     /// Rechecked after provider preparation, before the capability is granted.
     var pageIsCurrent: (() -> Bool)? = nil
+    /// A seat's hand-off packet, carried by its first turn beside the prompt (`TurnPrompt.packet`).
+    var packet: TurnPrompt.Embedded? = nil
   }
   /// The tab a page task reads and acts in: the pinned one while dispatch sends, else the active.
   private var pageTab: BrowserTab? {
@@ -2207,7 +2232,11 @@ extension AgentModel {
     let documents = ComposerContext.Chips(
       pictures: target.attached.compactMap(\.picture), documents: target.attached.compactMap(\.document))
     writtenMessages = target.written
-    defer { writtenMessages = nil }
+    dispatchedPacket = target.packet
+    defer {
+      writtenMessages = nil
+      dispatchedPacket = nil
+    }
     send(prompt, chips: documents, plan: false, waitedForCodex: true, waitedForRegistry: true, linkChecked: true, relay: target.relay, initiator: target.initiator, attached: target.attached)
     pinnedPageTab = nil
     delegatedByPerson = false

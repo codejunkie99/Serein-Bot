@@ -166,7 +166,7 @@ struct ACPCheckRig {
         if method: append("methods", method)
         if method == "initialize":
             append("init", json.dumps(p, sort_keys=True))
-            ok(i, {"protocolVersion": 1, "agentCapabilities": {"loadSession": not NOLOAD, "promptCapabilities": {"image": True}}, "authMethods": []})
+            ok(i, {"protocolVersion": 1, "agentCapabilities": {"loadSession": not NOLOAD, "promptCapabilities": {"image": True, "embeddedContext": True}}, "authMethods": []})
         elif method == "session/new":
             count[0] += 1
             sid = "s-%d-%d" % (os.getpid(), count[0])
@@ -191,6 +191,8 @@ struct ACPCheckRig {
             blocks = p["prompt"]
             body = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
             append("prompts", json.dumps(body))
+            for b in blocks:
+                if b.get("type") == "resource": append("resources", json.dumps(b.get("resource"), sort_keys=True))
             if any(b.get("type") == "image" and b.get("data") for b in blocks): append("images", "1")
             play(i, sid, body)
         elif i is not None and method:

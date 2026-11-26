@@ -202,10 +202,11 @@ final class LinkRates: @unchecked Sendable {
 
 extension RelayToolHost {
   /// `hook_make`: the person's words that name it ("when GitHub opens a pull request, tell
-  /// Release") make it at once; other words in their turn ask on a card; other turns are refused.
+  /// Release") make it at once; other words in their turn ask on a card, or at Allow all make it
+  /// with the receipt's Undo; other turns are refused.
   func makeLink(_ a: [String: Any]) async throws -> [String: Any] {
     try requireReadableLinks()
-    let actingID: String = relay.actingProfile?.id ?? relay.team.activeID
+    let actingID: String = frame.acting ?? relay.team.activeID
     let parsed = LinkDraft.parse(
       a, actingID: actingID, team: relay.team, existing: relay.desk.links.count, id: LinkAddress.newID(), now: Date())
     let spec: HookSpec
@@ -214,8 +215,9 @@ extension RelayToolHost {
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
     let owner = relay.profileName(spec.owner)
-    let named = TypedConsent.names(.makeLink, in: relay.typedWords)
-    switch Admission.decide(.makeLink, turn: relay.admissionTurn, wordsNameIt: named) {
+    let named = TypedConsent.names(.makeLink, in: frame.typedWords)
+    let verdict = Admission.decide(.makeLink, turn: frame.admission, wordsNameIt: named)
+    switch Admission.atLevel(verdict, turn: frame.admission, level: relay.level) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:
@@ -223,7 +225,7 @@ extension RelayToolHost {
     case .ask:
       let human = await relay.confirmAnswer(
         LinkDraft.cardTitle(owner: owner), LinkDraft.cardDetail(owner: owner, instruction: spec.instruction),
-        button: LinkDraft.confirm, decline: LinkDraft.decline, thread: relay.threadID, effect: .settings)
+        button: LinkDraft.confirm, decline: LinkDraft.decline, thread: frame.thread, effect: .settings)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person said not now. No link was made." : ActionAdmission.needsPerson)
       }
@@ -231,7 +233,7 @@ extension RelayToolHost {
     guard let receipt = await relay.addOwnedLink(spec) else {
       throw SereinError.invalid("Serein could not make and keep a secure secret, so no link was made. Try again.")
     }
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     return [
       "made": spec.name, "wakes": owner, "undo": receipt.undo?.entry ?? "",
       "note": HostFacts.receiptNote
@@ -261,7 +263,7 @@ extension RelayToolHost {
 
   /// `hook_remove {name}`: the person's turn removes it at once, with a 10-second Undo.
   func removeLink(_ a: [String: Any]) throws -> [String: Any] {
-    if case .refuse(let why) = Admission.decide(.ownChange, turn: relay.admissionTurn, wordsNameIt: true) {
+    if case .refuse(let why) = Admission.decide(.ownChange, turn: frame.admission, wordsNameIt: true) {
       throw SereinError.invalid(why)
     }
     try requireReadableLinks()
@@ -272,7 +274,7 @@ extension RelayToolHost {
     guard let link = found, let receipt = relay.removeLinkForUndo(link.id) else {
       throw SereinError.invalid("No link is called \(String(wanted.prefix(80))). hook_list lists them.")
     }
-    relay.deliver(receipt: receipt, into: relay.threadID)
+    relay.deliver(receipt: receipt, into: frame.thread)
     return ["removed": link.spec.name, "undo": receipt.undo?.entry ?? "", "note": HostFacts.receiptNote]
   }
 }

@@ -53,9 +53,9 @@ extension RelayOrchestrator {
   /// The person's turn in the chat on screen ended (`ended`): its reply carries the offer when
   /// this was the third such request. Only a turn the person started, that neither failed nor
   /// was stopped, in a chat with no personal-read mark.
-  func offerRoutineIfDue(_ run: AgentRun) {
+  func offerRoutineIfDue(_ run: AgentRun, byPerson: Bool) {
     let thread = run.spec.threadID
-    guard startedByPerson, let asked = desk.offerAsked.removeValue(forKey: thread) else { return }
+    guard byPerson, let asked = desk.offerAsked.removeValue(forKey: thread) else { return }
     let outcome = run.record.outcome
     guard suggestsRoutines, outcome != .stuck, outcome != .stopped, !isUnreadable(Self.routineOffersFile) else { return }
     guard !agent.readsPersonal(thread: thread), let kind = RoutineOffers.kind(id: asked.kind) else { return }

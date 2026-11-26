@@ -45,9 +45,6 @@ extension AssistantCoreChecks {
 
     try check(refusal(L(records: [root, child, grandchild]), grandchild, to: "ana")?.contains("\(L.maxChain) assistants") == true,
       "A fifth assistant on one task is refused")
-    let team = RelayTeam(profiles: ["serein", "writer", "editor", "scout", "ana"].map { RelayProfile(id: $0, name: $0) }, activeID: "serein")
-    try check(team.handoffTargets(continuing: child).map(\.id) == ["scout", "ana"], "A target is offered only its teammates outside the chain")
-    try check(team.handoffTargets(continuing: grandchild).isEmpty, "A full chain offers nobody")
 
     var wide = L(records: [root])
     for i in 1..<L.maxPerRoot { wide.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }
@@ -65,16 +62,16 @@ extension AssistantCoreChecks {
     long.trim(now: now)
     try check(long.records.count == L.kept, "Once a task has ended, its closed parts are trimmed like any other")
 
-    func parentClosable(_ state: AssistantHandoff.State, reported: Bool?) -> Bool {
-      var sent = link("c", "writer", "editor", parent: root, state: state)
-      sent.reported = reported
-      return L(records: [root, sent]).closable("r")
+    func parentClosable(_ state: AssistantHandoff.State, reported: Bool) -> Bool {
+      var ledger = L(records: [root, link("c", "writer", "editor", parent: root, state: state)])
+      if reported { _ = ledger.claimReport("c") }
+      return ledger.closable("r")
     }
     try check(L(records: [root]).closable("r"), "A hand-off that handed nothing on may close")
-    try check(!parentClosable(.waiting, reported: nil) && !parentClosable(.running, reported: nil),
+    try check(!parentClosable(.waiting, reported: true) && !parentClosable(.running, reported: true),
       "A hand-off stays open while what its target handed on is open")
     for state: AssistantHandoff.State in [.done, .failed, .expired] {
-      try check(!parentClosable(state, reported: nil), "A part that ended \(state.rawValue) holds its parent until its result is back")
+      try check(!parentClosable(state, reported: false), "A part that ended \(state.rawValue) holds its parent until its result is back")
       try check(parentClosable(state, reported: true), "A part that ended \(state.rawValue), its result back, lets its parent close")
     }
     try check(L(records: [root, child]).closable("c"), "The last link may close while its parent waits")
@@ -82,7 +79,7 @@ extension AssistantCoreChecks {
     var queued = L(records: [root, link("c", "writer", "editor", parent: root, state: .waiting)])
     let gone = queued.expire(now: now.addingTimeInterval(L.queueExpiry + 1))
     try check(gone.map(\.id) == ["c"] && queued.records[0].state == .running, "Only the part that waited expires, never its parent")
-    queued.records[1].reported = true
+    _ = queued.claimReport("c")
     try check(queued.closable("r"), "An expired part, once told to its parent, lets it close")
 
     // Stop Everything with Serein → Writer → Editor, a part of Editor's still queued for Scout,
@@ -106,7 +103,7 @@ extension AssistantCoreChecks {
     var hung = L(records: [root, child])
     try check(hung.stall(now: late, live: ["chat-writer"]).contains { $0.id == "r" }, "A hand-off whose own run shows no progress is stuck, whatever it handed on")
     waiting.records[1].state = .done
-    waiting.records[1].reported = true
+    _ = waiting.claimReport("c")
     try check(waiting.stall(now: late, live: []).map(\.id) == ["r"], "Once its parts are back, a hand-off with no progress is stuck again")
 
     let next = link("n", "ana", "writer", state: .waiting)
@@ -133,10 +130,41 @@ extension AssistantCoreChecks {
     let step = AgentStep.label(tool: "assistant_handoff", arguments: ["to": "Scout"])
     try check(step == "Handed work to Scout" && RunNow.present(step) == "Handing work to Scout",
       "A hand-off step names its teammate, so a refused one reads Not done: Handed work to Scout")
-    var done = link("d", "scout", "planner", state: .done)
+    let done = link("d", "scout", "planner", state: .done)
     try check(HandoffRows.showsCard(done), "A finished hand-off shows its result card until the asking assistant has it")
-    done.reported = true
-    try check(!HandoffRows.showsCard(done), "Once the asking assistant's reply has the result, the card is not shown again")
+    var shown = L(records: [done])
+    try check(shown.claimReport("d").map { !HandoffRows.showsCard($0) } == true,
+      "Once the asking assistant's reply has the result, the card is not shown again")
+
+    // Report delivery (TEAMS-V2 §4.8): `claimReport` is the only writer of `reported`.
+    var claims = L(records: [root, link("c", "writer", "editor", parent: root, state: .running), done])
+    try check(claims.claimReport("c") == nil && claims.claimReport("r") == nil, "An open hand-off's report cannot be claimed")
+    try check(claims.claimReport("d")?.reported == true, "A finished hand-off's report is claimed")
+    let once = claims
+    try check(claims.claimReport("d") == nil && claims == once, "A second claim of the same report is a no-op")
+
+    // A crash with the report sealed but unclaimed: each relaunch sweeps the saved ledger, and the
+    // report is delivered once over all of them.
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    var disk = try encoder.encode(L(records: [done, link("f", "scout", "planner", state: .failed)]))
+    var delivered: [String] = []
+    for _ in 0..<3 {
+      var relaunched = try decoder.decode(L.self, from: disk)
+      delivered += relaunched.records.filter { !$0.isOpen }.compactMap { relaunched.claimReport($0.id)?.id }
+      disk = try encoder.encode(relaunched)
+    }
+    try check(delivered == ["d", "f"], "The launch sweep after a crash delivers each sealed report once")
+
+    // The reader's wake turn is keyed by the report: a replay of it posts nothing.
+    var posts: [String] = []
+    var woken = L(records: [done])
+    for _ in 0..<2 {
+      if let report = woken.claimReport("d") {
+        posts.append(HandoffReport(handoff: report.id, packet: 1, state: .done, summary: report.result ?? "", byHost: true).postID)
+      }
+    }
+    try check(posts == ["handoff-report-d"], "A replayed wake turn posts nothing")
     try check(HandoffRows.showsCard(link("f", "scout", "planner", state: .failed)), "A failed hand-off keeps its card and its fixes")
   }
 }

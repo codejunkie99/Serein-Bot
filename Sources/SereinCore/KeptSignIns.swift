@@ -130,3 +130,30 @@ public enum KeptSignIns {
     return true
   }
 }
+
+/// How a task's use of a kept sign-in on a site is decided (`BrowserModel.useKeptSignIn`), once per
+/// task and site. At Allow all no window waits: the person's yes comes on this call's person_step
+/// card in the chat.
+public enum KeptSignInAsk: Equatable, Sendable {
+  /// The person said yes on this exact call's person_step card: use it.
+  case use
+  /// Asked in this task already, with no yes: the page opens signed out.
+  case signedOut
+  /// At Allow all, the first time: the call stops once with the person_step route.
+  case personStep
+  /// Below Allow all, or with nobody watching: the card at the step, or the creation card's yes.
+  case card
+
+  public static func decide(allowsAll: Bool, granted: Bool, askedBefore: Bool) -> KeptSignInAsk {
+    if allowsAll && granted { return .use }
+    if askedBefore { return .signedOut }
+    return allowsAll ? .personStep : .card
+  }
+  public static func route(_ site: String) -> Blocked {
+    Blocked(
+      "this uses the person's kept sign-in on \(site), which only they allow",
+      routes: .init(
+        "call person_step with kind confirm, this tool's name and these same arguments, carry on with every other part, and make this same call again once the person says yes",
+        "make this same call again now to open the page signed out"))
+  }
+}

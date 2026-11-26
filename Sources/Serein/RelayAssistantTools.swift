@@ -67,10 +67,6 @@ import SereinCore
   var posts: [Post] = []
   var undo = UndoStack()
   var undoActions: [String: Undo] = [:]
-  /// Kept in relay/make-proposals.json.
-  var proposals = MakeProposals()
-  /// Proposals whose card is up now.
-  var proposalCards: Set<String> = []
   /// The work Serein paused for each paused assistant, by profile id (relay/assistant-holds.json).
   var holds: [String: [HeldWork]] = [:]
   /// Kept in relay/links.json (RelayLinks.swift).
@@ -115,7 +111,6 @@ struct ChangeRefusal: Error, ExpressibleByStringLiteral {
 }
 
 extension RelayOrchestrator {
-  static let proposalsFile = "relay/make-proposals.json"
   static let holdsFile = "relay/assistant-holds.json"
 
   // MARK: who asks for a change
@@ -138,14 +133,13 @@ extension RelayOrchestrator {
   /// Each file goes through the unreadable guard (`readState`, SPEC I13): one that does not
   /// decode is kept as it is, the person is told once, and no save writes over it.
   func loadAssistantWork() {
-    desk.proposals = readState(MakeProposals.self, Self.proposalsFile) ?? MakeProposals()
     desk.holds = readState([String: [HeldWork]].self, Self.holdsFile) ?? [:]
     loadLinks()
     loadSecrets()
     loadAsks()
+    loadSeatChats()
     loadRoutineOffers()
   }
-  func saveProposals() { persist(desk.proposals, Self.proposalsFile) }
   func saveHolds() { persist(desk.holds, Self.holdsFile) }
 
   // MARK: receipts, lines and host messages
@@ -213,11 +207,11 @@ extension RelayOrchestrator {
   /// whose button started the turn (true), or lands on the turn's reply when the turn ends
   /// (`land`); outside a turn, it is a host message now.
   @discardableResult
-  func showView(_ tree: UITree, into thread: String) -> Bool {
+  func showView(_ tree: UITree, into thread: String, byPerson: Bool) -> Bool {
     let run: AgentRun? = agent.hub.run(for: thread)
     if run != nil || (thread == threadID && sending) {
       // Only the person's own press: a scheduled or proactive turn never redraws a view.
-      if startedByPerson, let run, AgentMessage.redraw(tree, kept: &UITreeValues.shared.kept, in: &run.transcript) {
+      if byPerson, let run, AgentMessage.redraw(tree, kept: &UITreeValues.shared.kept, in: &run.transcript) {
         return true
       }
       var facts: AssistantDesk.Facts = desk.facts[thread] ?? AssistantDesk.Facts()
@@ -345,31 +339,41 @@ extension RelayOrchestrator {
     let entry: String
     let receipt: Receipt
   }
-  /// Makes one assistant from `draft`, journaled (Undo removes it). The receipt, the line "You
-  /// made <Name>" and the apps to connect go to `chat`; an assistant that cannot tell its job from
-  /// its name finds its first question, with chips, in its own Main chat.
-  func makeAssistant(_ draft: AssistantDraft, actor: String, chat: String) -> Result<MadeAssistant, AssistantDraft.Problem> {
+  /// An assistant's make, as `Staffing.decide` allowed it: at `reach`, with its lineage. The room
+  /// that made it records it, for the make budget.
+  struct Staffed {
+    let reach: Reach
+    let lineage: Staffing.Lineage
+  }
+  /// Makes one assistant from `draft`, journaled (Undo removes it). The receipt, the line and the
+  /// apps to connect go to `chat`; an assistant that cannot tell its job from its name finds its
+  /// first question, with chips, in its own Main chat. `staffed`: an assistant made it
+  /// (`Staffing.make`), else the person did.
+  func makeAssistant(_ draft: AssistantDraft, actor: String, chat: String, staffed: Staffed? = nil)
+    -> Result<MadeAssistant, AssistantDraft.Problem>
+  {
     let person = personPlaces
+    func plan(_ team: RelayTeam) -> Result<MakePlan, AssistantDraft.Problem> {
+      staffed.map { Staffing.make(draft, reach: $0.reach, lineage: $0.lineage, team: team) } ?? team.making(draft, person: person)
+    }
     var made: MakePlan?
     let changed = changeTeam(actor: actor, "Made assistant \(draft.name)") { current in
-      switch current.making(draft, person: person) {
-      case .success(let plan):
-        made = plan
-        return plan.team
-      case .failure:
-        return nil
-      }
+      guard case .success(let plan) = plan(current) else { return nil }
+      made = plan
+      return plan.team
     }
     guard changed, let plan = made else {
-      if case .failure(let problem) = team.making(draft, person: person) { return .failure(problem) }
+      if case .failure(let problem) = plan(team) { return .failure(problem) }
       return .failure(.rosterFull)
     }
+    if let staffed { rooms.update(staffed.lineage.madeIn) { $0.recordMade(plan.profile.id) } }
     persist(RelayPersona(name: plan.profile.name), team.folder(plan.profile.id) + "/persona.json")
     let entry: String = teamJournal.last?.id.uuidString ?? UUID().uuidString
     desk.undoActions[entry] = .team
     let receipt = plan.receipt(entry: entry)
     let offers = AppSuggestions.offers(name: plan.profile.name, job: plan.job, composioReady: ComposioApps.available)
-    deliver(receipt: receipt, line: plan.line, connect: offers, into: chat)
+    let line = staffed == nil ? plan.line : "Made \(plan.profile.name) for this task"
+    deliver(receipt: receipt, line: line, connect: offers, into: chat)
     // The host's first message in its own chat (SPEC 2.2), with no model turn.
     if let first = FirstWords.message(name: plan.profile.name, job: plan.job, jobFromName: draft.jobFromName) {
       var message = AgentMessage(role: "assistant", text: first.text, notice: true)
@@ -389,65 +393,6 @@ extension RelayOrchestrator {
       case .success: return nil
       case .failure(let problem): return problem.words
       }
-    }
-  }
-
-  // MARK: proposals from an assistant
-
-  /// The main assistant's Main chat, where proposal cards wait.
-  var rootChat: String {
-    let id: String = team.mainProfileID ?? team.activeID
-    return knownMainThread(of: id) ?? mainThread(of: id)
-  }
-  /// An assistant proposes a new one: it waits for the person's card in the root chat. The
-  /// refusal when it cannot wait now (two open, the name blocked or waiting already).
-  func propose(_ draft: AssistantDraft, by asker: RelayProfile) -> MakeProposals.Refusal? {
-    let proposal = MakeProposals.Proposal(by: asker.id, draft: draft)
-    if let refusal = desk.proposals.add(proposal, byName: asker.name, now: Date()) { return refusal }
-    saveProposals()
-    note("\(asker.name) proposed a new assistant, \(String(draft.name.prefix(40)))", .auto)
-    showProposalCard(proposal)
-    return nil
-  }
-  /// The proposal's card (`sheet-confirm`): Make it or Not now. The tool that proposed does not
-  /// wait for it. A card that timed out comes back while the root chat is on screen.
-  func showProposalCard(_ proposal: MakeProposals.Proposal) {
-    guard !desk.proposalCards.contains(proposal.id) else { return }
-    desk.proposalCards.insert(proposal.id)
-    let draft = proposal.draft
-    let title = MakeProposals.title(draft)
-    let detail = MakeProposals.detail(draft, byName: profileName(proposal.by))
-    let more = MakeProposals.more(draft)
-    let chat = rootChat
-    let id = proposal.id
-    Task { [weak self] in
-      guard let self else { return }
-      let human = await self.confirmAnswer(
-        title, detail, button: MakeProposals.confirm, decline: MakeProposals.notNow, thread: chat, more: more,
-        moreName: "what it will do", effect: .settings)
-      self.desk.proposalCards.remove(id)
-      self.answerProposal(id, human)
-    }
-  }
-  /// Make it makes the assistant now, with its receipt in the root chat; Not now blocks the name
-  /// for seven days; a card that went unanswered leaves the proposal waiting.
-  func answerProposal(_ id: String, _ human: ApprovalGate.HumanAnswer) {
-    switch human {
-    case .yes:
-      guard let proposal = desk.proposals.take(id) else { return }
-      saveProposals()
-      let chat = rootChat
-      if case .failure(let problem) = makeAssistant(proposal.draft, actor: "user", chat: chat) {
-        var message = AgentMessage(role: "assistant", text: "", notice: true)
-        message.line = "\(String(proposal.name.prefix(40))) was not made. \(problem.words)"
-        post(message, into: chat)
-      }
-    case .no:
-      guard let proposal = desk.proposals.decline(id, now: Date()) else { return }
-      saveProposals()
-      post(AssistantDesk.lineMessage(MakeProposals.declined(proposal.name)), into: rootChat)
-    case .timeout, .error:
-      break
     }
   }
 
@@ -626,6 +571,8 @@ extension RelayOrchestrator {
       desk.undo.remove(id)
       return .success(ReceiptCopy.undone())
     }
+    // A setting changed from the chat goes back while it still reads what the change wrote.
+    if id.hasPrefix(ChatSettings.undoPrefix) { return undoSetting(id) }
     // A memory change goes back off the main thread (`revertMemory`).
     if id.hasPrefix(Self.memoryUndoPrefix) { return .failure("That note changes back on its own path.") }
     // "Stop suggesting routines" goes back: suggestions are on again.
@@ -639,6 +586,15 @@ extension RelayOrchestrator {
     if id == Self.offersUndoEntry {
       desk.undo.remove(id)
       suggestsRoutines = true
+      return .success(ReceiptCopy.undone())
+    }
+    // The move to Allow all goes back to the level before, unless the level changed since.
+    if id == AllowAllMigration.undoEntry {
+      desk.undo.remove(id)
+      guard level == .proactive, let before = AllowAllMigration.previous(GateSettings.shared), before != .proactive else {
+        return .failure("The level changed since. Say how much Serein should ask.")
+      }
+      setLevel(before)
       return .success(ReceiptCopy.undone())
     }
     let action: AssistantDesk.Undo? = desk.undoActions[id]
@@ -758,18 +714,6 @@ extension RelayOrchestrator {
       folded.end(now: now)
       desk.plans[thread] = folded
     }
-    // A proposal waits a day at most; while the root chat is on screen its card is up.
-    var book = desk.proposals
-    let cards = desk.proposalCards
-    let stale: [MakeProposals.Proposal] = book.open.filter { now.timeIntervalSince($0.createdAt) > 86_400 && !cards.contains($0.id) }
-    for proposal in stale { book.take(proposal.id) }
-    book.trim(now: now)
-    if book != desk.proposals {
-      desk.proposals = book
-      saveProposals()
-    }
-    guard !desk.proposals.open.isEmpty, chatOnScreen(), threadID == rootChat else { return }
-    for proposal in desk.proposals.open where !desk.proposalCards.contains(proposal.id) { showProposalCard(proposal) }
   }
 }
 
@@ -790,37 +734,21 @@ extension RelayToolHost {
     return ["assistants": listing]
   }
 
-  /// `assistant_make`. The person's own words that name it make it at once; a person's turn
-  /// whose words do not name it asks on a card; another assistant's turn makes a proposal the
-  /// person decides on later; nobody there refuses.
+  /// `assistant_make`: made at once when `Staffing.decide` allows it, with its receipt and Undo in
+  /// this chat, and counted against this task's make budget. A refusal is the sentence the model
+  /// follows, never a card (owner, 2026-11-25).
   func makeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
-    let turn = relay.admissionTurn
     let draft: AssistantDraft
     switch AssistantDraft.parse(a, person: relay.personPlaces, team: relay.team) {
     case .success(let parsed): draft = parsed
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
-    let named = TypedConsent.names(.makeAssistant, in: relay.typedWords)
-    switch Admission.decide(.makeAssistant, turn: turn, wordsNameIt: named) {
-    case .refuse(let why):
-      throw SereinError.invalid(why)
-    case .apply:
-      return try made(draft)
-    case .ask:
-      if turn != .person { return try proposed(draft) }
-      let human = await relay.confirmAnswer(
-        MakeProposals.title(draft), MakeProposals.detail(draft, byName: nil), button: MakeProposals.personConfirm,
-        decline: MakeProposals.notNow, thread: relay.threadID, more: MakeProposals.more(draft),
-        moreName: "what it will do", effect: .settings)
-      guard human == .yes else {
-        throw SereinError.invalid(human == .no ? "The person said not now. Nothing was made." : ActionAdmission.needsPerson)
-      }
-      return try made(draft)
-    }
-  }
-  private func made(_ draft: AssistantDraft) throws -> [String: Any] {
-    switch relay.makeAssistant(draft, actor: "relay", chat: relay.threadID) {
+    let maker = relay.profile(id: frame.profile)
+    let chat = frame.thread
+    let staffed = relay.staff(.newAssistant(draft), sender: maker, parent: nil, chat: chat, readOutside: frame.readOutside)
+    guard case .make(let reach, let lineage) = staffed.verdict else { return Self.staffingRefusal(staffed.verdict) }
+    switch relay.makeAssistant(draft, actor: "relay", chat: chat, staffed: .init(reach: reach, lineage: lineage)) {
     case .failure(let problem):
       throw SereinError.invalid(problem.words)
     case .success(let outcome):
@@ -830,24 +758,18 @@ extension RelayToolHost {
         "note": HostFacts.receiptNote,
       ]
       if outcome.plan.asksFirst { out["first_question"] = "It asks the person what it should do when they open its chat." }
-      if !draft.dropped.isEmpty { out["left_out"] = draft.dropped }
+      let leftOut = draft.dropped + reach.dropped(from: AssistantScope(destinations: draft.places))
+      if !leftOut.isEmpty { out["left_out"] = leftOut }
       return out
     }
   }
-  private func proposed(_ draft: AssistantDraft) throws -> [String: Any] {
-    guard let asker = relay.actingProfile ?? relay.team.active else { throw SereinError.invalid(ActionAdmission.needsPerson) }
-    if let refusal = relay.propose(draft, by: asker) { throw SereinError.invalid(refusal.words) }
-    return [
-      "proposed": draft.name,
-      "note": "The person decides on a card in Serein's main chat. Nothing is made until they press Make it. Tell them in one short sentence.",
-    ]
-  }
 
   /// `assistant_change`. Narrowing, a new name or job and a pause apply from the person's own
-  /// turn; letting it do more asks on a card (`sheet-permission`); other turns are refused.
+  /// turn; letting it do more asks on a card (`sheet-permission`), or at Allow all applies with the
+  /// receipt's Undo; other turns are refused.
   func changeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
-    let actingID: String = relay.actingProfile?.id ?? relay.team.activeID
+    let actingID: String = frame.acting ?? relay.team.activeID
     let parsed = AssistantChange.parse(
       a, actingID: actingID, team: relay.team, person: relay.personScope, global: relay.proactiveLevel)
     let change: AssistantChange
@@ -858,8 +780,9 @@ extension RelayToolHost {
     let shown = relay.team
     // New words for an assistant apply at once only when the person's own words name it (safety
     // review 7): else a card, so a page cannot write another assistant's instructions.
-    let named: Bool = ScheduleRequest.wordsName(change.name, in: relay.typedWords)
-    switch change.verdict(turn: relay.admissionTurn, wordsNameIt: named) {
+    let named: Bool = ScheduleRequest.wordsName(change.name, in: frame.typedWords)
+    let verdict = change.verdict(turn: frame.admission, wordsNameIt: named)
+    switch Admission.atLevel(verdict, turn: frame.admission, level: relay.level) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:
@@ -868,7 +791,7 @@ extension RelayToolHost {
       let effect: ApprovalGate.Effect = change.widens ? .widening : .settings
       let human = await relay.confirmAnswer(
         change.cardTitle, change.cardDetail, button: AssistantChange.allow, decline: AssistantChange.keep,
-        thread: relay.threadID, effect: effect)
+        thread: frame.thread, effect: effect)
       guard human == .yes else {
         throw SereinError.invalid(human == .no ? "The person said not now. Nothing changed." : ActionAdmission.needsPerson)
       }
@@ -880,15 +803,17 @@ extension RelayToolHost {
     case .failure(let refusal):
       throw SereinError.invalid(refusal.words)
     case .success(let receipt):
-      relay.deliver(receipt: receipt, into: relay.threadID)
+      relay.deliver(receipt: receipt, into: frame.thread)
       var out: [String: Any] = ["changed": change.shownName, "undo": receipt.undo?.entry ?? "", "note": HostFacts.receiptNote]
       if !change.dropped.isEmpty { out["left_out"] = change.dropped }
       return out
     }
   }
 
-  /// `assistant_delete`: always a card (`sheet-destructive-confirm`) that says what ends with it,
-  /// then the toast with a 10-second Undo. Nobody there refuses.
+  /// `assistant_delete`: a card (`sheet-destructive-confirm`) that says what ends with it, then the
+  /// toast with a 10-second Undo. At Allow all the person's own turn archives it with no card: its
+  /// files wait in relay/removed and the receipt's Undo brings it back while the roster's history
+  /// holds the change. Nobody there refuses.
   func deleteAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     let raw: String = (a["name"] as? String) ?? (a["assistant"] as? String) ?? ""
     var wanted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -896,33 +821,36 @@ extension RelayToolHost {
     guard let target = relay.team.profile(named: wanted) else {
       throw SereinError.invalid(DeletePlan.Refusal.unknown.words)
     }
-    if case .refuse(let why) = Admission.decide(.deleteAssistant, turn: relay.admissionTurn, wordsNameIt: true) {
-      throw SereinError.invalid(why)
-    }
+    let verdict = Admission.atLevel(
+      Admission.decide(.deleteAssistant, turn: frame.admission, wordsNameIt: true), turn: frame.admission, level: relay.level)
+    if case .refuse(let why) = verdict { throw SereinError.invalid(why) }
     let plan: DeletePlan
     switch relay.deletePlan(for: target.id) {
     case .success(let found): plan = found
     case .failure(let refusal): throw SereinError.invalid(refusal.words)
     }
-    let human = await relay.confirmAnswer(
-      plan.title, plan.detail, button: DeletePlan.confirm, decline: DeletePlan.keep, thread: relay.threadID, effect: .delete)
-    guard human == .yes else {
-      throw SereinError.invalid(human == .no ? "The person kept \(target.name). Nothing was deleted." : ActionAdmission.needsPerson)
+    let archives = verdict == .apply && relay.level == .proactive
+    if !archives {
+      let human = await relay.confirmAnswer(
+        plan.title, plan.detail, button: DeletePlan.confirm, decline: DeletePlan.keep, thread: frame.thread, effect: .delete)
+      guard human == .yes else {
+        throw SereinError.invalid(human == .no ? "The person kept \(target.name). Nothing was deleted." : ActionAdmission.needsPerson)
+      }
     }
-    guard let receipt = relay.applyDelete(plan, actor: "relay") else {
+    guard let deleted = relay.applyDelete(plan, actor: "relay") else {
       throw SereinError.invalid("The assistants changed while the card waited, so nothing was deleted. Ask again.")
     }
-    relay.deliver(receipt: receipt, into: relay.threadID)
-    return [
-      "deleted": target.name, "undo": receipt.undo?.entry ?? "",
-      "note": "The person can undo it for 10 seconds on the toast, or by asking. " + HostFacts.receiptNote,
-    ]
+    let entry = deleted.undo?.entry ?? ""
+    let receipt = archives ? ReceiptCopy.archived(name: target.name, entry: entry) : deleted
+    relay.deliver(receipt: receipt, into: frame.thread)
+    let way = archives ? "The person can bring it back with Undo on the receipt, or by asking. " : "The person can undo it for 10 seconds on the toast, or by asking. "
+    return [archives ? "archived" : "deleted": target.name, "undo": entry, "note": way + HostFacts.receiptNote]
   }
 
   /// `plan`: draws or moves this turn's plan card (SPEC 2.6). It changes nothing, so any turn may.
   func updatePlan(_ a: [String: Any]) throws -> [String: Any] {
     // The chat whose turn runs: a routine's owner chat while it runs there.
-    let thread = relay.turnThread
+    let thread = frame.thread
     switch PlanCard.parse(a, previous: relay.desk.plans[thread], now: Date()) {
     case .failure(let problem):
       throw SereinError.invalid(problem.words)
@@ -937,7 +865,7 @@ extension RelayToolHost {
   /// Nothing is posted; a post over X's limit comes back to the model to shorten.
   func draftPost(_ a: [String: Any]) throws -> [String: Any] {
     guard let draft = PostDraft.parse(a) else { throw SereinError.invalid("posts: give the post's words, one string per post.") }
-    relay.showPost(draft, into: relay.turnThread)
+    relay.showPost(draft, into: frame.thread)
     var out: [String: Any] = ["shown": draft.posts.count, "note": "The person sees the draft under your reply, with Copy and Open in X. Nothing was posted."]
     let over = draft.over
     if !over.isEmpty {
@@ -955,7 +883,7 @@ extension RelayToolHost {
     switch UITree.parse(a) {
     case .failure(let problem): throw SereinError.invalid(problem.words)
     case .success(let tree):
-      let replaced: Bool = relay.showView(tree, into: relay.turnThread)
+      let replaced: Bool = relay.showView(tree, into: frame.thread, byPerson: frame.byPerson)
       // A redrawn view sits above the person's message, so the reply says what changed.
       let place: String = replaced
         ? "It takes the place of the view the person pressed. Say in one short line what changed."
@@ -970,14 +898,14 @@ extension RelayToolHost {
   /// the trip", "update the trip dashboard"). Made in a chat with the personal-read mark, it keeps
   /// the mark.
   func makeDashboard(_ a: [String: Any]) throws -> [String: Any] {
-    guard relay.startedByPerson else { throw SereinError.invalid(Self.dashboardNotHere) }
+    guard frame.byPerson else { throw SereinError.invalid(Self.dashboardNotHere) }
     let built: DashboardDraft.Built
-    switch DashboardDraft.parse(a, team: relay.team, actingID: relay.turnProfileID) {
+    switch DashboardDraft.parse(a, team: relay.team, actingID: frame.profile) {
     case .success(let value): built = value
     case .failure(let problem): throw SereinError.invalid(problem.words)
     }
     var spec = built.spec
-    let thread = relay.turnThread
+    let thread = frame.thread
     if relay.agent.readsPersonal(thread: thread) { spec.personal = true }
     let site = try SiteBook.shared.dashboard(spec)
     relay.showDashboard(spec, into: thread)
@@ -998,9 +926,9 @@ extension RelayToolHost {
   /// the person's own turn shows one (SPEC 5.4). The model reads one sentence back, never a key,
   /// an address or an account.
   func connectApp(_ a: [String: Any]) throws -> [String: Any] {
-    guard relay.startedByPerson else { throw SereinError.invalid(ConnectCatalog.notHere) }
+    guard frame.byPerson else { throw SereinError.invalid(ConnectCatalog.notHere) }
     let raw: String = (a["app"] as? String) ?? ""
-    let thread = relay.turnThread
+    let thread = frame.thread
     // A cloud computer's key goes in the key card under the reply, straight to Keychain.
     if let link = ConnectLink(app: raw, kind: .key), let account = HostedAccount.forKey(link) {
       if account.hasKey { return ["note": ConnectCatalog.ready(link.name)] }
@@ -1051,7 +979,7 @@ extension RelayToolHost {
   /// `undo`: the last change made in this chat, or the one `token` names. Only the person's own
   /// turn may undo.
   func undoChange(_ a: [String: Any]) async throws -> [String: Any] {
-    if case .refuse(let why) = Admission.decide(.undo, turn: relay.admissionTurn, wordsNameIt: true) {
+    if case .refuse(let why) = Admission.decide(.undo, turn: frame.admission, wordsNameIt: true) {
       throw SereinError.invalid(why)
     }
     let token = (a["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1064,22 +992,22 @@ extension RelayToolHost {
       entry = found
     }
     // A memory change goes back off the main thread (RelayMemoryShell.swift).
-    if let token = relay.desk.undo.find(entry: entry, thread: relay.threadID),
+    if let token = relay.desk.undo.find(entry: entry, thread: frame.thread),
       token.entry.hasPrefix(RelayOrchestrator.memoryUndoPrefix)
     {
       switch await relay.revertMemory(token) {
       case .failure(let refusal):
         throw SereinError.invalid(refusal.words)
       case .success(let receipt):
-        relay.deliver(receipt: receipt, into: relay.threadID)
+        relay.deliver(receipt: receipt, into: frame.thread)
         return ["undone": true, "note": HostFacts.receiptNote]
       }
     }
-    switch relay.revert(entry: entry, chat: relay.threadID) {
+    switch relay.revert(entry: entry, chat: frame.thread) {
     case .failure(let refusal):
       throw SereinError.invalid(refusal.words)
     case .success(let receipt):
-      relay.deliver(receipt: receipt, into: relay.threadID)
+      relay.deliver(receipt: receipt, into: frame.thread)
       return ["undone": true, "note": HostFacts.receiptNote]
     }
   }

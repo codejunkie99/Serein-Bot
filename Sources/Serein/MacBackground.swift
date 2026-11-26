@@ -10,6 +10,9 @@ struct MacBackgroundAsk {
   let thread: String?
   /// Read again after every card: a scheduled turn may have started meanwhile.
   let unattended: () -> Bool
+  /// The task stands at Allow all (`BrowserModel.allowsAll`): the start card is not shown, and the
+  /// Stop on the chat's line is the way back.
+  var allowsAll: () -> Bool = { false }
   /// A card for the person: title, detail and the words on its primary button.
   let ask: (_ title: String, _ detail: String, _ button: String) async -> ApprovalGate.HumanAnswer
 
@@ -74,7 +77,7 @@ struct MacBackgroundAsk {
   }
   /// The start card, the first time in a task for an app: “Work in Notes in the background?”.
   /// Autopilot never answers it and an unattended run is refused before it; a later observe only
-  /// notes the window it chose.
+  /// notes the window it chose. At Allow all it is not shown: the work starts and Stop ends it.
   func admit(task: String, app: NSRunningApplication, appName: String, window: String, access: MacBackgroundAsk)
     async throws
   {
@@ -88,11 +91,13 @@ struct MacBackgroundAsk {
     guard access.thread != nil else {
       throw SereinError.invalid("Background work needs a chat to show its Stop line; use mac_observe without background.")
     }
-    // Autopilot never answers it: the card goes straight to the person.
-    let card = MacBackgroundPolicy.startCard(app: appName, window: window)
-    let human = await access.ask(card.title, card.detail, MacBackgroundPolicy.startButton)
-    guard human == .yes else {
-      throw SereinError.invalid(human == .no ? ActionAdmission.declined : ActionAdmission.needsPerson)
+    // Below Allow all autopilot never answers it: the card goes straight to the person.
+    if !access.allowsAll() {
+      let card = MacBackgroundPolicy.startCard(app: appName, window: window)
+      let human = await access.ask(card.title, card.detail, MacBackgroundPolicy.startButton)
+      guard human == .yes else {
+        throw SereinError.invalid(human == .no ? ActionAdmission.declined : ActionAdmission.needsPerson)
+      }
     }
     // Stop, the setting or an unattended turn may have come while the card was up.
     try mayUse(app, appName: appName, task: task, unattended: access.unattended())

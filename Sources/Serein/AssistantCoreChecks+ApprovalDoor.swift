@@ -72,8 +72,8 @@ extension AssistantCoreChecks {
     try check(broken.isEmpty, "Each floor blocks at every level and turn (\(arms.count) arms)"
               + (broken.isEmpty ? "" : ". Broken: \(broken.joined(separator: "; "))"))
     try check(
-      arms.allSatisfy { $0.boundary.blocked?.text.hasPrefix("Blocked: ") == true } && Boundary.siteAsk.blocked == nil,
-      "Every arm but a site set to Ask answers with a Blocked line")
+      (arms.map(\.boundary) + [.siteAsk]).allSatisfy { $0.blocked.text.hasPrefix("Blocked: ") },
+      "Every arm, a site set to Ask too, answers with a Blocked line")
     // The order: with every fact on, the first arm wins, and each arm wins once those above it are off.
     let order: [(SiteRule, Door.Facts, Boundary)] = [
       (.never, fact(secureField: true, botCheck: true, pays: .unreadable, path: .privateStore, hostKeyChanged: "h", runsAnything: true), .siteNever),
@@ -97,14 +97,14 @@ extension AssistantCoreChecks {
         && answer(.effect(.pay), .proactiveTask(present: false), covered) == .run,
       "A payment the secure card or a grant covers runs")
 
-    // A site set to Ask every step: a read runs, every other step shows a card, at every level.
+    // A site set to Ask every step: a read runs, every other step is parked on the person's
+    // confirm card at every level, never a held card.
     try check(
       DoorTable.standings.allSatisfy { standing in
         answer(.effect(.read), standing, site: .ask, none) == .run
-          && answer(.effect(.send), standing, site: .ask, none)
-            == .card(standing.present && standing.levelStands ? .hold(cap: Door.holdCap) : .deferred)
-      },
-      "A site set to Ask shows a card for each changing step at every level, and reads run")
+          && answer(.effect(.send), standing, site: .ask, none) == .blocked(.siteAsk)
+      } && Boundary.siteAsk.blocked.text.contains("person_step with kind confirm"),
+      "A site set to Ask parks each changing step on person_step confirm at every level, and reads run")
     try check(
       answer(.effect(.send), .noChat(present: true)) == .card(.deferred) && answer(.effect(.send), .person(.everyStep)) == hold,
       "A card holds the call only when the person's own level stands; with no chat it stays open")
@@ -119,10 +119,10 @@ extension AssistantCoreChecks {
       }
     }
     let pay = Door.Answer.blocked(.pay(ref: ""))
-    let payLine = Boundary.pay(ref: "").blocked?.text
+    let payLine = Boundary.pay(ref: "").blocked.text
     try check(
       (try? Door.Answer.run.decision()) == .auto && (try? hold.decision()) == .ask
-        && (try? Door.Answer.blocked(.siteAsk).decision()) == .ask
+        && thrown(.blocked(.siteAsk)) == Boundary.siteAsk.blocked.text
         && thrown(pay) == payLine && thrown(.checkFirst("Check first.")) == "Check first."
         && pay.said == payLine && Door.Answer.run.said == nil && hold.said == nil
         && Door.Answer.run.runs && hold.asks && !pay.runs && !pay.asks,

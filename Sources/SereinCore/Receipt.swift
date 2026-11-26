@@ -109,6 +109,11 @@ public enum ReceiptCopy {
     let whose = sharedWithAll ? "Every assistant can use it." : "Only this assistant uses it."
     return Receipt(kind: .memorySaved, line: "Done. I will remember that. \(whose)", undo: UndoToken(entry: entry, kind: .memorySaved))
   }
+  /// A rule the person set (`Rules`): in force from the next turn on, with Undo. `whom` is
+  /// `MemoryTools.whom` of its scope.
+  public static func ruleSet(whom: String, entry: String) -> Receipt {
+    Receipt(kind: .memorySaved, line: "Done. \(whom) will follow that rule from now on.", undo: UndoToken(entry: entry, kind: .memorySaved))
+  }
   public static func forgot(entry: String) -> Receipt {
     Receipt(kind: .memoryForgot, line: "Done. I forgot it.", undo: .removal(entry: entry, kind: .memoryForgot))
   }
@@ -141,6 +146,13 @@ public enum ReceiptCopy {
   /// says that, not that it updates by itself.
   public static func dashboard(title: String) -> Receipt {
     Receipt(kind: .dashboardSaved, line: "Done. \(title) is ready. Ask me any time to update it.")
+  }
+  /// The one-time move to Allow all (`AllowAllMigration`), with Undo back to the level before.
+  public static func allowAll(entry: String) -> Receipt {
+    Receipt(
+      kind: .assistantChanged, line: "Done. Serein now runs everything without asking. To change it, say “ask me before …”.",
+      card: .banner(title: ApprovalLevel.proactive.title, detail: "Paying and passwords still go to a secure card you fill.", action: "Undo"),
+      undo: UndoToken(entry: entry, kind: .assistantChanged))
   }
   public static func undone() -> Receipt { Receipt(kind: .undone, line: "Done. It is back the way it was.") }
 

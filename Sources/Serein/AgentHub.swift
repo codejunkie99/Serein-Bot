@@ -178,6 +178,12 @@ extension TaskMode {
   /// (UsageLimit, from its own stream event or error text). Kept only on a failed turn (finish);
   /// Serein's chat holds such a turn instead of failing it (RelayOrchestrator.holdLimited).
   var usageLimit: UsageLimit?
+  /// The provider's own count of the share it has left after this turn (an API route's rate-limit
+  /// headers); read once by `RelayOrchestrator.tallyUsage`.
+  var usageLeft: Double?
+  /// The context tokens an engine's own ACP `usage_update` counted (never an estimate); read once
+  /// by `RelayOrchestrator.tallyUsage` when the turn reported no usage of its own.
+  var reportedContext: Int?
   /// This failed turn's message went on to another AI app (RelayOrchestrator.moveOnAfterFailure):
   /// its held row says so, so the chat shows no failure line for it.
   var movedOn = false

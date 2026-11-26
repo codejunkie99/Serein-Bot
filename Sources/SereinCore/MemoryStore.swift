@@ -438,6 +438,15 @@ public final class MemoryStore: @unchecked Sendable {
     return MemoryHits(MemoryRank.fuse([wordKept, trigramKept], limit: cap))
   }
 
+  /// The rules in force for `reader` (`Rules.inForce` orders them). Search never returns a rule.
+  public func rules(reader: MemoryReader, now: Date = Date()) throws -> [MemoryRecord] {
+    lock.lock()
+    defer { lock.unlock() }
+    let found = try rows(
+      Schema.rules, [.null, .int(MemoryClock.toMillis(now)), .text(reader.assistant), .int(Int64(MemoryStore.window))])
+    return MemoryRecall.filter(found, for: reader, now: now)
+  }
+
   /// Other assistants with matching records that `reader` cannot read: owner id and count.
   /// Never the text. For "Planner has more notes about her".
   public func whoKnows(_ query: String, reader: MemoryReader, now: Date = Date()) throws -> [String: Int] {
@@ -922,9 +931,15 @@ public final class MemoryStore: @unchecked Sendable {
     /// record only for its owner. The sources here are the ones that are not `isLearned`.
     static let readable: String =
       " AND r.enabled = 1 AND r.superseded = 0 AND r.archived IS NULL AND (r.expires IS NULL OR r.expires > ?2) AND r.review <> 'unreviewed' AND (r.scope_kind <> 'assistant' OR r.scope_id = ?3) AND (r.source IN ('person', 'migrated') OR r.owner = ?3)"
+    /// `readable` without rules: a rule is never recalled, searched or put in a memory slot; every
+    /// turn gets it whole (`Rules.inForce`). Every recall, the memory block and the notes list read through this.
+    static let recallable: String = readable + " AND r.kind <> 'rule'"
+    /// The rules `readable` keeps, oldest first: ?1 is not used, ?4 is the limit.
+    static let rules: String =
+      "SELECT " + columns + " FROM records r WHERE ?1 IS NULL AND r.kind = 'rule'" + readable + " ORDER BY r.updated, r.seq LIMIT ?4"
     /// Live records of other owners (?3), for `whoKnows`.
     static let others: String =
-      " AND r.enabled = 1 AND r.superseded = 0 AND r.archived IS NULL AND (r.expires IS NULL OR r.expires > ?2) AND r.review <> 'unreviewed' AND r.owner <> ?3"
+      " AND r.enabled = 1 AND r.superseded = 0 AND r.archived IS NULL AND (r.expires IS NULL OR r.expires > ?2) AND r.review <> 'unreviewed' AND r.owner <> ?3 AND r.kind <> 'rule'"
     /// Learned records made in one chat (?1), for the chat-delete cascade; ?2 is the limit.
     static let learnedInChat: String =
       "SELECT " + columns + " FROM records r WHERE r.chat = ?1 AND r.source NOT IN ('person', 'migrated') LIMIT ?2"
@@ -957,7 +972,7 @@ public final class MemoryStore: @unchecked Sendable {
     static let proposals: String =
       "SELECT " + columns + " FROM records r WHERE r.owner = ?1 AND r.review = 'unreviewed' ORDER BY r.updated DESC LIMIT ?2"
     /// `readable` with no index query: ?1 is not used, ?4 is the limit.
-    static let newest: String = "SELECT " + columns + " FROM records r WHERE ?1 IS NULL" + readable + " ORDER BY r.updated DESC LIMIT ?4"
+    static let newest: String = "SELECT " + columns + " FROM records r WHERE ?1 IS NULL" + recallable + " ORDER BY r.updated DESC LIMIT ?4"
 
     static let indexWords: String = "INSERT INTO records_fts(rowid, body) VALUES(?1, ?2)"
     static let indexTrigrams: String = "INSERT INTO records_tri(rowid, body) VALUES(?1, ?2)"
@@ -965,10 +980,10 @@ public final class MemoryStore: @unchecked Sendable {
     static let unindexTrigrams: String = "DELETE FROM records_tri WHERE rowid = ?1"
     static let searchWords: String =
       "SELECT " + columns + " FROM records_fts JOIN records r ON r.seq = records_fts.rowid WHERE records_fts MATCH ?1"
-      + readable + " ORDER BY bm25(records_fts) LIMIT ?4"
+      + recallable + " ORDER BY bm25(records_fts) LIMIT ?4"
     static let searchTrigrams: String =
       "SELECT " + columns + " FROM records_tri JOIN records r ON r.seq = records_tri.rowid WHERE records_tri MATCH ?1"
-      + readable + " ORDER BY bm25(records_tri) LIMIT ?4"
+      + recallable + " ORDER BY bm25(records_tri) LIMIT ?4"
     static let othersWords: String =
       "SELECT " + columns + " FROM records_fts JOIN records r ON r.seq = records_fts.rowid WHERE records_fts MATCH ?1"
       + others + " ORDER BY bm25(records_fts) LIMIT ?4"

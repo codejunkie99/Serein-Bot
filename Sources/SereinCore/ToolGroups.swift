@@ -25,8 +25,8 @@ public enum ToolGroups {
       tools: ["hook_make", "hook_list", "hook_remove", "recipe_run", "recipe_update"]),
     Group(
       id: "assistants",
-      line: "Make, change or delete an assistant, propose a team, share a note with every assistant, or propose new standing instructions.",
-      tools: ["assistant_make", "assistant_change", "assistant_delete", "team_propose", "memory_share", "instructions_propose"]),
+      line: "Make, change or delete an assistant, save a team, share a note with every assistant, or propose new standing instructions.",
+      tools: ["assistant_make", "assistant_change", "assistant_delete", "team_make", "memory_share", "instructions_propose"]),
     Group(
       id: "sites", line: "Sites and dashboards: list, save or show a tracker or website you made, or make a dashboard.",
       tools: ["site_list", "site_save", "site_show", "dashboard_make"]),

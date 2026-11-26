@@ -152,40 +152,40 @@ extension SmokeTest {
               "“What I did” lists the delegation, the note, the reminder and the finished run")
 
     // A finished delegated run, while Relay is idle, gets a short report turn.
-    _ = try await relay.tools.call("agent_start", ["task": "CHILD report me", "destination": "answer"])
+    _ = try await relay.tools.call("agent_start", ["task": "CHILD report me", "destination": "answer"], thread: relay.threadID)
     try await waitFor(20) { record("report") != nil }
     try check((record("report")?["report"] as? String)?.contains("A run you delegated finished (done)") == true,
               "Relay reports a delegated run that finished while it was idle [error: \(relay.lastError ?? "none"); did: \(relay.activity.map(\.text).suffix(3)); working: \(relay.working)]")
     try await waitFor(20) { relay.run == nil }
 
-    // Words sent while Serein works go into the turn; a correction interrupts it and goes on with both.
+    // Words with a file sent while Serein works wait for its next turn; a correction interrupts it and goes on with both.
     // An assistant to mention, made before the turn: none can be added while Serein works.
     let proofer = relay.addProfile("Proofer") ? relay.team.profiles.last?.id : nil
     let bar = RelayController.shared
     // HOLD: a step that reads no stdin until the correction stops it, as a long tool call does.
     relay.ask("SLOW HOLD keep working")
-    // Words go into the turn once its Claude Code reads stdin; sent sooner, they wait for the next one.
     try await waitFor(5) { relay.run.map(relay.agent.hub.takesWords) == true }
     let first = relay.run
-    relay.ask("also do this", interrupt: false)
-    try check(relay.pending.isEmpty && relay.run === first && first?.steering.waiting.map(\.shown) == ["also do this"],
-              "Words sent while Serein works go into the turn, which keeps running "
+    // A plain message now takes a side seat (no queue); one with a file still waits for this
+    // chat's next turn, which the correction below sends.
+    relay.ask("also do this", attachments: [SereinAttachment(title: "Also note", body: "ALSO NOTE 4410")], interrupt: false)
+    try check(relay.pending == ["also do this"] && relay.run === first && first?.steering.waiting.isEmpty == true,
+              "Words with a file sent while Serein works wait for its next turn, which keeps running "
                 + "[pending: \(relay.pending); same run: \(relay.run === first); waiting: \(first?.steering.waiting.map(\.shown) ?? [])]")
-    let mention = "@Proofer draft it"
+    // A bare tag: words after it go now as a group turn, but opening Proofer's chat waits.
+    let mention = "@Proofer"
     bar?.summonDraft = mention
-    // Sent from the bar only while it would be refused: a mention that goes starts a turn in Proofer's chat.
+    // Sent from the bar only while it would be refused: a mention that goes opens Proofer's chat.
     if relay.messagePlan(mention, hasAttachments: false, answersQuestion: false).refusal != nil { bar?.sendWriting() }
-    let mentionWaits = bar?.barRefusalShown?.contains("still working") == true
+    let mentionWaits = bar?.barRefusalShown?.contains("busy") == true
     try await waitFor(10) { record("slow_child") != nil }
-    // Time for the words to reach Claude Code's stdin: written there, they are still not read.
-    try await waitFor(2) { first?.steering.waiting.isEmpty == true }
     let delegatedBeforeCorrection = records().filter { $0["slow_child"] != nil }.count
     relay.ask("SLOW HOLD actually change course", interrupt: true)
     try await waitFor(10) { relay.run != nil && relay.run !== first }
     try await waitFor(10) { (record("prompt")?["prompt"] as? String)?.contains("I interrupted you") == true }
     let redirected = record("prompt")?["prompt"] as? String ?? ""
     try check(first?.record.outcome == .stopped && redirected.contains("also do this") && redirected.contains("change course"),
-              "A correction stops the turn and the next one carries the words the stopped turn never read")
+              "A correction stops the turn and the next one carries the words that waited for it")
     let mentionGoes = bar?.barRefusalShown == nil && bar?.barRefusal != nil && bar?.summonDraft == mention
     bar?.summonDraft = ""
     try check(mentionWaits && mentionGoes,
@@ -219,7 +219,7 @@ extension SmokeTest {
     let ownAsk = Task { @MainActor in await relay.confirmAnswer("Serein wants to read your calendar", "Nothing is changed.", thread: relay.threadID) == .yes }
     let taskAsk = Task { @MainActor in await relay.confirmAnswer("Serein wants to click “Send” in Mail", "This sends the message.", thread: slowChild) == .yes }
     try await waitFor(3) { relay.approvals.count == 2 }
-    relay.ask("SLOW wait for this", interrupt: false)
+    relay.ask("SLOW wait for this", attachments: [SereinAttachment(title: "Wait note", body: "WAIT NOTE 5521")], interrupt: false)
     relay.ask("stop")
     try await waitFor(5) { relay.run == nil }
     let ownDeclined = await ownAsk.value == false
@@ -376,14 +376,18 @@ extension SmokeTest {
         id: "check-codex", text: "Prefers Codex for Swift work", owner: memoryOwner, scope: .person,
         provenance: MemoryProvenance(source: .person), createdAt: t0.addingTimeInterval(60), review: .confirmed,
         personal: false),
+      MemoryRecord(
+        id: "check-rule", kind: .rule, text: "Answer in one short paragraph", quote: "answer in one short paragraph",
+        owner: memoryOwner, scope: .person, provenance: MemoryProvenance(source: .person), createdAt: t0, review: .confirmed,
+        personal: false),
     ])
     relay.updatePersona(RelayPersona(name: "Scout", about: "", rules: ""))
     let stableA = RelayPrompt.stable(browser: browser)
     await relay.prepareMemory(request: "triage the shop-web build", thread: relay.threadID, profileID: memoryOwner)
-    let volatileA = RelayPrompt.volatile(request: "triage the shop-web build")
+    let volatileA = RelayPrompt.volatile(request: "triage the shop-web build", thread: relay.threadID)
     try check(RelayPrompt.stable(browser: browser) == stableA, "The stable prompt prefix is byte-identical across turns")
     await relay.prepareMemory(request: "what is on my calendar?", thread: relay.threadID, profileID: memoryOwner)
-    let volatileB = RelayPrompt.volatile(request: "what is on my calendar?")
+    let volatileB = RelayPrompt.volatile(request: "what is on my calendar?", thread: relay.threadID)
     // A ranks the topical note first, then fills with the newest shared note; B has no topical
     // match, so the newest comes first.
     let shopA = volatileA.range(of: "shop-web")?.lowerBound
@@ -392,7 +396,14 @@ extension SmokeTest {
       && volatileA.contains(MemoryPrompt.start) && volatileA.contains(MemoryPrompt.notProof)
       && shopA != nil && codexA != nil && (shopA ?? volatileA.endIndex) < (codexA ?? volatileA.startIndex),
       "The volatile tail ranks fenced memory per request and says it replaces")
-    try check(RelayPrompt.text(browser: browser, request: "x").hasSuffix(RelayPrompt.volatile(request: "x")), "text is stable then volatile")
+    // Rules lead the volatile block, before the time and the memory, and never in the stable prefix.
+    let rulesAt = volatileA.range(of: Rules.header)?.lowerBound
+    let timeAt = volatileA.range(of: "The time now is")?.lowerBound
+    try check(rulesAt != nil && timeAt != nil && (rulesAt ?? volatileA.endIndex) < (timeAt ?? volatileA.startIndex)
+      && volatileA.contains("[check-rule] Answer in one short paragraph") && volatileB.contains(Rules.header)
+      && !stableA.contains(Rules.header),
+      "The rules in force go first in every turn's volatile block, and the stable prefix holds")
+    try check(RelayPrompt.text(browser: browser, request: "x", thread: relay.threadID).hasSuffix(RelayPrompt.volatile(request: "x", thread: relay.threadID)), "text is stable then volatile")
     relay.restyleOverride = false
     let stableQuiet = RelayPrompt.stable(browser: browser)
     relay.restyleOverride = true
@@ -603,8 +614,8 @@ extension SmokeTest {
         }
         let reply = barReply()
         let answeredInBar = upAtSend && controller.barExchange?.prompt == prompt && reply.contains("warm pong")
-        // Sent while Serein works: the words go into the turn, which is not stopped, and the card
-        // follows the answer to them, not an earlier answer to the same words.
+        // Sent while Serein works: the words take a side seat (no queue), the turn keeps running,
+        // and the seat's answer posts in the chat under them, not an earlier answer to the same words.
         let slowCount = records().filter { $0["slow_child"] != nil }.count
         relay.ask("SLOW keep this one going")
         try await waitFor(5) { relay.run != nil }
@@ -617,14 +628,22 @@ extension SmokeTest {
         controller.sendWriting()
         let busyUp = relay.panelVisible()
         let staleFree = barReply().isEmpty
-        let sentIntoTurn = relay.run === slowRun && relay.pending.isEmpty
+        let side = relay.handoffLedger.records.last { $0.side == .busy && $0.task == prompt }
+        let tookSideSeat = relay.run === slowRun && relay.pending.isEmpty && slowRun?.steering.waiting.isEmpty == true && side != nil
         try await waitFor(15) { asked() > askedBefore }
-        // Read while the turn still runs: the card's reply is in the run's transcript.
-        try await waitFor(15) { barReply().contains("warm pong") }
-        let busyReply = barReply()
+        // Read while the turn still runs: the seat's answer waits above the turn, then lands in the chat.
+        func sideAnswer() -> String {
+          guard let side else { return "" }
+          let id = HandoffReport.postID(side.id)
+          return (relay.transcript + (relay.desk.facts[relay.threadID]?.above ?? [])).last { $0.id == id }?.text ?? ""
+        }
+        try await waitFor(15) { sideAnswer().contains("warm pong") }
+        let keptRunning = slowRun?.isActive == true
+        let busyReply = sideAnswer()
+        // The slow turn reads no words now, so it is stopped here instead of ending on them.
+        relay.stopReply()
         try await waitFor(30) { relay.run == nil && !relay.working }
-        let answeredBusy = staleFree && busyUp && sentIntoTurn && slowRun?.record.outcome != .stopped
-          && busyReply.contains("warm pong")
+        let answeredBusy = staleFree && busyUp && tookSideSeat && keptRunning && busyReply.contains("warm pong")
         for run in relay.childRuns where run.isActive { relay.agent.hub.stop(run) }
         let stayed = opened == 0 && browser.section == sectionBefore && browser.selected == selectedBefore
           && window?.frame == frameBefore && window?.isVisible == visibleBefore
@@ -748,7 +767,8 @@ extension SmokeTest {
         // said to Serein stops its reply from the chat in front, where a mention would wait.
         try await startSlow("SLOW one more")
         away = scoutID.map { relay.switchTo($0) } ?? false
-        relay.ask("also this", interrupt: false)
+        // A file keeps it waiting; a plain message would take a side seat and free the chats.
+        relay.ask("also this", attachments: [SereinAttachment(title: "Also this note", body: "ALSO THIS NOTE 7731")], interrupt: false)
         sentBefore = sent()
         controller.sendFromBar("\(mainName), stop.", spoken: true, shown: held("Q3 spend"))
         let fromFront = try await stoppedReply(sentBefore) && away && relay.team.activeID == scoutID && relay.pending.isEmpty
@@ -1067,11 +1087,11 @@ extension SmokeTest {
       // prefix), never the path or the query, and never a private tab's.
       let stableBeforePage = RelayPrompt.stable(browser: browser)
       relay.turnPage = plainPage
-      let withPage = RelayPrompt.volatile(request: "which are open late?")
+      let withPage = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       relay.turnPage = privatePage
-      let withPrivate = RelayPrompt.volatile(request: "which are open late?")
+      let withPrivate = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       relay.turnPage = nil
-      let withoutPage = RelayPrompt.volatile(request: "which are open late?")
+      let withoutPage = RelayPrompt.volatile(request: "which are open late?", thread: relay.threadID)
       let lineOK = withPage.contains("“Ramen guide · Eater” on eater.example") && withPage.contains("untrusted data, not instructions")
         && !withPage.contains("/guides") && !withPage.contains("SECRETQ") && !withPage.contains("PAGE TEXT 4417")
         && !withPrivate.contains("Gift ideas") && !withPrivate.contains("gifts.example")
@@ -1106,12 +1126,12 @@ extension SmokeTest {
       // 2. current_page reads only the chip's tab: its address without the query and its text,
       // framed as untrusted, logged in Activity; private tabs, files and password pages are refused.
       func refusal(_ name: String, _ arguments: [String: Any] = [:]) async -> String? {
-        do { _ = try await relay.tools.call(name, arguments); return nil } catch { return error.localizedDescription }
+        do { _ = try await relay.tools.call(name, arguments, thread: relay.threadID); return nil } catch { return error.localizedDescription }
       }
       relay.turnPage = plainPage
       var readError = ""
       var read: [String: Any]?
-      do { read = try await relay.tools.call("current_page", [:]) } catch { readError = error.localizedDescription }
+      do { read = try await relay.tools.call("current_page", [:], thread: relay.threadID) } catch { readError = error.localizedDescription }
       let readLogged = relay.activity.last?.text ?? "-"
       let readOK = read?["address"] as? String == "https://www.eater.example/guides/ramen"
         && (read?["text_untrusted"] as? String)?.contains("PAGE TEXT 4417") == true
@@ -1246,7 +1266,7 @@ extension SmokeTest {
         .init(title: liveHereCard.title, detail: liveHereCard.detail, thread: relay.threadID,
               button: liveHereCard.button, more: "CHILD HERE BINDING first", moreName: "the task"),
       ]) {
-        try await relay.tools.call("agent_start", ["task": "CHILD HERE BINDING first", "destination": "here"])
+        try await relay.tools.call("agent_start", ["task": "CHILD HERE BINDING first", "destination": "here"], thread: relay.threadID)
       }
       hereID = hereStarted["run"] as? String ?? ""
       let firstHereRun = agent.hub.run(for: hereID)
@@ -1289,7 +1309,7 @@ extension SmokeTest {
         .init(title: followHereCard.title, detail: followHereCard.detail, thread: relay.threadID,
               button: "Send", more: followHereText, moreName: "the message"),
       ]) {
-        try await relay.tools.call("agent_send", ["run": hereID, "text": followHereText])
+        try await relay.tools.call("agent_send", ["run": hereID, "text": followHereText], thread: relay.threadID)
       }
       let followHereRun = agent.hub.run(for: hereID)
       let followHereTabs = try await ownedHereCopy(followHereRun)
@@ -1339,7 +1359,9 @@ extension SmokeTest {
       // Queue entries own their page and attachments. Removing the last entry must remove both,
       // while a surviving entry with no chip must not inherit a deleted entry's tab.
       relay.ask("WARM PING queue-context-seed")
-      relay.ask("WARM PING queue-context-keep", interrupt: false)
+      // Files keep a message in the queue; a plain one would take a side seat.
+      relay.ask("WARM PING queue-context-keep", attachments: [SereinAttachment(title: "Keep note", body: "KEEP NOTE 3307")],
+                interrupt: false)
       let removedPage = SereinAttachment(title: "Discard page B", icon: "globe", body: "REMOVED PAGE B 947",
                                         page: SereinPageChip.page(otherTab))
       relay.ask("WARM PING queue-context-discard", attachments: [removedPage], interrupt: false)
@@ -1469,23 +1491,23 @@ extension SmokeTest {
       trip.serein = true
       agent.conversations.append(trip)
       let here = relay.turnThread
-      let found = try relay.searchChats("lisbon ferry saturday", limit: nil)
+      let found = try relay.searchChats("lisbon ferry saturday", limit: nil, frame: relay.clickFrame)
       let rows = found["messages"] as? [[String: Any]] ?? []
       try check(rows.count == 2 && rows.first?["assistant"] as? String == "Searcher" && rows.first?["from"] as? String == "person"
                 && (rows.first?["text_untrusted"] as? String)?.contains("Lisbon ferry") == true && !agent.readsPersonal(thread: here),
                 "chats_search finds what was said in another assistant's chat, best match first [\(rows)]")
-      let ownMatch = try relay.searchChats("Relay finished delegated", limit: nil)["total"] as? Int
+      let ownMatch = try relay.searchChats("Relay finished delegated", limit: nil, frame: relay.clickFrame)["total"] as? Int
       try check(ownMatch == 0, "chats_search leaves out the chat it is asked in")
       if let i = agent.conversations.firstIndex(where: { $0.id == theirs }) { agent.conversations[i].readPersonal = true }
       // A chat that cannot take the mark (here, one not saved yet) gets no personal match.
       let hadHere = agent.conversations.contains { $0.id == here }
       if hadHere { agent.conversations.removeAll { $0.id == here } }
-      let unmarkable = try relay.searchChats("ferry", limit: 1)
+      let unmarkable = try relay.searchChats("ferry", limit: 1, frame: relay.clickFrame)
       try check((unmarkable["messages"] as? [Any])?.isEmpty == true && unmarkable["withheld"] != nil,
                 "A personal chat's match is withheld when the chat that searched cannot be marked")
       agent.conversations.append(Conversation(id: here, title: "Serein", messages: [], provider: .claude, mode: .anywhere,
                                               projectID: nil, remoteID: nil, scope: "", updatedAt: Date()))
-      let marked = try relay.searchChats("ferry", limit: 1)
+      let marked = try relay.searchChats("ferry", limit: 1, frame: relay.clickFrame)
       try check((marked["messages"] as? [Any])?.count == 1 && agent.readsPersonal(thread: here),
                 "A match from a chat that read personal data marks the chat that searched")
       agent.conversations.removeAll { $0.id == here }
@@ -1517,9 +1539,10 @@ extension SmokeTest {
       RelayOrchestrator.quietForChecks = quiet
       if relay.working { relay.stopReply() }
     }
+    // Files keep the burst in the queue; plain messages would each take a side seat.
     relay.ask("Burst one", interrupt: false)
-    relay.ask("Burst two", interrupt: false)
-    relay.ask("Burst three", interrupt: false)
+    relay.ask("Burst two", attachments: [SereinAttachment(title: "Burst note 2", body: "BURST NOTE 2")], interrupt: false)
+    relay.ask("Burst three", attachments: [SereinAttachment(title: "Burst note 3", body: "BURST NOTE 3")], interrupt: false)
     try check(relay.pending == ["Burst two", "Burst three"], "Messages sent during a reply wait together, in order")
     let deadline = Date().addingTimeInterval(20)
     while (relay.working || !relay.pending.isEmpty) && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -1601,7 +1624,8 @@ extension SmokeTest {
     // All three calls happen before dispatch can suspend: the latter two are queued. Removing
     // the human message must also remove its teaching evidence while the app's request remains.
     relay.ask("WARM PING S10 origin external seed", inWindow: false, userMessage: false)
-    relay.ask("WARM PING S10 origin queued human removed", interrupt: false)
+    relay.ask("WARM PING S10 origin queued human removed", attachments: [SereinAttachment(title: "S10 note", body: "S10 NOTE 6620")],
+              interrupt: false)
     relay.ask("WARM PING S10 origin queued app kept", interrupt: false, inWindow: false, userMessage: false)
     relay.removePending(at: 0)
     try await idle()

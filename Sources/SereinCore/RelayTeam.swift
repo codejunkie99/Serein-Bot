@@ -33,11 +33,14 @@ public struct RelayProfile: Codable, Equatable, Identifiable, Sendable {
   /// still reach it. nil, as every assistant starts, is on. Journaled with the roster, so Undo
   /// turns it on again. Optional like `icon`.
   public var paused: Bool?
-  enum CodingKeys: String, CodingKey { case id, name, createdAt, scope, colour, speaksFirst, route, label, icon, paused }
+  /// Who made it and in which room, when an assistant made it (`Staffing.make`); nil for one the
+  /// person made. Optional like `paused`.
+  public var lineage: Staffing.Lineage?
+  enum CodingKeys: String, CodingKey { case id, name, createdAt, scope, colour, speaksFirst, route, label, icon, paused, lineage }
   public init(
     id: String = UUID().uuidString, name: String, createdAt: Date = Date(), scope: AssistantScope? = nil,
     colour: String? = nil, speaksFirst: RelayProactive.Level? = nil, route: AssistantRoute? = nil, label: String? = nil,
-    icon: AssistantIcon? = nil, paused: Bool? = nil
+    icon: AssistantIcon? = nil, paused: Bool? = nil, lineage: Staffing.Lineage? = nil
   ) {
     self.id = id
     self.name = name
@@ -49,6 +52,7 @@ public struct RelayProfile: Codable, Equatable, Identifiable, Sendable {
     self.label = label
     self.icon = icon
     self.paused = paused
+    self.lineage = lineage
   }
   /// The person paused it.
   public var isPaused: Bool { paused == true }
@@ -72,6 +76,7 @@ extension RelayProfile {
     label = try c.decodeIfPresent(String.self, forKey: .label)
     icon = (try? c.decodeIfPresent(AssistantIcon.self, forKey: .icon)) ?? nil
     paused = try c.decodeIfPresent(Bool.self, forKey: .paused)
+    lineage = try c.decodeIfPresent(Staffing.Lineage.self, forKey: .lineage)
   }
 }
 

@@ -145,8 +145,8 @@ import WebKit
     // assistants (the lower trust class), stand as nobody there: their card is deferred.
     let unattended = browser.isUnattended(task: task) || run.spec.initiator == .handoff
     guard !site.isEmpty else { return refused("\(name) did not come from a site, so it was refused.") }
-    // The person's site rule, read now and again after the card: Never refuses, Ask every step
-    // asks for every file and keeps no yes.
+    // The person's site rule, read now and again after the card: Never refuses; Ask every step
+    // gives each file its own card where the level shows one.
     let address = page?.absoluteString
     let rule = SiteRules.rule(for: address)
     if rule == .never { return refused(SiteRules.refusal(address ?? site)) }
@@ -157,11 +157,12 @@ import WebKit
     let sourceRule = source.isEmpty ? SiteRule.normal : SiteRules.rule(for: response.url?.absoluteString)
     let everyFile = rule == .ask || sourceRule == .ask
     if sourceRule == .never { return refused(SiteRules.refusal(response.url?.absoluteString ?? source)) }
-    // The task's level: Allow all and Auto keep the file with no card; Manual and a site set to
-    // Ask every step show one.
+    // The task's level: Allow all and Auto keep the file with no card, every file waiting unopened
+    // on the shelf (an Ask every step site too: the file is not a step the site takes); Manual
+    // shows one.
     let door = ApprovalDoor.answer(
       .init(.downloads, browser.standing(task: task, else: RelayOrchestrator.standing(
-        browser.relayTask(task, live), present: !unattended)), site: everyFile ? .ask : .normal, taskID: task),
+        browser.relayTask(task, live), present: !unattended)), taskID: task),
       facts: .init(
         secureField: false, botCheck: false, pays: .no, covered: false, path: nil, hostKeyChanged: nil,
         runsAnything: false, ref: ""))

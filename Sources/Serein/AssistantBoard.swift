@@ -328,10 +328,11 @@ extension RelayOrchestrator {
   /// `RelayToolHost.modelAndEffort`); else Serein's own (Settings › AI apps › Serein thinks with) at its
   /// default model. Its Main chat, hand-offs to it, its turns of speaking first and the tasks it
   /// starts without naming an AI app all use this.
-  func assistantEngine(_ profile: RelayProfile?) -> (provider: Provider, model: String, effort: String) {
+  /// `route`: a swarm seat's own, picked from the registry, in place of the assistant's.
+  func assistantEngine(_ profile: RelayProfile?, route seat: AssistantRoute? = nil) -> (provider: Provider, model: String, effort: String) {
     // No route of its own: it thinks as Serein does (`RelayTeam.route(of:)`), so an assistant never
     // lands on an AI app nobody chose (Claude Code first by default, even when it is signed out).
-    if let route = profile.flatMap(team.route(of:)) {
+    if let route = seat ?? profile.flatMap(team.route(of:)) {
       let chosen = Provider(rawValue: route.provider)
       // A route refused now (signed out, a version gate) stays: its turn fails closed at send with
       // that reason, never moved silently onto Serein's engine, which could change who pays.
@@ -506,8 +507,7 @@ extension RelayOrchestrator {
     guard team.handoffTargets(from: sender.id).contains(where: { $0.id == target.id }) else {
       return "\(target.name) isn't in a team with \(sender.name)."
     }
-    let group = team.sharedGroup(sender.id, target.id)
-    return handoffLedger.refusal(from: sender.id, fromName: sender.name, team: group?.id ?? "", now: Date())
+    return handoffLedger.refusal(from: sender.id, fromName: sender.name, to: target.id, toName: target.name, now: Date())
   }
   /// Ask Writer to Continue, a message dropped on Writer's row, Hand Off to Writer…: the words go
   /// to Writer's Main chat at once. The person is the sender, so no turn is needed.
@@ -550,9 +550,13 @@ extension RelayOrchestrator {
   /// `--ui-team-chat typing` has its lead working, and `--ui-team-chat handoff` hands a message on. `--ui-pins` adds three more and pins five, so
   /// the pinned faces show how they fill the sidebar's width. `--ui-row-previews` adds the same
   /// three and gives each row a preview (`previewRowChats`); `--ui-model-scope` sets the starting route.
+  /// `--ui-harness-v2 [seed]` adds Coach and seeds Serein's chat (`previewHarnessV2`).
   func previewTeam() {
     let teamChat = CommandLine.arguments.contains("--ui-team-chat")
-    guard CommandLine.arguments.contains("--ui-preview"), CommandLine.arguments.contains("--ui-assistants") || teamChat else { return }
+    let harnessV2 = CommandLine.arguments.contains("--ui-harness-v2")
+    guard CommandLine.arguments.contains("--ui-preview"), CommandLine.arguments.contains("--ui-assistants") || teamChat || harnessV2
+    else { return }
+    defer { if harnessV2 { previewHarnessV2() } }
     defer { if teamChat { previewTeamChat() } }
     let pins = CommandLine.arguments.contains("--ui-pins")
     let rows = CommandLine.arguments.contains("--ui-row-previews")
@@ -561,7 +565,7 @@ extension RelayOrchestrator {
     defer { previewModelScope() }
     changeTeam("Preview roster") { current in
       var team = current
-      for name in ["Scout", "Planner", "Writer"] + (pins || rows ? ["Coach", "Shopper", "Editor"] : []) {
+      for name in ["Scout", "Planner", "Writer"] + (pins || rows ? ["Coach", "Shopper", "Editor"] : harnessV2 ? ["Coach"] : []) {
         guard let next = team.adding(name) else { return nil }
         team = next
       }

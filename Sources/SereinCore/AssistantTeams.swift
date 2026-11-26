@@ -282,7 +282,14 @@ public enum TeamMention: Equatable, Sendable {
   public static func parse(_ text: String, in team: RelayTeam) -> (mention: TeamMention, rest: String)? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.hasPrefix("@") else { return nil }
-    let body = String(trimmed.dropFirst())
+    let body = trimmed.dropFirst()
+    guard let best = longest(body, in: team) else { return nil }
+    let rest = String(body[best.end...]).trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
+    return (best.mention, rest)
+  }
+
+  /// The roster name `body` opens with: the longest wins, and an assistant wins a tie with a team.
+  static func longest(_ body: Substring, in team: RelayTeam) -> (mention: TeamMention, end: String.Index)? {
     var candidates: [(TeamMention, String)] = team.profiles.map { (TeamMention.assistant($0.id), $0.name) }
     for group in team.groups ?? [] {
       candidates.append((.team(group.id), group.name + " team"))
@@ -296,21 +303,19 @@ public enum TeamMention: Equatable, Sendable {
       let wins = best.map { length > $0.length || (length == $0.length && $0.mention.isTeam && !mention.isTeam) } ?? true
       if wins { best = (mention, length, range.upperBound) }
     }
-    guard let best else { return nil }
-    let rest = String(body[best.end...]).trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
-    return (best.mention, rest)
+    return best.map { ($0.mention, $0.end) }
   }
 
   /// Where `name` starts in `text` as a whole word (case-insensitive), or nil.
   static func find(_ name: String, in text: String) -> String.Index? {
     var from = text.startIndex
     while let range = text.range(of: name, options: .caseInsensitive, range: from..<text.endIndex) {
-      if boundary(text, at: range.upperBound) { return range.lowerBound }
+      if boundary(text[...], at: range.upperBound) { return range.lowerBound }
       from = range.upperBound
     }
     return nil
   }
-  private static func boundary(_ text: String, at index: String.Index) -> Bool {
+  private static func boundary(_ text: Substring, at index: String.Index) -> Bool {
     guard index < text.endIndex else { return true }
     let next = text[index]
     return next.isWhitespace || next.isPunctuation
@@ -318,6 +323,51 @@ public enum TeamMention: Equatable, Sendable {
   private var isTeam: Bool {
     if case .team = self { return true }
     return false
+  }
+}
+
+/// One channel: every "@Name" in a message, anywhere in it, names a bot who takes a turn there.
+public enum GroupTurn {
+  /// Each tag that names someone on the roster: an "@" at the start or after a character that is
+  /// not a letter or digit, then the longest roster name. A team stands for its responder.
+  /// Unknown names are plain text.
+  public static func tags(in text: String, team: RelayTeam) -> [(id: String, range: Range<String.Index>)] {
+    var out: [(id: String, range: Range<String.Index>)] = []
+    var from = text.startIndex
+    while let at = text[from...].firstIndex(of: "@") {
+      let after = text.index(after: at)
+      let opens = at == text.startIndex || !text[text.index(before: at)].isLetter && !text[text.index(before: at)].isNumber
+      guard opens, let hit = TeamMention.longest(text[after...], in: team) else {
+        from = after
+        continue
+      }
+      let id: String?
+      switch hit.mention {
+      case .assistant(let profile): id = profile
+      case .team(let group): id = team.teams.first { $0.id == group }?.responder(for: text, profiles: team.profiles)
+      }
+      if let id { out.append((id, at..<hit.end)) }
+      from = hit.end
+    }
+    return out
+  }
+
+  /// Who takes a turn, in the order they are tagged, each once. `addressed` keeps only tags with
+  /// words after them, so "thanks @Writer" in a bot's reply sends nothing but "@Writer can you…" does.
+  public static func speakers(of text: String, in team: RelayTeam, addressed: Bool = false) -> [String] {
+    var seen: [String] = []
+    for tag in tags(in: text, team: team) where !seen.contains(tag.id) {
+      if addressed, !words(of: String(text[tag.range.upperBound...]), in: team).contains(where: \.isLetter) { continue }
+      seen.append(tag.id)
+    }
+    return seen
+  }
+
+  /// The message without its tags; empty for a bare "@Writer".
+  public static func words(of text: String, in team: RelayTeam) -> String {
+    var rest = text
+    for tag in tags(in: text, team: team).reversed() { rest.removeSubrange(tag.range) }
+    return rest.trimmingCharacters(in: CharacterSet(charactersIn: ",:").union(.whitespacesAndNewlines))
   }
 }
 
@@ -337,12 +387,6 @@ extension RelayTeam {
   /// Never itself.
   public func handoffTargets(from id: String) -> [RelayProfile] {
     profiles.filter { $0.id != id && (teams.isEmpty || sharedGroup(id, $0.id) != nil) }
-  }
-  /// Who `record`'s target may hand part of its task to: its teammates outside the chain, and
-  /// nobody once the chain is full.
-  public func handoffTargets(continuing record: AssistantHandoff) -> [RelayProfile] {
-    guard record.holders.count < HandoffLedger.maxChain else { return [] }
-    return handoffTargets(from: record.to).filter { !record.holders.contains($0.id) }
   }
 
   /// A new team. nil when its name is empty, too long or taken, or its members are not 1 to 8
@@ -438,7 +482,7 @@ extension RelayTeam {
   }
 }
 
-/// A team Serein proposes from the person's description (team_propose). Nothing is saved until
+/// A team proposed from the person's description or an imported file. Nothing is saved until
 /// the person presses "Create team"; anything wider than what the person allows is dropped here
 /// and the card lists it.
 public struct TeamProposal: Equatable, Sendable {
@@ -593,7 +637,7 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   public var from: String
   public var to: String
   public var task: String
-  /// The target assistant's Main chat, where the task runs.
+  /// The seat's hidden chat, where the task runs (`seat-<id>`; its target's Main chat in older ledgers).
   public var threadID: String
   /// The chat it was asked in, where its status line and result show.
   public var askedIn: String
@@ -610,8 +654,8 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   public var result: String?
   /// The stall notice went (once).
   public var stalled: Bool?
-  /// The result reached the asking assistant's chat (once).
-  public var reported: Bool?
+  /// The result reached the asking assistant's chat (once). Only `HandoffLedger.claimReport` sets it.
+  public fileprivate(set) var reported: Bool?
   /// Asked from a chat that read the person's mail, messages or Mac apps: the target is not
   /// offered Serein's computer, and its chat is marked too. nil in older ledgers.
   public var personal: Bool? = nil
@@ -622,6 +666,41 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   /// The assistants that already hold this work, from the root's sender to `from`, in order.
   /// nil for a root, where it is `from` alone.
   public var chain: [String]? = nil
+  /// The room its packet is in (`Workroom`), and the packet's number there. nil in older ledgers,
+  /// and `packet` nil when its packet could not be sealed, so nothing trusts a missing file.
+  public var room: String? = nil
+  public var packet: Int? = nil
+  /// Started by an @tag in the channel, not a hand-off: the tagging message stands for its post,
+  /// its reply answers that message, and it never wakes its sender. nil for a hand-off.
+  public var mention: Mention? = nil
+  public enum Mention: Codable, Equatable, Sendable {
+    case byPerson(message: String)
+    case byBot(post: String)
+    /// The channel message that tagged it.
+    public var post: String {
+      switch self {
+      case .byPerson(let message): message
+      case .byBot(let post): post
+      }
+    }
+  }
+
+  /// A side seat (`SideSeat`): the person's own message to its chat's assistant, answered in a
+  /// hidden seat beside a busy turn (`busy`) or carried on from a turn that ran long
+  /// (`background`). A swarm (`Swarm`): one seat of it on its own model (`swarm`), and the row
+  /// that holds its seats for the lead's one merged turn (`swarmLead`). `from` and `to` are that
+  /// assistant, and the seat holds it once. nil for a hand-off.
+  public var side: Side? = nil
+  public enum Side: String, Codable, Sendable {
+    case busy, background, swarm, swarmLead
+    /// Its run takes one of `SideSeat.cap`. A swarm's lead row only waits for its seats.
+    public var takesSeat: Bool { self != .swarmLead }
+  }
+  /// The model a swarm seat runs on, picked by `Swarm.routes`; nil runs on its target's own.
+  public var route: AssistantRoute? = nil
+  /// Its report post is owed to the origin chat (false) or is there (true). nil in older ledgers
+  /// and while it is open; only a row that closes owes one, so an old row is never posted again.
+  public var posted: Bool? = nil
 
   /// `parent`: the hand-off whose target sends this one as part of its own task.
   public init(
@@ -646,7 +725,7 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   }
   public var isOpen: Bool { state == .waiting || state == .running }
   /// Everyone who holds this work once its target has it, in order. None of them is asked again.
-  public var holders: [String] { (chain ?? [from]) + [to] }
+  public var holders: [String] { side != nil ? [to] : (chain ?? [from]) + [to] }
   /// "Serein asked Writer, who asked you": the chain as the target's prompt says it, from the
   /// names of `chain`.
   public static func chainWords(_ names: [String]) -> String {
@@ -659,16 +738,20 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
 /// resets a limit. Limits refuse with a reason; they never cut a task short.
 public struct HandoffLedger: Codable, Equatable, Sendable {
   public var records: [AssistantHandoff]
-  /// Hand-offs sent per team per day, keyed "team|yyyy-MM-dd".
+  /// Hand-offs taken per reader per day, keyed "assistant id|yyyy-MM-dd". Keys from before were a
+  /// team id, which no assistant shares, so they only age out.
   public var daily: [String: Int]
 
   public static let maxOpenPerAssistant = 3
-  public static let maxPerTeamPerDay = 20
+  /// Hand-offs one assistant may be sent in a day, from anyone.
+  public static let maxPerReaderPerDay = 20
   public static let queueExpiry: TimeInterval = 24 * 60 * 60
   public static let stallAfter: TimeInterval = 30 * 60
   /// Closed hand-offs kept for the status lines; open ones are always kept.
   public static let kept = 50
   public static let taskLimit = 2_000
+  /// The most of a closed hand-off's result kept, and of a side seat's answer posted.
+  public static let resultLimit = 4_000
   /// The most assistants one task passes through, its first sender included.
   public static let maxChain = 4
   /// The most hand-offs that share one root, the root included.
@@ -679,7 +762,7 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     self.daily = daily
   }
 
-  static func key(_ team: String, _ now: Date) -> String { team + "|" + RelayProactive.dayKey(now) }
+  static func key(_ reader: String, _ now: Date) -> String { reader + "|" + RelayProactive.dayKey(now) }
 
   /// The open hand-off whose target works in `thread`, if any.
   public func open(thread: String) -> AssistantHandoff? {
@@ -694,6 +777,15 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
   /// those has reached its chat.
   public func closable(_ id: String) -> Bool {
     !records.contains { $0.parentID == id && ($0.isOpen || $0.reported != true) }
+  }
+  /// Whether `id`'s results still wait for a swarm seat under it, so its one merged turn has
+  /// every seat's answer (`Swarm`).
+  public func swarmWaits(_ id: AssistantHandoff.ID) -> Bool {
+    records.contains { $0.parentID == id && $0.side == .swarm && $0.isOpen }
+  }
+  /// Swarm seats running past `Swarm.timeCap`: the sweep closes each with what it had.
+  public func late(now: Date) -> [AssistantHandoff] {
+    records.filter { $0.side == .swarm && $0.state == .running && now.timeIntervalSince($0.startedAt ?? $0.createdAt) >= Swarm.timeCap }
   }
   /// Whether `a` holds its chat for `b`: part of a task `a` was handed is open with `b`, or with
   /// someone who holds theirs for `b`. A hand-off back the other way would never start.
@@ -723,20 +815,24 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     return nil
   }
 
-  /// Why a new hand-off from `from` in `team` cannot be sent now, or nil.
-  public func refusal(from: String, fromName: String, team: String, now: Date) -> String? {
-    if records.filter({ $0.from == from && $0.isOpen }).count >= Self.maxOpenPerAssistant {
-      return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, then try again."
+  /// Why a new hand-off from `from` to `to` cannot be sent now, or nil. The day's cap is the
+  /// reader's: hand-offs no longer need a shared team, and a root already stops at `maxPerRoot`,
+  /// so the one flood left to bound is many tasks into one assistant. `to` is "" for an assistant
+  /// not made yet, which has had nothing.
+  public func refusal(from: String, fromName: String, to: String, toName: String, now: Date) -> String? {
+    // A side seat is the person's message, not a hand-off the assistant sent.
+    if records.filter({ $0.from == from && $0.isOpen && $0.side == nil }).count >= Self.maxOpenPerAssistant {
+      return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, or do this part yourself."
     }
-    if (daily[Self.key(team, now)] ?? 0) >= Self.maxPerTeamPerDay {
-      return "This team has handed over \(Self.maxPerTeamPerDay) tasks today, the most in a day. Try again tomorrow, or do this one in this chat."
+    if !to.isEmpty, (daily[Self.key(to, now)] ?? 0) >= Self.maxPerReaderPerDay {
+      return "\(toName) has been handed \(Self.maxPerReaderPerDay) tasks today, the most in a day. Hand this to another assistant, or do this part yourself."
     }
     return nil
   }
-  /// A hand-off: recorded and counted toward its team's day.
+  /// A hand-off: recorded and counted toward its reader's day. A side seat is recorded only.
   public mutating func admit(_ handoff: AssistantHandoff, now: Date) {
     records.append(handoff)
-    daily[Self.key(handoff.team, now), default: 0] += 1
+    if handoff.side == nil { daily[Self.key(handoff.to, now), default: 0] += 1 }
     trim(now: now)
   }
   /// Hand-offs that waited in the queue longer than a day expire; returns them, each once.
@@ -777,12 +873,20 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
       records[i].state = .failed
       records[i].finishedAt = now
       records[i].result = Self.stoppedWords
-      records[i].reported = true
+      _ = claimReport(records[i].id)
       ended.append(records[i])
     }
     return ended
   }
   public static let stoppedWords = "It was stopped."
+  /// The only writer of `reported` (TEAMS-V2 §4.8): a closed hand-off's report is claimed once.
+  /// nil while it is open or once it was claimed, so a replayed delivery or the launch sweep
+  /// (`sweepHandoffs`, first run at launch) delivers nothing twice.
+  public mutating func claimReport(_ id: AssistantHandoff.ID) -> AssistantHandoff? {
+    guard let i = records.firstIndex(where: { $0.id == id }), !records[i].isOpen, records[i].reported != true else { return nil }
+    records[i].reported = true
+    return records[i]
+  }
   /// Open hand-offs kept whole, and every closed one of a task that still has one open (its
   /// count is the limit per root, and its result may be owed to its parent); then the newest
   /// closed ones. Counters only for today.

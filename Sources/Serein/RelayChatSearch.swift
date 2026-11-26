@@ -14,11 +14,11 @@ extension RelayOrchestrator {
     return [saved.threadID] + (saved.pastThreadIDs ?? [])
   }
 
-  func searchChats(_ query: String?, limit: Int?) throws -> [String: Any] {
-    guard turnProfileID == team.mainProfileID else { throw SereinError.invalid(Self.chatsMainOnly) }
+  func searchChats(_ query: String?, limit: Int?, frame: TurnFrame) throws -> [String: Any] {
+    guard frame.profile == team.mainProfileID else { throw SereinError.invalid(Self.chatsMainOnly) }
     let words = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !ChatSearch.terms(words).isEmpty else { throw SereinError.invalid("query is required: the words to look for.") }
-    let here = turnThread
+    let here = frame.thread
     var owner: [String: String] = [:]
     for profile in team.profiles {
       for thread in chatThreads(of: profile.id) where thread != here { owner[thread] = owner[thread] ?? profile.name }

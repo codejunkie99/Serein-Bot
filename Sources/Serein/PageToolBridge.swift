@@ -86,7 +86,7 @@ extension BrowserModel {
     let decision = try ApprovalDoor.answer(
       .init(
         .effect(effect), standing(task: id, else: RelayOrchestrator.standing(relay, present: !isUnattended(task: id))),
-        site: SiteRules.rule(for: tab.address), taskID: id),
+        site: siteRule(tab.address, tool: "page_tool", arguments: a, task: id), taskID: id),
       facts: .init(
         secureField: false, botCheck: false, pays: .no, covered: false, path: nil,
         hostKeyChanged: nil, runsAnything: false, ref: "")

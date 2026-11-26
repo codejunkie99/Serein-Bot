@@ -1,8 +1,7 @@
 import Foundation
 
 // The pure rules behind the assistant tools in Serein's chat: the roster as a tool reads it,
-// changing or pausing one assistant, the proposals another assistant makes, the way back from a
-// change, the apps to offer after a make, and the links one assistant owns. Nothing here writes
+// changing or pausing one assistant, the way back from a change, the apps to offer after a make, and the links one assistant owns. Nothing here writes
 // a file, reads Keychain or grants a place. The shell (RelayAssistantTools.swift,
 // RelayAsks.swift, RelayLinks.swift) applies each plan through `changeTeam`, after the
 // admission rule (`Admission`) said apply or the person pressed a card's button.
@@ -375,144 +374,6 @@ public struct HeldWork: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-// MARK: - Proposals from an assistant
-
-/// New assistants that another assistant proposed (`assistant_make` in a turn the person did not
-/// start). Each waits for the person's card in the root chat: Make it, or Not now. Not now blocks
-/// that name for `blockDays` days. Each assistant has at most `maxOpenPerAssistant` open.
-/// Kept in relay/make-proposals.json.
-public struct MakeProposals: Codable, Equatable, Sendable {
-  public struct Proposal: Codable, Equatable, Identifiable, Sendable {
-    public var id: String
-    /// The assistant that proposed it.
-    public var by: String
-    public var name: String
-    public var job: String?
-    public var places: [AssistantPlace]
-    public var createdAt: Date
-    public init(id: String = UUID().uuidString, by: String, draft: AssistantDraft, createdAt: Date = Date()) {
-      self.id = id
-      self.by = by
-      name = draft.name
-      job = draft.job
-      places = AssistantPlace.allCases.filter { draft.places.contains($0) }
-      self.createdAt = createdAt
-    }
-    /// The draft the card makes on Make it. `RelayTeam.making` checks it again.
-    public var draft: AssistantDraft { AssistantDraft(name: name, job: job, places: Set(places)) }
-  }
-
-  public enum Refusal: Error, Equatable, Sendable {
-    /// The proposer has two open already. It holds the proposer's name.
-    case tooMany(String)
-    /// The person said Not now to this name. It holds the name and the days left.
-    case blocked(String, days: Int)
-    /// A proposal for this name waits already.
-    case waiting(String)
-
-    public var words: String {
-      switch self {
-      case .tooMany(let name):
-        return "\(name) already waits for the person to decide on \(MakeProposals.maxOpenPerAssistant) new assistants. Wait until they decide."
-      case .blocked(let name, let days):
-        return "The person said not now to \(name). Do not propose it again for \(days) day\(days == 1 ? "" : "s")."
-      case .waiting(let name): return "A proposal for \(name) already waits for the person."
-      }
-    }
-  }
-
-  public static let maxOpenPerAssistant = 2
-  public static let blockDays = 7
-  public static let confirm = "Make it"
-  public static let notNow = "Not now"
-
-  public var open: [Proposal]
-  /// Names the person turned down, by `key`, with the time they may come back.
-  public var blocked: [String: Date]
-
-  public init(open: [Proposal] = [], blocked: [String: Date] = [:]) {
-    self.open = open
-    self.blocked = blocked
-  }
-
-  /// Why `by` cannot propose `name` now, or nil.
-  public func refusal(by: String, byName: String, name: String, now: Date) -> Refusal? {
-    let key = Self.key(name)
-    // Not now blocks the name for the assistant that asked (SPEC 2.5).
-    if let until = blocked[Self.blockKey(by: by, name: name)], until > now {
-      let days = max(1, Int((until.timeIntervalSince(now) / 86_400).rounded(.up)))
-      return .blocked(String(name.prefix(40)), days: days)
-    }
-    if open.contains(where: { Self.key($0.name) == key }) { return .waiting(String(name.prefix(40))) }
-    if open.filter({ $0.by == by }).count >= Self.maxOpenPerAssistant { return .tooMany(String(byName.prefix(40))) }
-    return nil
-  }
-  /// Adds a proposal; the refusal when it cannot wait now.
-  public mutating func add(_ proposal: Proposal, byName: String, now: Date) -> Refusal? {
-    trim(now: now)
-    if let refusal = refusal(by: proposal.by, byName: byName, name: proposal.name, now: now) { return refusal }
-    open.append(proposal)
-    return nil
-  }
-  /// Not now: the proposal goes and its name is blocked for `blockDays` days.
-  @discardableResult public mutating func decline(_ id: String, now: Date) -> Proposal? {
-    guard let i = open.firstIndex(where: { $0.id == id }) else { return nil }
-    let proposal = open.remove(at: i)
-    blocked[Self.blockKey(by: proposal.by, name: proposal.name)] = now.addingTimeInterval(TimeInterval(Self.blockDays) * 86_400)
-    return proposal
-  }
-  /// Make it, or the card went away: the proposal leaves the list.
-  @discardableResult public mutating func take(_ id: String) -> Proposal? {
-    guard let i = open.firstIndex(where: { $0.id == id }) else { return nil }
-    return open.remove(at: i)
-  }
-  /// Forgets blocks that ended.
-  public mutating func trim(now: Date) {
-    blocked = blocked.filter { $0.value > now }
-  }
-  static func key(_ name: String) -> String { name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-
-  /// The key of a block: the asker and the name.
-  static func blockKey(by: String, name: String) -> String { by + "|" + key(name) }
-
-  /// The person's own make card, when their words did not name it (SPEC 2.7).
-  public static let personConfirm = "Make assistant"
-  /// The card's words (SPEC 2.5 and 2.7). `byName` is nil for the person's own make.
-  public static func title(_ draft: AssistantDraft) -> String { "Make \(AskPolicy.oneLine(draft.name))?" }
-  public static func detail(_ draft: AssistantDraft, byName: String?) -> String {
-    var lines: [String] = []
-    if let byName {
-      lines.append(helper(byName, job: draft.job))
-    } else {
-      lines.append(draft.job ?? "It will ask what to do.")
-    }
-    lines.append("It starts with no apps.")
-    return lines.joined(separator: "\n")
-  }
-  /// What "Show what it will do" opens: the job, the places and what was left out, uncut.
-  public static func more(_ draft: AssistantDraft) -> String {
-    var lines: [String] = [draft.job ?? "It will ask what to do."]
-    lines.append("It can use: \(AssistantPlace.words(draft.places)).")
-    if !draft.dropped.isEmpty {
-      lines.append("Left out, because you do not allow it: \(draft.dropped.joined(separator: ", ")).")
-    }
-    return lines.joined(separator: "\n")
-  }
-  /// The line after Not now.
-  public static func declined(_ name: String) -> String { "You said no to \(AskPolicy.oneLine(name))." }
-  /// "Scout wants a helper that watches fares and tells you when a price drops." A job that does
-  /// not start with "It " keeps its own words after "Scout wants a new assistant."
-  static func helper(_ byName: String, job: String?) -> String {
-    let who = AskPolicy.oneLine(byName)
-    guard let job, job.hasPrefix("It ") else {
-      return "\(who) wants a new assistant." + (job.map { " " + $0 } ?? "")
-    }
-    var clause = String(job.dropFirst(3))
-    while clause.hasSuffix(".") { clause.removeLast() }
-    return "\(who) wants a helper that \(clause)."
-  }
-}
-
 // MARK: - The way back
 
 /// The changes of this launch that Undo can reverse, newest last, each with the chat its
@@ -594,14 +455,8 @@ public enum AskLines {
   }
   /// The run reached the time cap.
   public static func noAnswer(_ name: String) -> String { "\(AskPolicy.oneLine(name)) did not answer." }
-  /// The folded line in the asked assistant's own chat; it opens to the question and the answer.
-  public static func askedYou(_ asker: String) -> String { "\(AskPolicy.oneLine(asker)) asked you" }
   /// The asked assistant's row while it answers.
   public static func answering(_ asker: String) -> String { "Answering \(AskPolicy.oneLine(asker))" }
-  /// What the folded line opens to when personal data took part: no words travel.
-  public static let personalFold = "The question or the answer used personal data, so the words stay in the chat that asked."
-  /// The line after a hand-off left.
-  public static func messaged(_ name: String) -> String { "Messaged \(AskPolicy.oneLine(name))" }
 }
 
 // MARK: - Words of the host
