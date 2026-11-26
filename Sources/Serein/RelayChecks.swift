@@ -285,6 +285,7 @@ extension SmokeTest {
       try await waitFor(2) { !relay.panelVisible() }
       try check(!relay.panelVisible(), "Tapping it again hides the panel")
       try check(!controller.panelShown, "Hiding the panel lets the column's hologram move again")
+      results += try await voicePillListens(controller, relay)
     }
 
     // Speaking first, on a controlled clock: a daily brief, a quiet check-in, a failed run raised once.

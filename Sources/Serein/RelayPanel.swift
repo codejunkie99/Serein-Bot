@@ -230,7 +230,8 @@ import UniformTypeIdentifiers
   private var wasOpen = false
   private var wasKey = false
   private var holdTimer: Task<Void, Never>?
-  private var holding = false
+  /// A key is down, or Talk to Serein is listening for a click.
+  private(set) var holding = false
   /// Opens Serein's window on a thread (set by the app delegate).
   var openThread: (String) -> Void = { _ in }
   /// Opens Settings on a category ("Relay", "Agents").
@@ -758,30 +759,57 @@ import UniformTypeIdentifiers
     lastProgressAt = now
     speak(line)
   }
+  /// Speech or the microphone has never been asked. A check can say which, and show no prompt.
+  var microphoneNotAsked: () -> Bool = {
+    SFSpeechRecognizer.authorizationStatus() == .notDetermined
+      || AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+  }
+  /// Asks macOS for speech and the microphone. A check counts the ask and shows no prompt.
+  var requestMicrophoneAccess: () -> Void = {
+    SFSpeechRecognizer.requestAuthorization { _ in
+      Task { @MainActor in _ = await AVCaptureDevice.requestAccess(for: .audio) }
+    }
+  }
+  /// Opens the microphone for what a hold hears. A check can leave it shut.
+  var startDictation: (Dictation, @escaping (String) -> Void) -> Void = { dictation, onText in
+    dictation.start(onText: onText)
+  }
   private func beginListen(latched: Bool = false) {
     GuideCenter.shared.record(.barHeld)
     HintCenter.shared.recordBarUsed()
     HintCenter.shared.recordInteraction()
     stopSpeaking()
-    holding = true
     heard = ""
-    // The first hold: macOS has not been asked yet. Say so, ask, and send nothing this time.
-    if SFSpeechRecognizer.authorizationStatus() == .notDetermined
-      || AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
-    {
-      askingMic = true
+    // The first time: the bar says macOS will ask, and this hold sends nothing. A key stays down
+    // until it comes up. A click has no key-up, so it must not enter `holding`: Talk to Serein
+    // would ignore the next click.
+    if microphoneNotAsked() {
       micNotice = true
-      // The notice is the bar's: the pill has no room for words.
+      if !latched {
+        holding = true
+        askingMic = true
+      }
+      // The notice is the bar's: the pill has no room for words. show() also leaves the in-window
+      // bar, which a pill never does (below).
       if !wasOpen { show() }
-      SFSpeechRecognizer.requestAuthorization { _ in
-        Task { @MainActor in _ = await AVCaptureDevice.requestAccess(for: .audio) }
+      requestMicrophoneAccess()
+      if latched {
+        holdTimer?.cancel()
+        pressedAt = nil
+        ScreenContextCapture.shared.cancel()
       }
       return
     }
+    holding = true
     // A dictation from the panel's mic hands over to the hold; start alone would end it instead.
     if dictation.recording || dictation.starting { dictation.stop() }
-    if !wasOpen { voicePill.begin(dictation, latched: latched) }
-    dictation.start { [weak self] text in self?.heard = text }
+    if !wasOpen {
+      // The pill stands in for the bar and never calls show(), which is what used to drop the
+      // window ⌘E left behind. A click (Talk to Serein, the pill) comes through here too.
+      clearAnchor()
+      voicePill.begin(dictation, latched: latched)
+    }
+    startDictation(dictation) { [weak self] text in self?.heard = text }
   }
   func summonReleased() {
     holdTimer?.cancel()
@@ -876,13 +904,22 @@ import UniformTypeIdentifiers
   func showInWindow(_ window: NSWindow, isPrivate: Bool) {
     present(focus: true, anchor: window, isPrivate: isPrivate)
   }
+  /// The bar's window, or none when it floats over every app.
+  private func setAnchor(_ window: NSWindow?, isPrivate: Bool) {
+    anchorWindow = window
+    inWindowPrivate = window == nil ? nil : isPrivate
+  }
+  /// Forgets the window the bar sat in. `hide` does not, so the next in-window bar returns there
+  /// until a global hold, or the window closing, calls this.
+  private func clearAnchor() {
+    setAnchor(nil, isPrivate: false)
+  }
   private func present(focus: Bool, anchor: NSWindow?, isPrivate: Bool) {
     let panel = self.panel ?? makePanel()
     self.panel = panel
     let moving = anchor !== anchorWindow || (anchor == nil) != (inWindowPrivate == nil)
     if !panel.isVisible || moving {
-      anchorWindow = anchor
-      inWindowPrivate = anchor == nil ? nil : isPrivate
+      setAnchor(anchor, isPrivate: isPrivate)
       answerOnly = !focus
       // Reopened within two minutes, the last exchange shows collapsed; after that it goes. While
       // its turn still runs it shows whole, however long ago it went: its progress and Stop.
@@ -942,8 +979,7 @@ import UniformTypeIdentifiers
         .sink { [weak self, weak anchor] _ in
           guard let self, self.anchorWindow === anchor, self.panel?.isVisible == true else { return }
           self.hide(deferring: false)
-          self.anchorWindow = nil
-          self.inWindowPrivate = nil
+          self.clearAnchor()
         },
     ]
   }
@@ -1201,6 +1237,8 @@ import UniformTypeIdentifiers
     // A stop is the whole message: with what the hold took, `ask` would send it instead of stopping.
     // Routed words are judged by the assistant they reach (`VoiceRoute.stop`).
     let stop = route?.stop ?? RelayStop.stops(text, overShown: showing, running: running)
+    // The pill brings the chat forward. A stop never does, wherever the person was.
+    let bringChat = opensChat && !stop
     if stop, let taken = shown {
       ComposerContext.discard(taken.filePaths, keeping: [])
       shown = nil
@@ -1225,7 +1263,7 @@ import UniformTypeIdentifiers
         // composer, as for a typed mention. Nothing is sent to the wrong assistant.
         guard stop else {
           relay.ask(route.message, attachments: attachments, page: page, inWindow: inWindow)
-          if opensChat { chatForward() }
+          if bringChat { chatForward() }
           return
         }
         // A stop never waits: it goes on without the name, as a plain stop from the chat in front.
@@ -1261,7 +1299,7 @@ import UniformTypeIdentifiers
       barExchange = nil
       // The chat in front shows what waits, so nothing counts as put off.
       hide(deferring: false)
-      if opensChat { chatForward() }
+      if bringChat { chatForward() }
       return
     }
     barExchange = BarExchange(prompt: text, at: Date(), to: sentTo, before: before)
