@@ -53,7 +53,7 @@ public enum AppPlaces {
   /// What changes each Settings page by tool; every other page is the person's to change.
   static let settingsChanges: [String: [String]] = [
     "General": ["settings_set", "update"],
-    "Relay": ["assistant_make", "assistant_change", "assistant_delete", "instructions_propose"],
+    "Relay": ["assistant_make", "assistant_change", "assistant_delete", "instructions_propose", "settings_set"],
     "Agents": ["agent_sign_in"],
   ]
 
