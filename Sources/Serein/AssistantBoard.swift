@@ -550,9 +550,13 @@ extension RelayOrchestrator {
   /// `--ui-team-chat typing` has its lead working, and `--ui-team-chat handoff` hands a message on. `--ui-pins` adds three more and pins five, so
   /// the pinned faces show how they fill the sidebar's width. `--ui-row-previews` adds the same
   /// three and gives each row a preview (`previewRowChats`); `--ui-model-scope` sets the starting route.
+  /// `--ui-harness-v2 [seed]` adds Coach and seeds Serein's chat (`previewHarnessV2`).
   func previewTeam() {
     let teamChat = CommandLine.arguments.contains("--ui-team-chat")
-    guard CommandLine.arguments.contains("--ui-preview"), CommandLine.arguments.contains("--ui-assistants") || teamChat else { return }
+    let harnessV2 = CommandLine.arguments.contains("--ui-harness-v2")
+    guard CommandLine.arguments.contains("--ui-preview"), CommandLine.arguments.contains("--ui-assistants") || teamChat || harnessV2
+    else { return }
+    defer { if harnessV2 { previewHarnessV2() } }
     defer { if teamChat { previewTeamChat() } }
     let pins = CommandLine.arguments.contains("--ui-pins")
     let rows = CommandLine.arguments.contains("--ui-row-previews")
@@ -561,7 +565,7 @@ extension RelayOrchestrator {
     defer { previewModelScope() }
     changeTeam("Preview roster") { current in
       var team = current
-      for name in ["Scout", "Planner", "Writer"] + (pins || rows ? ["Coach", "Shopper", "Editor"] : []) {
+      for name in ["Scout", "Planner", "Writer"] + (pins || rows ? ["Coach", "Shopper", "Editor"] : harnessV2 ? ["Coach"] : []) {
         guard let next = team.adding(name) else { return nil }
         team = next
       }
