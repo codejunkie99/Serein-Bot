@@ -7,7 +7,7 @@ import SwiftUI
 /// carry a lock and never move. Under them every standing yes with its Ask again
 /// (`StandingYesList`) and every site rule with its Remove. The same control sits in Settings ›
 /// Assistants › Asks first and in the popover every approval card opens. A stop calls
-/// RelayController.setLevel, so a freer level still shows its confirmation first.
+/// RelayController.setLevel and takes effect at once.
 struct AskBeforeControl: View {
   @ObservedObject var relay: RelayOrchestrator
   let controller: RelayController

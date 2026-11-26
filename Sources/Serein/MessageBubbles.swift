@@ -168,7 +168,7 @@ struct TurnLead: View {
   let before: Date?
   let breaks: Set<String>
   init(message: AgentMessage, after: AgentMessage?, breaks: Set<String>) {
-    self.init(message: message, before: after?.sentAt, breaks: breaks)
+    self.init(message: message, before: after.flatMap(ChatTurns.endTime(of:)), breaks: breaks)
   }
   init(message: AgentMessage, before: Date?, breaks: Set<String>) {
     self.message = message
@@ -179,7 +179,9 @@ struct TurnLead: View {
     if breaks.contains(message.id) {
       Color.clear.frame(height: AssistantMetrics.turnGap - 2 * AssistantMetrics.turnInnerGap).accessibilityHidden(true)
     }
-    if MessageTimeline.startsGroup(message.sentAt, after: before), let at = message.sentAt { MessageTimeLine(at: at) }
+    if MessageTimeline.startsGroup(ChatTurns.time(of: message), after: before), let at = ChatTurns.time(of: message) {
+      MessageTimeLine(at: at)
+    }
   }
 }
 

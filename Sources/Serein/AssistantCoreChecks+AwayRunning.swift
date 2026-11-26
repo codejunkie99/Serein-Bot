@@ -73,6 +73,27 @@ extension AssistantCoreChecks {
     try check(!breaks.contains("g1") && !breaks.contains("q1"), "A turn Serein started that drew nothing leaves no room")
     try check(breaks.contains("g2") && breaks.contains("y4") && breaks.count == 3,
       "A turn Serein started itself and the person's next message each start a turn")
+    let checkIn: [AgentMessage] = [
+      you("Book the table", id: "y1"), reply("Booked, 7 pm.", id: "r1"),
+      you(RelayProactive.marker + "Check-in. Look through what I have connected", id: "c1"), reply("Your 3 pm moved to 4.", id: "c2"),
+      you("Thanks", id: "y2"),
+    ]
+    let quiet = ChatTurns.breaks(checkIn)
+    try check(!quiet.contains("c1") && !quiet.contains("c2") && quiet == ["y2"],
+      "A check-in, whose line is hidden, comes in as one more of Serein's texts: no empty room above it")
+    // A condensed line reads as sent when the replies it folds were, not when it folded them.
+    let noon = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    var hey = you("hey", id: "h1"); hey.sentAt = noon
+    var early = reply("Earlier reply", id: "o1"); early.sentAt = noon.addingTimeInterval(60)
+    var late = reply("Later reply", id: "o2"); late.sentAt = noon.addingTimeInterval(120)
+    var summary = reply("Summary", id: "s1"); summary.sentAt = noon.addingTimeInterval(8 * 3600)
+    summary.condensed = CondensedRange(originals: [hey, early, late], kept: ["h1"], session: nil, scope: "")
+    var hi = you("hi", id: "h2"); hi.sentAt = noon.addingTimeInterval(180)
+    let folded: [AgentMessage] = [hey, summary, hi]
+    try check(ChatTurns.time(of: summary) == early.sentAt && ChatTurns.lastDrawnTime(before: 2, in: folded) == late.sentAt
+      && !MessageTimeline.startsGroup(ChatTurns.time(of: summary), after: ChatTurns.lastDrawnTime(before: 1, in: folded))
+      && !MessageTimeline.startsGroup(hi.sentAt, after: ChatTurns.lastDrawnTime(before: 2, in: folded)),
+      "A condensed line takes the time of the replies it folds, so it never puts a later time between earlier messages")
   }
 }
 #endif

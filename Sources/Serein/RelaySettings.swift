@@ -459,8 +459,8 @@ struct RelayDownloadsSettings: View {
   }
 }
 
-/// Settings › Assistants › Asks first: what every assistant asks about first. Only risky steps
-/// shows its confirmation first (RelayController.setLevel).
+/// Settings › Assistants › Asks first: what every assistant asks about first. A choice takes
+/// effect at once (RelayController.setLevel).
 struct RelayAsksSettings: View {
   @ObservedObject var relay: RelayOrchestrator
   let controller: RelayController

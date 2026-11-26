@@ -32,9 +32,6 @@ extension AssistantCoreChecks {
           && ApprovalLevel.composerChoices.map(\.composerTitle) == ["Allow all", "Auto", "Manual"]
           && ApprovalLevel.composerChoices.allSatisfy { !$0.composerHint.isEmpty },
         "composer chips: the permission chip lists Allow all, Auto and Manual, each with its hint")
-      try check(
-        RelayController.confirms(.proactive) && RelayController.confirms(.riskyOnly) && !RelayController.confirms(.everyStep),
-        "composer chips: Allow all and Auto each wait for their confirmation; Manual is immediate")
       for choice in ApprovalLevel.composerChoices {
         relay.setLevel(choice)
         try check(relay.level == choice && relay.level.composerTitle == choice.composerTitle,

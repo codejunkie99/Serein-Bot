@@ -2,80 +2,61 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// The sub-pages of an assistant's page (AssistantSettingsPage.swift) that edit what it is: What
-/// it does (its job and instructions; for Serein also its own words), Apps it can use (Can use and
-/// the sites it never opens, never wider than the person's settings) and Links (the links it owns,
-/// with Copy link, Pause and Delete). Each change is saved through the existing paths.
+/// The sections of an assistant's page (AssistantSettingsPage.swift) that edit what it is:
+/// Instructions (its one box), Apps it can use (Can use and the sites it never opens, never wider
+/// than the person's settings) and Links (the links it owns, with Copy link, Pause and Delete).
+/// Each change is saved through the existing paths.
 
-/// What it does: its job (one line it reads every turn) and its extra instructions, saved
-/// together with Save and put back with Revert (`saveAssistant`). For Serein, its name, the line
-/// about you and its standing instructions follow (`SereinPersonaSettings`). Unsaved words belong
-/// to this page's assistant: the page is drawn again, empty, for another one.
-struct AssistantDoesSettings: View {
+/// Instructions: the assistant's one box, in the person's own words (`AssistantInstructions`),
+/// which it reads every turn. Save puts them in one place (`setInstructions`); Revert puts back
+/// the saved words. Unsaved words belong to this page's assistant: the page is drawn again, empty,
+/// for another one. Over the limit (old fields that did not fit together at launch), the count
+/// turns red and Save says to shorten them.
+struct AssistantInstructionsSettings: View {
   @ObservedObject var relay: RelayOrchestrator
   let profile: RelayProfile
   @Environment(\.palette) private var p
   /// Unsaved words; nil shows the saved ones.
-  @State private var jobDraft: String?
-  @State private var extraDraft: String?
+  @State private var draft: String?
   @State private var problem: String?
-  private var isMain: Bool { profile.id == relay.team.mainProfileID }
-  private var savedScope: AssistantScope { relay.editableScope(profile) }
-  private var job: String { jobDraft ?? savedScope.personaLine }
-  private var extra: String { extraDraft ?? savedScope.extraInstructions }
-  private var instructions: String { AssistantScope.instructions(persona: job, extra: extra) }
-  private var changed: Bool { instructions != AssistantScope.instructions(persona: savedScope.personaLine, extra: savedScope.extraInstructions) }
+  private var saved: String { relay.instructionsText(profile) }
+  private var words: String { draft ?? saved }
+  private var changed: Bool { draft.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) != saved } ?? false }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 24) {
-      SettingsPageHeader("What it does", sentence: "What \(profile.name) does for you, in its own words and yours.")
-      SettingsBlock("Its job") {
-        TextField("Writes and edits drafts", text: Binding(get: { job }, set: { value in
-          jobDraft = String(value.prefix(TeamProposal.personaLimit))
-        }))
-        .textFieldStyle(.serein).accessibilityLabel("What it does")
-        SettingsNote("One line \(profile.name) reads every turn. It grants nothing.")
-      }
-      SettingsBlock("Extra instructions") { extraField }
-      saveRow
-      if isMain { SereinPersonaSettings(relay: relay, profile: profile) }
+    VStack(alignment: .leading, spacing: 16) {
+      SettingsPageHeader(
+        "Instructions", sentence: "What \(profile.name) should know and how it should work, in your words. It reads them every turn.")
+      field
+      SettingsSaveBar(changed: changed, problem: problem, subject: "the instructions", revert: {
+        draft = nil
+        problem = nil
+      }, save: save)
     }
   }
-  private var extraField: some View {
+  private var field: some View {
     VStack(alignment: .leading, spacing: 4) {
-      TextField("Added after your own instructions.", text: Binding(get: { extra }, set: { value in
-        // The whole saved text (the job line included) stops at the limit.
-        let joined: Int = AssistantScope.instructions(persona: job, extra: value).count
-        let over: Int = joined - AssistantScope.instructionsLimit
-        extraDraft = over > 0 ? String(value.dropLast(over)) : value
-      }), axis: .vertical)
-      .textFieldStyle(.plain).font(AssistantType.body).lineLimit(4...10).foregroundStyle(p.ink)
+      TextField("Such as: Keep replies short. Never book anything before asking me.", text: Binding(
+        get: { words }, set: { draft = $0 }), axis: .vertical)
+      .textFieldStyle(.plain).font(AssistantType.body).lineLimit(5...14).foregroundStyle(p.ink)
       .padding(8).background(p.background, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius))
       .overlay(RoundedRectangle(cornerRadius: UIStyle.controlRadius).strokeBorder(p.borderStrong, lineWidth: UIStyle.hairline))
-      .accessibilityLabel("Extra instructions")
-      HStack {
-        Text("Added after your own instructions. They never replace them.").role(.meta)
+      .textInputCursor()
+      .accessibilityLabel("Instructions for \(profile.name)")
+      HStack(alignment: .top) {
+        Text("Advice only: it never grants access or skips asking first.").role(.meta)
+          .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 8)
-        let count: Int = instructions.count
-        Text("\(count.formatted()) / \(AssistantScope.instructionsLimit.formatted())").font(AssistantType.figures)
-          .foregroundStyle(count >= AssistantScope.instructionsLimit ? p.danger : p.secondary).fixedSize()
+        let count: Int = words.trimmingCharacters(in: .whitespacesAndNewlines).count
+        Text("\(count.formatted()) / \(AssistantInstructions.limit.formatted())").font(AssistantType.figures)
+          .foregroundStyle(count > AssistantInstructions.limit ? p.danger : p.secondary).fixedSize()
       }
     }
   }
-  private var saveRow: some View {
-    SettingsSaveBar(changed: changed, problem: problem, subject: "the job and the instructions", revert: {
-      jobDraft = nil
-      extraDraft = nil
-      problem = nil
-    }, save: save)
-  }
   private func save() {
-    var scope: AssistantScope = savedScope
-    scope.instructions = instructions
-    problem = relay.saveFromSettings(profile, colour: AssistantColour.key(profile.colour), scope: scope)
+    problem = relay.setInstructions(words, for: profile)
     guard problem == nil else { return }
-    jobDraft = nil
-    extraDraft = nil
+    draft = nil
   }
 }
 

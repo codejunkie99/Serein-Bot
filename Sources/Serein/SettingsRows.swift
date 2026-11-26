@@ -46,8 +46,10 @@ struct SettingsRowList<Rows: View>: View {
     VStack(alignment: .leading, spacing: 8) {
       if !title.isEmpty, !repeatsSection(title, section) { SettingsRowsCaption(title, info: info) }
       VStack(alignment: .leading, spacing: 0, content: rows)
-        // The first row's hairline sits above the list's top edge, where the clip hides it.
-        .padding(.top, -0.5).clipped()
+        // The first row's hairline sits above the list's top edge, where the clip hides it. One
+        // device pixel, not half a point: at 1x the row snaps down onto the edge, and its line showed
+        // just inside the card's border.
+        .padding(.top, -UIStyle.hairline).clipped()
         .padding(4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(p.card)

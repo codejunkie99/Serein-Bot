@@ -65,13 +65,6 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
     "Passwords go to a secure card you fill; the AI never sees them, and Serein never opens password managers. Say “stop everything” or press \(killLabel) to stop everything."
   }
 
-  /// The confirmation that guards switching to Only risky steps (switching back is immediate).
-  public static let confirmTitle = "Let Serein do routine steps without asking?"
-  public static let confirmButton = "Ask only before risky steps"
-  public static func confirmBody(killLabel: String) -> String {
-    "Serein and the tasks it starts will click, type, and run Calendar, Reminders, Notes, and Finder steps without asking each time, and start tasks without asking. It still asks every time before it sends, posts, buys, deletes, signs out, or uses Terminal, System Settings, or Full access. Passwords go to a secure card you fill, and it never touches password managers or Serein itself. Every step is listed under “What I did”, the list button at the top of Serein’s column. \(killLabel) stops everything."
-  }
-
   /// The one-time card for a fresh install that was given Only risky steps without confirming
   /// it: only then, and only before the first routine step that would have asked.
   public static func showsConsent(defaulted: Bool, level: ApprovalLevel) -> Bool {

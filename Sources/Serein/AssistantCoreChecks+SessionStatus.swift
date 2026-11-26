@@ -204,6 +204,7 @@ extension AssistantCoreChecks {
       "The text never carries the session's title")
     try sessionFinishes(check)
     try transcriptToTexts(check)
+    try codexLongOutput(check)
   }
 
   /// The "Sessions finished" card: one row per session, never the same event twice, short words.
@@ -276,6 +277,55 @@ extension AssistantCoreChecks {
       at: 150, settle: SessionStatusTracker.finishSettle)
     try check(done.map(\.kind) == [.finished] && SessionStatusWords.text(done) == "Claude Code has an update in shop-web.",
       "A real transcript's end becomes the finished text")
+  }
+
+  /// A Codex turn whose newest line is one tool output longer than the reader's tail (a
+  /// screenshot's runs to megabytes) is still running: it never becomes a finished text.
+  private static func codexLongOutput(_ check: Check) throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("serein-status-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let folder = home.appendingPathComponent(".codex/sessions/2026/11/25")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let log = folder.appendingPathComponent("rollout-2026-11-25T17-18-08-status-check.jsonl")
+    try Data().write(to: log)
+    let process = HarnessProcess(
+      pid: 999_998, parent: 2, executable: "/synthetic/bin/codex", arguments: ["codex"], cwd: "/work/earth", logs: [log.path])
+    var reader = ExternalSessionReader()
+    var tracker = SessionStatusTracker()
+    let start = Date(timeIntervalSince1970: 2_000_000)
+    tracker.observe([], now: start)
+    func write(_ lines: [String], at seconds: TimeInterval, settle: TimeInterval) throws -> (ExternalSession.State?, [SessionStatusTracker.Event]) {
+      let handle = try FileHandle(forWritingTo: log)
+      _ = try handle.seekToEnd()
+      try handle.write(contentsOf: Data(lines.map { $0 + "\n" }.joined().utf8))
+      try handle.close()
+      let sessions = reader.snapshot(processes: [process], home: home.path)
+      tracker.observe(sessions, now: start.addingTimeInterval(seconds))
+      let events = tracker.due(now: start.addingTimeInterval(seconds + settle), isAlive: { _ in true }, isWatching: { _ in false })
+      return (sessions.first?.state, events)
+    }
+    let begun = try write([
+      #"{"type":"session_meta","payload":{"id":"01a21500-status","cwd":"/work/earth"}}"#,
+      #"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+      #"{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec"}}"#,
+    ], at: 1, settle: 0)
+    try check(begun.0 == .running && begun.1.isEmpty, "A Codex turn calling a tool is running")
+    let screenshot = String(repeating: "A", count: 700 * 1024)
+    let long = try write([
+      #"{"type":"response_item","payload":{"type":"custom_tool_call_output","output":"\#(screenshot)"}}"#,
+      #"{"type":"event_msg","payload":{"type":"token_count"}}"#,
+    ], at: 300, settle: SessionStatusTracker.finishSettle)
+    try check(long.0 == .running && long.1.isEmpty,
+      "A Codex turn whose newest lines are a tool output longer than the read tail and bookkeeping is still running, not finished")
+    let ended = try write([
+      #"{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer"}}"#,
+      #"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+    ], at: 400, settle: SessionStatusTracker.finishSettle)
+    try check(ended.0 == nil && ended.1.map(\.kind) == [.finished], "The same turn's real end still becomes the finished text")
+    func turn(_ line: String) -> ExternalSessionReader.Turn? { ExternalSessionReader.codexTurn(Data((line + "\n").utf8)) }
+    try check(turn(#"{"type":"event_msg","payload":{"type":"token_count"}}"#) == nil
+      && turn(#"{"type":"event_msg","payload":{"type":"task_complete"}}"#) == ExternalSessionReader.Turn(nil),
+      "Bookkeeping alone says nothing about a Codex turn; its end says it ended")
   }
 }
 #endif

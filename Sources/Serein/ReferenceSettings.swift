@@ -133,6 +133,7 @@ struct ReferenceSettings: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .animation(reduceMotion ? nil : Motion.swap, value: path)
           .environment(\.settingsNavigation, navigation)
+          .environment(\.settingsRequestedSection, section)
           if let status { Text(status).role(.meta) }
           }
         }.padding(.horizontal, UIStyle.pageGutter).padding(.top, 14).padding(.bottom, 56)

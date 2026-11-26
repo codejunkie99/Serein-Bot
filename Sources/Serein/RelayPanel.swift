@@ -546,26 +546,10 @@ import UniformTypeIdentifiers
     setLevel(level)
   }
 
-  /// “Serein asks before”. A level that asks less than Every step needs its confirmation every
-  /// time it is chosen, as Full access does; Every step is immediate.
-  func setLevel(_ level: ApprovalLevel) {
-    // Choosing the current option is still an explicit choice. A freer level always waits for
-    // its confirmation; cancelling it must not tick the guide or mark the level user-set.
-    guard Self.confirms(level) else {
-      relay.setLevel(.everyStep)
-      return
-    }
-    let allowAll = level == .proactive
-    let alert = NSAlert()
-    alert.messageText = allowAll ? ApprovalLevel.allowAllConfirmTitle : ApprovalLevel.confirmTitle
-    alert.informativeText = allowAll
-      ? ApprovalLevel.allowAllConfirmBody(killLabel: killLabel) : ApprovalLevel.confirmBody(killLabel: killLabel)
-    alert.addButton(withTitle: allowAll ? ApprovalLevel.proactive.composerTitle : ApprovalLevel.confirmButton)
-    alert.addButton(withTitle: "Cancel")
-    NSApp.activate(ignoringOtherApps: true)
-    if alert.runModal() == .alertFirstButtonReturn { relay.setLevel(level) }
-  }
-  static func confirms(_ level: ApprovalLevel) -> Bool { level != .everyStep }
+  /// “Serein asks before”: a pick takes effect at once, as a native picker's does, with no alert
+  /// (the owner's call, 2026-11-25). Each choice's line in the list says what it lets through,
+  /// the pill shows the level in force, and Stop Everything stays one shortcut away.
+  func setLevel(_ level: ApprovalLevel) { relay.setLevel(level) }
   func killSwitch() {
     relay.stopEverything(pause: true)
     ToastCenter.shared.show("Serein stopped everything. Reminders and alerts are paused until you ask Serein something again.")
@@ -1883,7 +1867,6 @@ struct RelayPanelView: View {
       handoffTargets: handoffTargets, handOff: handOff, speaker: speaker,
       face: shared.face, profiles: shared.profiles, relay: relay, asking: askingHere,
       outgoing: relay.outgoingHere, waiting: relay.waitsOnPerson(in: run.spec.threadID),
-      undoCondense: ended ? { relay.agent.undoCondense($0, in: relay.threadID) } : nil,
       chipSend: ended ? { ask($0) } : nil, retry: ended ? retryLast : nil,
       again: ended ? retryNewest(run) : nil, speak: ended ? { _ = controller.speak($0) } : nil)
   }
@@ -1891,8 +1874,7 @@ struct RelayPanelView: View {
   private func earlierMessages(_ shared: RelayChatShared) -> some View {
     RelayMessages(messages: relay.transcript, working: false, phase: nil, p: p, answered: relay.answered,
                   showsTitle: !full, cards: shared.cards, card: taskCard, brief: relay.briefCard,
-                  goToCard: shared.goToCard, openCards: shared.openCards,
-                  undoCondense: { relay.agent.undoCondense($0, in: relay.threadID) }, edit: shared.edit,
+                  goToCard: shared.goToCard, openCards: shared.openCards, edit: shared.edit,
                   face: shared.face, profiles: shared.profiles, relay: relay)
   }
   /// The saved messages of a chat with no run in memory. From the press of Send until the run
@@ -1908,8 +1890,7 @@ struct RelayPanelView: View {
       suggest: suggest, ideas: ideas, showsTitle: !full, greets: style == .side,
       aboutPage: side && pageChip.slot.page != nil,
       cards: shared.cards, card: taskCard, brief: relay.briefCard,
-      goToCard: shared.goToCard, openCards: shared.openCards,
-      undoCondense: { relay.agent.undoCondense($0, in: relay.threadID) }, edit: shared.edit,
+      goToCard: shared.goToCard, openCards: shared.openCards, edit: shared.edit,
       handoffTargets: handoffTargets, handOff: handOff, speaker: speaker,
       face: shared.face, profiles: shared.profiles, relay: relay,
       trail: outgoing.map {
@@ -2824,8 +2805,6 @@ private struct RelayOlderKey: Equatable {
   let near: [AgentMessage]
   let editing: Bool
   let editable: Bool
-  /// Undo on a condensed divider, which a turn's end makes available.
-  let undoable: Bool
   let unread: Bool
   let face: String?
   let speaker: String?
@@ -2887,8 +2866,7 @@ private struct RelayTranscript: View {
   var outgoing: RelayOrchestrator.Outgoing? = nil
   /// A card or a question waits on the person: the trail stands still.
   var waiting = false
-  /// Undo on a condensed divider, quick-reply chips, Try again and Read aloud: an ended turn's only.
-  var undoCondense: ((String) -> Void)? = nil
+  /// Quick-reply chips, Try again and Read aloud: an ended turn's only.
   var chipSend: ((String) -> Void)? = nil
   var retry: (() -> Void)? = nil
   /// Try again on the failed line of a turn that ended with a cause; nil when the words were not the person's.
@@ -2899,8 +2877,7 @@ private struct RelayTranscript: View {
     let next: RelayOrchestrator.Outgoing? = live ? nil : outgoing
     RelayMessages(messages: run.transcript + (next?.messages ?? []), working: live || next != nil, phase: live ? run.phase : nil,
                   p: p, answered: answered, floating: floating,
-                  cards: cards, card: card, brief: brief, goToCard: goToCard, openCards: openCards,
-                  undoCondense: undoCondense, edit: edit,
+                  cards: cards, card: card, brief: brief, goToCard: goToCard, openCards: openCards, edit: edit,
                   handoffTargets: handoffTargets, handOff: handOff, speaker: speaker,
                   face: face, profiles: profiles, relay: relay, trail: trail(next),
                   chipSend: chipSend, retry: retry, speak: speak)
@@ -2965,8 +2942,11 @@ enum ChatTurns {
     var pending = false
     var drawnBefore = false
     for index in shown.indices {
-      if starts(index, in: shown) { pending = true }
-      guard draws(index, in: shown) else { continue }
+      let drawn: Bool = draws(index, in: shown)
+      // A turn Serein began whose line is hidden (a check-in, the brief) reads on as one more of
+      // its texts: no room above its reply, as no line stands there to explain it.
+      if drawn, starts(index, in: shown) { pending = true }
+      guard drawn else { continue }
       if pending && drawnBefore { breaks.insert(shown[index].id) }
       pending = false
       drawnBefore = true
@@ -3002,8 +2982,12 @@ enum ChatTurns {
   static func lastDrawnTime(before index: Int, in shown: [AgentMessage]) -> Date? {
     guard index > 0 else { return nil }
     let drawn: Int? = (0..<index).last { draws($0, in: shown) }
-    return shown[drawn ?? index - 1].sentAt
+    return endTime(of: shown[drawn ?? index - 1])
   }
+  /// When a row reads as sent, for the time divider. A condensed divider stands where the replies
+  /// it folds were, from the first to the last, not at the moment they were condensed.
+  static func time(of message: AgentMessage) -> Date? { message.condensed?.folded.first?.sentAt ?? message.sentAt }
+  static func endTime(of message: AgentMessage) -> Date? { message.condensed?.folded.last?.sentAt ?? message.sentAt }
 }
 
 extension RelayMessages {
@@ -3165,8 +3149,6 @@ private struct RelayMessages: View {
   /// Scrolls Serein's chat to an open approval card; `openCards` are the cards still open.
   var goToCard: ((UUID) -> Void)? = nil
   var openCards: Set<UUID> = []
-  /// Undo on a condensed divider, by the summary's id; absent while Serein replies.
-  var undoCondense: ((String) -> Void)? = nil
   /// Edit and rerun on a message of the user's, by its id, with the saved words
   /// (RelayOrchestrator.rerun); absent while the turn is being handed to the AI app. A refusal
   /// it gives back keeps the editor open with its words, and the editor says it.
@@ -3291,7 +3273,6 @@ private struct RelayMessages: View {
     let message: AgentMessage = messages[index]
     // Checked on every update of the chat, so only what is cheap to compare.
     let key = RelayOlderKey(near: near, editing: editing == message.id, editable: edit != nil,
-                            undoable: undoCondense != nil,
                             unread: relay.map { $0.unreadFrom[$0.threadID] == message.id } ?? false,
                             face: face?.id, speaker: speaker?.id, newestReceipt: lastReceipt <= index)
     return EarlierRow(key: EarlierRowKey(key)) {
@@ -3327,8 +3308,8 @@ private struct RelayMessages: View {
       AwaySummaryCard(relay: relay, firstUnreadAt: message.sentAt, goToCard: goToCard)
     }
     if ChatTurns.draws(index, in: layout.shown),
-      MessageTimeline.startsGroup(message.sentAt, after: ChatTurns.lastDrawnTime(before: index, in: layout.shown)),
-      let at = message.sentAt
+      MessageTimeline.startsGroup(ChatTurns.time(of: message), after: ChatTurns.lastDrawnTime(before: index, in: layout.shown)),
+      let at = ChatTurns.time(of: message)
     {
       MessageTimeLine(at: at)
     }
@@ -3348,8 +3329,7 @@ private struct RelayMessages: View {
   @ViewBuilder private func messageBody(_ message: AgentMessage, index: Int, next: AgentMessage?, layout: RelayMessageLayout) -> some View {
     let quiet: Bool = next.map { $0.role == "assistant" && RelayAutomatic.isQuiet(reply: $0.text) } ?? false
     if let range = message.condensed {
-      CondensedDivider(summary: message, range: range, userWidth: 280,
-                       undo: undoCondense == nil ? nil : { undoCondense?(message.id) })
+      CondensedDivider(summary: message, range: range, userWidth: 280)
     } else if let line = message.line, !line.isEmpty {
       // Serein's own line: the centred capsule with the faces it names, a folded line that opens
       // to its words, or a warning about an assistant's held-back answer. Never the brief's failure.

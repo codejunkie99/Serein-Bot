@@ -1163,31 +1163,36 @@ import SereinCore
     return out
   }
 
-  // MARK: standing instructions
+  // MARK: instructions
 
-  /// The standing instructions are the person's own words: Serein may only propose a new
-  /// version. The proposal is a memory write (`.change`, so it asks under every level), and the
-  /// card shows what goes and what comes. Allowed, it is journaled with actor "relay" and Undo
-  /// puts the earlier words back.
+  /// The Instructions box is the person's own words: the assistant whose turn this is may only
+  /// propose a new version of its own. The proposal is a memory write (`.change`, so it asks under
+  /// every level), and the card shows what goes and what comes. Allowed, it is saved like the box
+  /// (`setInstructions`, actor "relay"), journaled with its Undo.
   private func proposeInstructions(_ a: [String: Any]) async throws -> [String: Any] {
-    guard let raw = a["rules"] as? String else {
-      throw SereinError.invalid("rules is required: the complete new list, one instruction per line")
+    // `rules` is the old name of the argument, from before the one box.
+    guard let raw = (a["instructions"] as? String) ?? (a["rules"] as? String) else {
+      throw SereinError.invalid("instructions is required: the complete new text")
     }
-    let before = relay.persona.rules
-    let proposed = RelayPersona(rules: raw).sanitized()?.rules ?? ""
+    guard let profile = relay.actingProfile ?? relay.team.active else { throw SereinError.invalid(ActionAdmission.needsPerson) }
+    let before: String = relay.instructionsText(profile)
+    let proposed: String = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard proposed.count <= AssistantInstructions.limit else {
+      throw SereinError.invalid("The instructions can be at most \(AssistantInstructions.limit) characters.")
+    }
     if let why = SavedText.problem(proposed) { throw SereinError.invalid(why) }
-    guard proposed != before else { throw SereinError.invalid("Those are already the standing instructions.") }
+    guard proposed != before else { throw SereinError.invalid("Those are already the instructions.") }
     try await gateAgentWrite(
-      AgentWrite.memoryEffect(), title: "Serein wants to change your standing instructions",
+      AgentWrite.memoryEffect(), title: "\(profile.name) wants to change its instructions",
       detail: RelayPersona.changeSummary(from: before, to: proposed),
       more: RelayPersona.changeText(from: before, to: proposed), moreName: "the change")
     // The card can wait; if the person edited them meanwhile, what they allowed is no longer the change.
-    guard relay.persona.rules == before else {
-      throw SereinError.invalid("The standing instructions changed while the card waited, so nothing was changed.")
+    guard let now = relay.team.profiles.first(where: { $0.id == profile.id }), relay.instructionsText(now) == before else {
+      throw SereinError.invalid("The instructions changed while the card waited, so nothing was changed.")
     }
-    relay.updateInstructions(proposed, actor: "relay")
-    relay.note("Changed the standing instructions", .allowed)
-    return ["rules": proposed]
+    if let problem = relay.setInstructions(proposed, for: now, actor: "relay") { throw SereinError.invalid(problem) }
+    relay.note("Changed \(now.name)'s instructions", .allowed)
+    return ["instructions": proposed]
   }
 
   // MARK: goals

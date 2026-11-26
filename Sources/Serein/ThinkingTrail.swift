@@ -181,9 +181,10 @@ struct ThinkingTrail: View {
   }
 }
 
-/// Serein's turn in its own chat, as a trail above its reply: the pages, Mac apps, files and
-/// memory it used (the board's steps) and the AI app's own steps, in time order, the newest in the
-/// present tense while the turn runs.
+/// Serein's turn in its own chat, as a trail above its reply while it runs: the pages, Mac apps,
+/// files and memory it used (the board's steps) and the AI app's own steps, in time order, the
+/// newest in the present tense. It goes when the turn ends, so the chat reads like texts: no
+/// "Worked for 25s" line stays above the reply.
 struct RunTrail: View {
   @ObservedObject var run: AgentRun
   let browser: BrowserModel
@@ -214,16 +215,15 @@ struct RunTrail: View {
   }
 
   var body: some View {
-    let steps = Self.steps(run, board: run.boardInfo(browser))
-    // A finished turn that only answered needs no trail.
-    if run.isActive || !steps.isEmpty {
+    // Only while the turn runs: a finished turn leaves its reply alone.
+    if run.isActive {
+      let steps = Self.steps(run, board: run.boardInfo(browser))
       ThinkingTrail(
         steps: steps, startedAt: since.map { min($0, run.record.startedAt) } ?? run.record.startedAt,
-        endedAt: run.isActive ? nil : run.record.endedAt ?? run.record.startedAt, doneLabel: run.outcomeText,
-        waiting: waiting && run.isActive, endedWell: run.record.outcome == .done, attempt: attempt,
+        waiting: waiting, attempt: attempt,
         replied: run.transcript.last.map { $0.role == "assistant" && !$0.text.isEmpty } ?? false, stop: stop,
         retry: retry
-      ).onChange(of: steps.last?.id) { if run.isActive { follow?() } }
+      ).onChange(of: steps.last?.id) { follow?() }
     }
   }
 

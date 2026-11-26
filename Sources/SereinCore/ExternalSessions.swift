@@ -210,9 +210,17 @@ public enum HarnessProcessDiscovery {
 /// Serial-use cache. Polls read at most a head and a 512 KiB tail of changed, open logs.
 /// Closed logs and completed Codex turns disappear immediately; old history cannot look live.
 public struct ExternalSessionReader {
+  /// A turn's state from a log's lifecycle lines: `state` nil once the turn ended.
+  public struct Turn: Equatable, Sendable {
+    public var state: ExternalSession.State?
+    public init(_ state: ExternalSession.State?) { self.state = state }
+  }
   private struct Cached {
     var stamp: String
     var session: ExternalSession?
+    /// The file (device and inode) and the turn its last lifecycle line gave, for a tail with none.
+    var file = ""
+    var turn: Turn?
   }
   private var cache: [String: Cached] = [:]
   public private(set) var bytesRead = 0
@@ -237,38 +245,45 @@ public struct ExternalSessionReader {
 
   /// nil means a completed/idle turn. An open process without usable lifecycle evidence has
   /// its own `open` row rather than being counted as a running model turn.
-  public static func codexState(_ data: Data) -> ExternalSession.State? {
-    var state: ExternalSession.State?
+  public static func codexState(_ data: Data) -> ExternalSession.State? { codexTurn(data)?.state }
+
+  /// The turn by the last lifecycle line in `data`; nil when it holds none, as when it is all one
+  /// tool output (a screenshot's runs to megabytes) or only bookkeeping, which says nothing.
+  public static func codexTurn(_ data: Data) -> Turn? {
+    var turn: Turn?
     for line in data.split(separator: 10) {
       guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
             let payload = object["payload"] as? [String: Any] else { continue }
       let type = payload["type"] as? String ?? ""
       if object["type"] as? String == "event_msg" {
         switch type {
-        case "task_started", "turn_started": state = .running
-        case "task_complete", "turn_complete", "turn_aborted": state = nil
+        case "task_started", "turn_started": turn = Turn(.running)
+        case "task_complete", "turn_complete", "turn_aborted": turn = Turn(nil)
         default: break
         }
       } else if object["type"] as? String == "response_item" {
         switch type {
-        case "reasoning", "function_call_output", "custom_tool_call_output": state = .running
+        case "reasoning", "function_call_output", "custom_tool_call_output": turn = Turn(.running)
         case "function_call", "custom_tool_call":
           let name = payload["name"] as? String ?? ""
-          state = name.hasSuffix("request_user_input") || name.hasSuffix("request_user_input_async") ? .needsUser : .running
+          turn = Turn(name.hasSuffix("request_user_input") || name.hasSuffix("request_user_input_async") ? .needsUser : .running)
         case "message" where payload["role"] as? String == "assistant":
-          state = payload["phase"] as? String == "final_answer" ? nil : .running
+          turn = Turn(payload["phase"] as? String == "final_answer" ? nil : .running)
         default: break
         }
       }
     }
-    return state
+    return turn
   }
 
   /// Claude Code's transcript tail: running while a turn is going (a prompt or tool result waits
   /// for the model, or the model asked for a tool), needsUser while it waits on AskUserQuestion
   /// or ExitPlanMode, nil once the turn ended or was interrupted.
-  public static func claudeState(_ data: Data) -> ExternalSession.State? {
-    var state: ExternalSession.State?
+  public static func claudeState(_ data: Data) -> ExternalSession.State? { claudeTurn(data)?.state }
+
+  /// The turn by the last message in `data`; nil when it holds none (`codexTurn`).
+  public static func claudeTurn(_ data: Data) -> Turn? {
+    var turn: Turn?
     for line in data.split(separator: 10) {
       guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
             let message = object["message"] as? [String: Any], object["isMeta"] as? Bool != true else { continue }
@@ -276,21 +291,21 @@ public struct ExternalSessionReader {
       switch object["type"] as? String {
       case "user":
         let text = (message["content"] as? String) ?? content.compactMap { $0["text"] as? String }.joined()
-        state = text.hasPrefix("[Request interrupted") ? nil : .running
+        turn = Turn(text.hasPrefix("[Request interrupted") ? nil : .running)
       case "assistant":
         switch message["stop_reason"] as? String {
         case "tool_use":
           let asks = content.contains {
             $0["type"] as? String == "tool_use" && ["AskUserQuestion", "ExitPlanMode"].contains($0["name"] as? String ?? "")
           }
-          state = asks ? .needsUser : state == .needsUser ? .needsUser : .running
-        case nil: state = .running
-        default: state = nil
+          turn = Turn(asks || turn?.state == .needsUser ? .needsUser : .running)
+        case nil: turn = Turn(.running)
+        default: turn = Turn(nil)
         }
       default: break
       }
     }
-    return state
+    return turn
   }
   /// Claude Code's loop in the transcript's tail: the last ScheduleWakeup's wake time plus a little
   /// grace (none once it stopped the loop), or `distantFuture` while a recurring CronCreate job
@@ -618,7 +633,8 @@ public struct ExternalSessionReader {
     defer { try? handle.close() }
     var info = stat()
     guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
-    let stamp = "\(info.st_dev):\(info.st_ino):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec)"
+    let file = "\(info.st_dev):\(info.st_ino)"
+    let stamp = "\(file):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec)"
     if let cached = cache[path], cached.stamp == stamp { return cached.session }
     guard let head = try? handle.read(upToCount: SessionIndex.headLimit) else { return nil }
     let offset = max(0, info.st_size - 512 * 1024)
@@ -654,7 +670,11 @@ public struct ExternalSessionReader {
       return session
     default: break
     }
-    if let metadata, let state = driver == .codex ? Self.codexState(tail) : Self.claudeState(tail) ?? .open {
+    // A tail with no lifecycle line keeps the turn this file last showed: a running turn whose
+    // newest line is one long tool output has not ended.
+    let turn = (driver == .codex ? Self.codexTurn(tail) : Self.claudeTurn(tail))
+      ?? cache[path].flatMap { $0.file == file ? $0.turn : nil }
+    if let metadata, let state = driver == .codex ? turn?.state : turn?.state ?? .open {
       let title = driver == .codex
         ? Self.codexTitle(metadata.id, home: home).flatMap(SessionIndex.userTitle) ?? metadata.title
         : Self.claudeTitle(tail) ?? metadata.title
@@ -663,7 +683,7 @@ public struct ExternalSessionReader {
                                 state: state, updatedAt: date)
       if driver == .codex { session?.parent = Self.codexParent(head) } else { session?.loopUntil = Self.claudeLoop(tail) }
     }
-    cache[path] = Cached(stamp: stamp, session: session)
+    cache[path] = Cached(stamp: stamp, session: session, file: file, turn: turn)
     return session
   }
 

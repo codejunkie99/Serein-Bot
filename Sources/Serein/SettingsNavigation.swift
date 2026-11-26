@@ -131,6 +131,15 @@ struct SettingsSection<Content: View>: View {
   }
 }
 private struct SettingsSectionTitleKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct SettingsRequestedSectionKey: EnvironmentKey { static let defaultValue: String? = nil }
+extension EnvironmentValues {
+  /// The section a request is about to scroll to (`SettingsInline`), so a page can open the fold
+  /// that holds it first (an assistant's Advanced); nil once scrolled.
+  var settingsRequestedSection: String? {
+    get { self[SettingsRequestedSectionKey.self] }
+    set { self[SettingsRequestedSectionKey.self] = newValue }
+  }
+}
 extension EnvironmentValues {
   /// The heading of the `SettingsSection` this view sits in, if any.
   var settingsSectionTitle: String? {

@@ -4,9 +4,9 @@ import SwiftUI
 
 /// Settings › Assistants › {Name} (board 15): one assistant's page, from top to bottom: its
 /// header (a click on the face changes its icon and colour); the paused banner with Resume; Needs
-/// you, which opens its chat; For you (Working for you, Speaks first, Message {Name}); Settings
-/// (AI app and model, What it does, Apps it can use, Routines, Memory, Asks first, Links), each
-/// row with its current answer and its own sub-page (AssistantSettingsParts.swift); and Manage
+/// you, which opens its chat; Thinks with; Its computer; For you (Working for you, not on Serein's
+/// page; Speaks first); Instructions, its one box; Routines; Advanced, folded (Apps it can use,
+/// Memory, Allowed without asking, Links: AssistantSettingsParts.swift); and Manage
 /// (Pinned, Hidden, Rename…, Delete {Name}…). Serein has no Pause, Hidden or Delete. Every change
 /// goes through the existing paths: `AssistantRowMenu.setPaused` (the change `assistant_change`
 /// makes), `setSpeaksFirst`, `saveAssistant`, `chooseRoute`, `AssistantRowState`, `renameProfile`
@@ -41,11 +41,13 @@ enum AssistantSettingsKey {
   static let memory = "memory"
   static let asks = "asks"
   static let links = "links"
-  /// The keys that are sections of an assistant's page (`SettingsInline`), in page order.
-  static let order = [does, apps, routines, memory, asks, links]
-  static let all = Set(order)
+  /// The keys that are sections of an assistant's page (`SettingsInline`), in page order: the
+  /// ones always shown, then the ones folded under Advanced.
+  static let order = [does, routines]
+  static let advanced = [apps, memory, asks, links]
+  static let all = Set(order + advanced)
   static let titles: [String: String] = [
-    does: "What it does", apps: "Apps it can use", routines: "Routines", memory: "Memory", asks: "Asks first", links: "Links",
+    does: "Instructions", apps: "Apps it can use", routines: "Routines", memory: "Memory", asks: "Asks first", links: "Links",
   ]
   /// "Relay/<id>": Settings › Assistants › that assistant's page; "Relay/<id>/apps" one of its
   /// sub-pages.
@@ -88,6 +90,9 @@ private struct AssistantSettingsBody: View {
   var header = true
   @ObservedObject private var network = NetworkMonitor.shared
   @ObservedObject private var surface = SereinSurface.main
+  /// Advanced, open; it opens by itself when a link asks for one of its sections.
+  @State private var advanced = false
+  @Environment(\.settingsRequestedSection) private var requested
   private var isMain: Bool { profile.id == relay.team.mainProfileID }
   var body: some View {
     let status: SereinStatus = relay.assistantStatus(
@@ -103,15 +108,29 @@ private struct AssistantSettingsBody: View {
       }
       SettingsRowList("For you") { AssistantForYouRows(relay: relay, profile: profile) }
       // Each of these used to open its own page; they are sections of this one now.
-      ForEach(AssistantSettingsKey.order, id: \.self) { key in
-        SettingsSection(key, title: AssistantSettingsKey.titles[key] ?? key) {
-          AssistantSettingsSectionView(relay: relay, profile: profile, key: key)
-        }
-      }
+      ForEach(AssistantSettingsKey.order, id: \.self, content: section)
+      // The rest, for whoever wants the detail: folded as AI apps folds More.
+      DisclosureGroup(isExpanded: $advanced) {
+        VStack(alignment: .leading, spacing: 24) {
+          ForEach(AssistantSettingsKey.advanced, id: \.self, content: section)
+        }.padding(.top, 16)
+      } label: {
+        Text("Advanced").font(AssistantType.name)
+      }.id("Advanced")
       SettingsRowList("Manage", note: isMain ? "Serein is always here: it has no Pause, Hidden or Delete." : nil) {
         AssistantManageRows(relay: relay, profile: profile)
       }
     }
+    .onAppear { openAdvanced(for: requested) }
+    .onChange(of: requested) { _, key in openAdvanced(for: key) }
+  }
+  private func section(_ key: String) -> some View {
+    SettingsSection(key, title: AssistantSettingsKey.titles[key] ?? key) {
+      AssistantSettingsSectionView(relay: relay, profile: profile, key: key)
+    }
+  }
+  private func openAdvanced(for key: String?) {
+    if let key, AssistantSettingsKey.advanced.contains(key) { advanced = true }
   }
 }
 
@@ -239,27 +258,14 @@ private struct AssistantNeedsYouBanner: View {
   }
 }
 
-/// For you: Working for you (Serein's own row says why it has no switch), Speaks first, and
-/// Message {Name}.
+/// For you: Working for you (another assistant's Pause switch; Serein has none, so its page
+/// leaves the row out) and Speaks first.
 private struct AssistantForYouRows: View {
   @ObservedObject var relay: RelayOrchestrator
   let profile: RelayProfile
-  @Environment(\.dismiss) private var dismiss
   private var isMain: Bool { profile.id == relay.team.mainProfileID }
   var body: some View {
-    if isMain {
-      SettingsListRow(
-        name: "Working for you", status: "Serein answers for everyone. Stop Everything stops all work.", expandable: false
-      ) {
-        SettingsGlyphTile(systemName: "bolt")
-      } trailing: {
-        EmptyView()
-      } live: {
-        EmptyView()
-      } details: {
-        EmptyView()
-      }
-    } else {
+    if !isMain {
       SettingsSwitchRow(
         title: "Working for you",
         answer: profile.isPaused ? "Paused. Its routines and links wait until you turn it back on." : "Runs its routines and links",
@@ -270,17 +276,6 @@ private struct AssistantForYouRows: View {
       }
     }
     AssistantSpeaksFirstRow(relay: relay, profile: profile)
-    SettingsSummaryRow(
-      title: "Message \(profile.name)", answer: "Opens its chat with the keyboard in the message bar", hint: "Opens its chat",
-      open: message
-    ) {
-      SettingsGlyphTile(systemName: "bubble.left")
-    }
-  }
-  private func message() {
-    guard relay.openAssistant(profile.id) else { return }
-    dismiss()
-    NotificationCenter.default.post(name: SereinSurface.focus, object: nil)
   }
 }
 
@@ -291,7 +286,7 @@ private struct AssistantSettingsSectionView: View {
   let key: String
   var body: some View {
     switch key {
-    case AssistantSettingsKey.does: AssistantDoesSettings(relay: relay, profile: profile)
+    case AssistantSettingsKey.does: AssistantInstructionsSettings(relay: relay, profile: profile)
     case AssistantSettingsKey.apps: AssistantAppsSettings(relay: relay, profile: profile)
     case AssistantSettingsKey.routines:
       SettingsPageHeader("Routines", sentence: "What \(profile.name) runs on its own: its schedules, goals and alerts.")
@@ -461,12 +456,12 @@ private struct AssistantManageRows: View {
     return job + " · " + status.words
   }
   /// What its Speaks first level means.
-  static func speaksFirst(_ level: RelayProactive.Level, name: String) -> String {
+  static func speaksFirst(_ level: RelayProactive.Level) -> String {
     switch level {
-    case .off: return "\(name) speaks only when you ask"
-    case .light: return "A morning line and failed work, now and then"
-    case .jarvis: return "Also a check-in when \(name) has something useful"
-    case .always: return "A check-in about every hour"
+    case .off: return "Only when you ask"
+    case .light: return "A morning note, and when work fails"
+    case .jarvis: return "When it has something useful"
+    case .always: return "About every hour"
     }
   }
 }
@@ -482,7 +477,7 @@ struct AssistantSpeaksFirstRow: View {
       SettingsChoice(value: $0, label: $0.title)
     }
     SettingsChoiceRow(
-      title: "Speaks first", answer: AssistantSettingsWords.speaksFirst(level, name: profile.name),
+      title: "Speaks first", answer: AssistantSettingsWords.speaksFirst(level),
       selection: Binding(get: { relay.speaksFirst(profile) }, set: { next in
         guard next != relay.speaksFirst(profile) else { return }
         relay.setSpeaksFirst(profile.id, next)
@@ -512,130 +507,37 @@ extension RelayOrchestrator {
       profile.id, name: profile.name, colour: colour, icon: profile.icon, picture: nil, scope: scope,
       speaksFirst: speaksFirst(profile))
   }
-}
-
-/// Serein's own words (What it does, for the main assistant): its name and the line about you,
-/// and its standing instructions (`RelayPersona`), each saved with Save and put back with Revert,
-/// and the recent changes to them with Undo. They live in the folder of the assistant you talk
-/// to, so they show only while that is Serein; the drafts belong to Serein and go when another
-/// assistant answers.
-struct SereinPersonaSettings: View {
-  @ObservedObject var relay: RelayOrchestrator
-  let profile: RelayProfile
-  @Environment(\.palette) var p
-  /// Unsaved standing instructions; nil shows the saved words, so an allowed proposal or an
-  /// undo appears at once.
-  @State private var instructionsDraft: String?
-  /// Unsaved name and line about the user, saved together like the instructions, so a space
-  /// typed at the end of a word stays while the person types; nil shows the saved words.
-  @State private var nameDraft: String?
-  @State private var aboutDraft: String?
-  private var instructionsChanged: Bool {
-    guard let instructionsDraft else { return false }
-    return (RelayPersona(rules: instructionsDraft).sanitized()?.rules ?? "") != relay.persona.rules
+  /// The persona in `profile`'s folder: the one in use for the assistant you talk to.
+  func savedPersona(_ profile: RelayProfile) -> RelayPersona {
+    if profile.id == team.activeID { return persona }
+    return browser.library.load(RelayPersona.self, from: team.folder(profile.id) + "/persona.json") ?? RelayPersona(name: profile.name)
   }
-  private var personalityChanged: Bool {
-    guard nameDraft != nil || aboutDraft != nil else { return false }
-    let draft = RelayPersona(
-      name: nameDraft ?? relay.persona.name, about: aboutDraft ?? relay.persona.about, rules: relay.persona.rules
-    ).sanitized() ?? RelayPersona()
-    return draft.name != relay.persona.name || draft.about != relay.persona.about
+  /// What its Instructions box shows (`AssistantInstructions.text`): every word of its in force.
+  func instructionsText(_ profile: RelayProfile) -> String {
+    AssistantInstructions.text(persona: savedPersona(profile), scope: profile.scope, main: profile.id == team.mainProfileID)
   }
-  var body: some View {
-    if relay.team.activeID == profile.id {
-      VStack(alignment: .leading, spacing: 24) {
-        personality
-        standingInstructions
-        changes
-      }
-      // Unsaved words belong to the assistant they were typed for, never to the one switched to.
-      .onChange(of: relay.team.activeID) { _, _ in
-        instructionsDraft = nil
-        nameDraft = nil
-        aboutDraft = nil
-      }
+  /// Saves its Instructions box in one place (`AssistantInstructions.saved`): the persona through
+  /// `updatePersona` (journaled, with Undo) for the assistant you talk to, else its file; the scope
+  /// through `saveFromSettings` (one journaled change, Undo on its toast). nil when saved; else why not.
+  func setInstructions(_ text: String, for profile: RelayProfile, actor: String = "user") -> String? {
+    let words: String = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard words.count <= AssistantInstructions.limit else {
+      return "Shorten the instructions to \(AssistantInstructions.limit.formatted()) characters."
+    }
+    if let why = SavedText.problem(words) { return why }
+    let saved = AssistantInstructions.saved(
+      words, persona: savedPersona(profile), scope: profile.scope, main: profile.id == team.mainProfileID)
+    if let scopeWords = saved.scopeInstructions {
+      var scope: AssistantScope = editableScope(profile)
+      scope.instructions = scopeWords
+      if let problem = saveFromSettings(profile, colour: AssistantColour.key(profile.colour), scope: scope) { return problem }
+    }
+    if profile.id == team.activeID {
+      updatePersona(saved.persona, actor: actor)
     } else {
-      SettingsBlock("Its own words") {
-        Text("\(profile.name)'s name, the line about you and its standing instructions change while you talk to \(profile.name).")
-          .role(.meta).fixedSize(horizontal: false, vertical: true)
-        HStack {
-          Button("Talk to \(profile.name)") { _ = relay.openAssistant(profile.id) }.buttonStyle(QuietButton())
-            .disabled(!relay.canSwitchAssistant)
-            .help(relay.canSwitchAssistant ? "Opens \(profile.name)'s chat behind Settings" : "Available when this reply is done")
-          Spacer()
-        }
-      }
+      persist(saved.persona, team.folder(profile.id) + "/persona.json")
     }
-  }
-  private var personality: some View {
-    SettingsBlock("Personality") {
-      TextField("Name (what you call it)", text: Binding(
-        get: { nameDraft ?? relay.persona.name }, set: { nameDraft = $0 }))
-        .textFieldStyle(.serein)
-      TextField("About you and how it should talk (one line)", text: Binding(
-        get: { aboutDraft ?? relay.persona.about }, set: { aboutDraft = $0 }))
-        .textFieldStyle(.serein)
-      HStack {
-        Button("Revert") {
-          nameDraft = nil
-          aboutDraft = nil
-        }.controlSize(.small)
-          .disabled(nameDraft == nil && aboutDraft == nil)
-          .accessibilityLabel("Revert the name and the line about you to the saved words")
-        Button("Save") {
-          relay.updatePersona(RelayPersona(
-            name: nameDraft ?? relay.persona.name, about: aboutDraft ?? relay.persona.about, rules: relay.persona.rules))
-          nameDraft = nil
-          aboutDraft = nil
-        }.buttonStyle(PrimaryButton()).disabled(!personalityChanged)
-          .accessibilityLabel("Save the name and the line about you")
-        Spacer()
-      }
-      SettingsNote("Advice Serein reads every turn: a name and a line about you. It grants no access and is advice, not tools.")
-    }
-  }
-  private var standingInstructions: some View {
-    SettingsBlock("Standing instructions", info: "Serein follows up to \(RelayPersona.rulesLimit) of these every turn. They are preferences: they cannot let Serein skip asking before it acts. Serein can only suggest a change, which you allow or decline on a card. Every change is listed below and can be undone.") {
-      TextField("One instruction per line, such as “never book before asking”", text: Binding(
-        get: { instructionsDraft ?? relay.persona.rules }, set: { instructionsDraft = $0 }), axis: .vertical)
-        .textFieldStyle(.serein).lineLimit(3...6)
-        .accessibilityLabel("Standing instructions, one per line")
-      HStack {
-        Button("Revert") { instructionsDraft = nil }.controlSize(.small)
-          .disabled(instructionsDraft == nil)
-          .accessibilityLabel("Revert the standing instructions to the saved words")
-        Button("Save") {
-          if let instructionsDraft { relay.updateInstructions(instructionsDraft) }
-          instructionsDraft = nil
-        }.buttonStyle(PrimaryButton()).disabled(!instructionsChanged)
-          .accessibilityLabel("Save the standing instructions")
-        Spacer()
-      }
-      SettingsNote("Serein follows up to \(RelayPersona.rulesLimit) of these every turn. They are preferences and cannot let Serein skip asking before it acts. Every change is listed below and can be undone.")
-    }
-  }
-  /// The changes to the standing instructions, with Undo (the notes' own are under Memory).
-  @ViewBuilder private var changes: some View {
-    let entries: [RelayJournalEntry] = Array(relay.journal.filter(\.isInstruction).suffix(8).reversed())
-    if !entries.isEmpty {
-      SettingsBlock("Recent changes to the instructions") {
-        ForEach(entries, id: \.id) { entry in
-          HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-              Text((entry.action == .removed ? (entry.priorText ?? "") : entry.text)
-                .replacingOccurrences(of: "\n", with: " · ")).lineLimit(1)
-              Text("\(entry.actor) · \(entry.action.rawValue) · \(entry.at.formatted(date: .omitted, time: .shortened))")
-                .role(.meta)
-            }
-            Spacer()
-            Button("Undo") { relay.undo(entry) }.controlSize(.small)
-              .disabled(RelayJournal.undoneInstructions(entry, current: relay.persona.rules) == nil)
-              .help("Puts back the instructions from before this change. Undo newer changes first.")
-              .accessibilityLabel("Undo this change to the standing instructions")
-          }
-        }
-      }
-    }
+    return nil
   }
 }
 

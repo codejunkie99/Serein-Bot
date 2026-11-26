@@ -96,7 +96,7 @@ import SereinCore
     /// each recorded, then answered yes. nil for every hard stop.
     var grants: GrantOffer? = nil
     /// Asked only because Serein asks before every step: Only risky steps would have let it go
-    /// ahead, so the card offers that switch in place (with its confirmation).
+    /// ahead, so the card offers that switch in place.
     var routine = false
     /// Serein asks about itself (which AI app it thinks with), not a step of work: the brief's
     /// “Waiting on you” leaves it out, since the card already shows where it was asked.
@@ -835,8 +835,8 @@ import SereinCore
     // In GateSettings: unset, or a file that cannot be read, is Every step.
     return ApprovalLevel.resolve(stored: GateSettings.shared.object(forKey: Self.autopilotKey))
   }
-  /// The user chose a level (the confirmation for Only risky steps and Allow all is the
-  /// caller's). Marks the choice as theirs and retires the one-time consent card.
+  /// The user chose a level, which takes effect at once. Marks the choice as theirs and retires
+  /// the one-time consent card.
   func setLevel(_ level: ApprovalLevel) {
     objectWillChange.send()
     GateSettings.shared.set(level.storedValue, forKey: Self.autopilotKey)
@@ -956,7 +956,7 @@ import SereinCore
     let teamFile = browser.library.root.appendingPathComponent("relay/team.json")
     let decodedTeam = Self.read(RelayTeam.self, "relay/team.json", library, &aside)
     let launch = RelayTeam.launching(decodedTeam)
-    let loadedTeam = launch.team
+    var loadedTeam = launch.team
     var checkedPersona = false
     if decodedTeam != nil || !FileManager.default.fileExists(atPath: teamFile.path) {
       for id in launch.personas {
@@ -966,6 +966,27 @@ import SereinCore
         if let renamed = persona.renamingFormerMain() { try? browser.library.save(renamed, to: path) }
       }
       if launch.rewrite || checkedPersona { try? browser.library.save(loadedTeam, to: "relay/team.json") }
+    }
+    // One Instructions box per assistant (`AssistantInstructions`): the old job line, extra
+    // instructions, line about the user and standing instructions move into it once. A persona
+    // file that is there but does not decode is left alone.
+    if decodedTeam != nil {
+      var movedWords = false
+      for index in loadedTeam.profiles.indices {
+        let profile: RelayProfile = loadedTeam.profiles[index]
+        let path: String = loadedTeam.folder(profile.id) + "/persona.json"
+        let exists: Bool = FileManager.default.fileExists(atPath: library.root.appendingPathComponent(path).path)
+        guard let persona = exists ? library.load(RelayPersona.self, from: path) : RelayPersona() else { continue }
+        guard let moved = AssistantInstructions.merged(
+          persona: persona, scope: profile.scope, main: profile.id == loadedTeam.mainProfileID)
+        else { continue }
+        if let words = moved.scopeInstructions {
+          loadedTeam.profiles[index].scope?.instructions = words
+          movedWords = true
+        }
+        try? library.save(moved.persona, to: path)
+      }
+      if movedWords { try? library.save(loadedTeam, to: "relay/team.json") }
     }
     team = loadedTeam
     // All stored properties must exist before `self` is read, so the profile folder is local here.

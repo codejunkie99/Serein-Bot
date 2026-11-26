@@ -141,10 +141,7 @@ private struct SereinTaskMessages: View {
                                     latestCopyID: String?, userWidth: CGFloat, live: Bool) -> some View {
     TurnLead(message: message, after: previous, breaks: breaks)
     if let range = message.condensed {
-      // Undo waits while the task works; its run still owns the transcript.
-      CondensedDivider(
-        summary: message, range: range, userWidth: userWidth,
-        undo: run?.isActive == true ? nil : { agent.undoCondense(message.id, in: id) })
+      CondensedDivider(summary: message, range: range, userWidth: userWidth)
     } else {
       let isLast = message.id == messages.last?.id
       let trace = live && isLast ? run : nil

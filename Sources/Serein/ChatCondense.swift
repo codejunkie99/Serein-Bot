@@ -4,18 +4,16 @@ import SwiftUI
 /// What a condensed range keeps, on the summary message that took its place
 /// (`AgentMessage.condensed`), so it saves and loads with the thread's own transcript.
 struct CondensedRange: Codable, Equatable {
-  /// The slice of the transcript exactly as it was, in order: what Undo puts back.
+  /// The slice of the transcript exactly as it was, in order: what Show reads and Edit puts back.
   var originals: [AgentMessage]
   /// The ids of that slice's messages still shown, just before the summary: every message of the
   /// user, every reply with a declined or failed step or an edit review, and replies from the
   /// other side of the own-setup line.
   var kept: [String]
-  /// The native session the thread left so its next turn starts from the summary; Undo on the
-  /// newest summary resumes it while no turn has started another session and the thread's session
-  /// scope is still `scope`.
+  /// The native session the thread left so its next turn starts from the summary. Kept in saved
+  /// chats; nothing resumes it since the divider lost Undo.
   var session: String?
-  /// The session scope of the turn that folded (`RunSpec.scope`), so Undo never resumes a session
-  /// across the own-setup line or another harness.
+  /// The session scope of the turn that folded (`RunSpec.scope`).
   var scope: String
   /// The messages the summary stands for, as the divider counts and shows them.
   var folded: [AgentMessage] { originals.filter { !kept.contains($0.id) } }
@@ -71,7 +69,7 @@ struct CondensedRange: Codable, Equatable {
   }
 
   /// The transcript with the range of `summaryID` put back exactly as it was, or nil when that
-  /// summary is not in it.
+  /// summary is not in it (Edit and Export).
   static func undo(_ messages: [AgentMessage], summaryID: String) -> [AgentMessage]? {
     guard let at = messages.firstIndex(where: { $0.id == summaryID }), let range = messages[at].condensed
     else { return nil }
@@ -164,14 +162,13 @@ extension AgentModel {
   }
 }
 
-/// Where older replies were folded: “Condensed N messages”, Show to read the originals in place
-/// (read only) and Undo to put them back. Its help shows the summary the agent reads instead.
+/// Where older replies were folded: “Condensed N messages” and Show to read the originals in place
+/// (read only). No Undo: folding is how the chat keeps its context, not something to take back (the
+/// owner's call, 2026-11-25). Its help shows the summary the agent reads instead.
 struct CondensedDivider: View {
   let summary: AgentMessage
   let range: CondensedRange
   var userWidth: CGFloat = 360
-  /// Absent while the chat works, and where the chat is read only.
-  var undo: (() -> Void)? = nil
   @State private var shown = false
   @Environment(\.palette) private var p
   var body: some View {
@@ -185,12 +182,6 @@ struct CondensedDivider: View {
         Button(shown ? "Hide" : "Show") { shown.toggle() }.buttonStyle(QuietButton())
           .accessibilityLabel(shown ? "Hide the condensed messages" : "Show the condensed messages")
           .accessibilityValue(shown ? "Expanded" : "Collapsed")
-        if let undo {
-          Button("Undo", action: undo).buttonStyle(QuietButton())
-            .help("Put the original messages back")
-            .accessibilityLabel("Undo condensing")
-            .accessibilityHint("Puts the \(folded.count) original messages back in the chat")
-        }
         Rectangle().fill(p.line).frame(height: 1)
       }.accessibilityElement(children: .contain).accessibilityLabel(count)
       if shown {

@@ -647,11 +647,8 @@ struct ThreadWorkspace: View {
                                       latestCopyID: String?, userWidth: CGFloat, live: Bool) -> some View {
     TurnLead(message: message, after: previous, breaks: breaks)
     if let range = message.condensed {
-      CondensedDivider(
-        summary: message, range: range, userWidth: userWidth,
-        undo: agent.running ? nil : { agent.undoCondense(message.id, in: agent.conversationID) }
-      )
-      .environment(\.chatFolder, chatFolder)
+      CondensedDivider(summary: message, range: range, userWidth: userWidth)
+        .environment(\.chatFolder, chatFolder)
     } else {
       // The newest turn carries its run: thinking time, reasoning and steps. It sits
       // above the reply, or after the request when the run ended without one.

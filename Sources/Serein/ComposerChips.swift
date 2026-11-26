@@ -19,15 +19,10 @@ extension ApprovalLevel {
     case .everyStep: return "Asks before each step."
     }
   }
-  /// The confirmation that guards switching to Allow all, as Only risky steps has its own.
-  static let allowAllConfirmTitle = "Let Serein go ahead with every step?"
-  static func allowAllConfirmBody(killLabel: String) -> String {
-    "Serein and the tasks it starts go ahead without asking. Payments and passwords go to a secure card you fill, and it never touches password managers or Serein itself. \(killLabel) stops everything."
-  }
 }
 
 /// What Serein asks before, beside the model in its message bar. A pick goes through
-/// `RelayController.setLevel`, so a freer level still shows its confirmation first.
+/// `RelayController.setLevel` and takes effect at once.
 struct ComposerPermissionChip: View {
   @ObservedObject var relay: RelayOrchestrator
   let controller: RelayController

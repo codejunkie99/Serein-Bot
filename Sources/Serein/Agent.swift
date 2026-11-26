@@ -1432,39 +1432,6 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
     }
     return true
   }
-  func undoCondense(_ summaryID: String, in threadID: String) {
-    guard hub.run(for: threadID) == nil, let browser else { return }
-    let selected = threadID == conversationID
-    let current = selected ? messages : (conversations.first(where: { $0.id == threadID })?.messages ?? [])
-    guard let range = current.first(where: { $0.id == summaryID })?.condensed,
-      let restored = ChatCondense.undo(current, summaryID: summaryID)
-    else { return }
-    let newest = current.last(where: { $0.condensed != nil })?.id == summaryID
-    if let run = hub.latest(for: threadID), let back = ChatCondense.undo(run.transcript, summaryID: summaryID) {
-      run.folded = false
-      run.transcript = back
-    }
-    if selected {
-      messages = restored
-      if remoteID == nil, newest, sessionScope == range.scope { remoteID = range.session }
-      // No message was written: the thread keeps its place in the recent lists.
-      let at = conversations.first { $0.id == threadID }?.lastMessageAt
-      saveConversation()
-      if let i = conversations.firstIndex(where: { $0.id == threadID }) {
-        conversations[i].lastMessageAt = at
-        try? browser.library.save(conversations, to: "sessions/threads.json")
-      }
-    } else if let i = conversations.firstIndex(where: { $0.id == threadID }) {
-      conversations[i].messages = restored
-      if conversations[i].remoteID == nil, newest, conversations[i].scope == range.scope {
-        conversations[i].remoteID = range.session
-      }
-      conversations[i].updatedAt = Date()
-      do { try browser.library.save(conversations, to: "sessions/threads.json") } catch {
-        self.error = error.localizedDescription
-      }
-    }
-  }
   /// Edit and rerun, before the edited words go again: the thread's run stops, every open card
   /// of it is declined, its "Work here" yeses, the sign-ins grant, a tab handed back, the edit
   /// answers of the replaced turns (EditReview.rewound) and a parked process (with the

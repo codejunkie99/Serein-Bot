@@ -32,6 +32,7 @@ enum AssistantCoreChecks {
     ("sessionList", AssistantCoreChecks.sessionList),
     ("agentListOrder", AssistantCoreChecks.agentListOrder),
     ("routines", AssistantCoreChecks.routines),
+    ("instructionsBox", AssistantCoreChecks.instructionsBox),
     ("spaces", AssistantCoreChecks.spaces),
     ("teamFaces", AssistantCoreChecks.teamFaces),
     ("screenSignal", AssistantCoreChecks.screenSignal),
