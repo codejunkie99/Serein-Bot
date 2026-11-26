@@ -2852,7 +2852,7 @@ import SereinCore
   func messagePlan(_ typed: String, hasAttachments: Bool, answersQuestion: Bool = true) -> MessagePlan {
     MessagePlan.of(
       typed, hasAttachments: hasAttachments, shortcuts: ShortcutBook.shared.shortcuts,
-      mentionRefusal: mentionRefusal(typed), questionWaits: answersQuestion && composerQuestion != nil)
+      mentionRefusal: mentionRefusal(typed, hasAttachments: hasAttachments), questionWaits: answersQuestion && composerQuestion != nil)
   }
 
   // MARK: approvals

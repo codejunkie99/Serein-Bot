@@ -674,11 +674,22 @@ extension RelayOrchestrator {
     guard let to = recipient(of: text), to.id != team.activeID else { return true }
     return switchTo(to.id)
   }
-  /// Checked before the composer gives up the draft: a mention of another assistant waits while
-  /// the active one works, and the words stay in the composer.
-  func mentionRefusal(_ text: String) -> String? {
-    guard let to = recipient(of: text), to.id != team.activeID, !canSwitchAssistant else { return nil }
-    return "\(team.activeName) is still working. Wait for it to finish, then send to @\(to.name) again."
+  /// Why a message box keeps these words: exactly the mentions `ask` sends nothing for. A bare tag
+  /// of this chat's own assistant carries nothing. Another assistant's tag opens its chat, which
+  /// waits while this chat cannot switch; then only words a group turn takes, or "@Writer stop",
+  /// still go. Files always need that chat open (`routeMention`).
+  func mentionRefusal(_ text: String, hasAttachments: Bool) -> String? {
+    guard let to = recipient(of: text) else { return nil }
+    if to.id == team.activeID {
+      guard to.rest.isEmpty, !hasAttachments else { return nil }
+      return "@\(to.name) answers in this chat already. Add a message to send it."
+    }
+    guard !canSwitchAssistant else { return nil }
+    if hasAttachments {
+      return "This chat is busy, so @\(to.name)'s chat can't open yet. Send the files when this reply is done, or words alone now."
+    }
+    if !groupTurnSpeakers(text).isEmpty || RelayStop.kind(to.rest) == .reply { return nil }
+    return "This chat is busy, so @\(to.name)'s chat can't open yet. Add a message to send it now."
   }
   /// The words to send after a mention, in the chat of the assistant it reaches (switching to it),
   /// or nil when nothing goes: a bare mention only opens that chat. A refused switch says why and

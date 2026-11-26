@@ -24,9 +24,9 @@ extension AssistantCoreChecks {
     try check(plan("//standup") == .send("/standup"), "Two slashes send the name as it is written")
     try check(plan("my key is sk-proj-ABCDEFGHIJKLMNOPQRSTUV", refusal: "Writer is still working.", question: true)
       == .refuse(ComposerGuard.keyRefusal), "A key is refused before a mention or a waiting question is weighed")
-    try check(plan("@Writer draft it", refusal: "Writer is still working.", question: true) == .refuse("Writer is still working."),
+    try check(plan("@Writer", refusal: "This chat is busy.", question: true) == .refuse("This chat is busy."),
       "A mention that cannot go now keeps its words in the box")
-    try check(plan("@Writer draft it", refusal: "Writer is still working.").refusal == "Writer is still working." && plan("@Writer draft it").refusal == nil,
+    try check(plan("@Writer", refusal: "This chat is busy.").refusal == "This chat is busy." && plan("@Writer").refusal == nil,
       "A plan gives the reason for a refusal, and none once the same words would go")
     try check(plan("Tuesday", question: true) == .answer("Tuesday"), "Plain words answer the one question that waits")
     try check(plan("Tuesday", attached: true, question: true) == .send("Tuesday"), "Words with something attached are a new message, not an answer")

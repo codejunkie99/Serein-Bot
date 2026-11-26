@@ -172,11 +172,12 @@ extension SmokeTest {
     try check(relay.pending == ["also do this"] && relay.run === first && first?.steering.waiting.isEmpty == true,
               "Words with a file sent while Serein works wait for its next turn, which keeps running "
                 + "[pending: \(relay.pending); same run: \(relay.run === first); waiting: \(first?.steering.waiting.map(\.shown) ?? [])]")
-    let mention = "@Proofer draft it"
+    // A bare tag: words after it go now as a group turn, but opening Proofer's chat waits.
+    let mention = "@Proofer"
     bar?.summonDraft = mention
-    // Sent from the bar only while it would be refused: a mention that goes starts a turn in Proofer's chat.
+    // Sent from the bar only while it would be refused: a mention that goes opens Proofer's chat.
     if relay.messagePlan(mention, hasAttachments: false, answersQuestion: false).refusal != nil { bar?.sendWriting() }
-    let mentionWaits = bar?.barRefusalShown?.contains("still working") == true
+    let mentionWaits = bar?.barRefusalShown?.contains("busy") == true
     try await waitFor(10) { record("slow_child") != nil }
     let delegatedBeforeCorrection = records().filter { $0["slow_child"] != nil }.count
     relay.ask("SLOW HOLD actually change course", interrupt: true)

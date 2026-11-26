@@ -6,12 +6,18 @@ import SereinCore
 /// (`AssistantHandoff.mention`), so the room, packet, seat and every cap apply, and its reply posts
 /// once, under the tag (`postReport`). A tagged root never wakes its sender: the reply is the answer.
 extension RelayOrchestrator {
+  /// Who takes a group turn on `text`: the tagged other than this chat's own, when words that are
+  /// not a stop follow. Empty when it starts none. The message boxes ask it too (`mentionRefusal`).
+  func groupTurnSpeakers(_ text: String) -> [String] {
+    let words = GroupTurn.words(of: text, in: team)
+    guard !words.isEmpty, RelayStop.kind(words) == nil else { return [] }
+    return GroupTurn.speakers(of: text, in: team).filter { $0 != team.activeID }
+  }
   /// The person's message tags assistants other than this chat's own: it posts as their message
   /// and each one tagged takes a turn. False leaves it to the usual path: no tag, a bare tag, a stop.
   func startGroupTurn(_ text: String) -> Bool {
-    let speakers = GroupTurn.speakers(of: text, in: team).filter { $0 != team.activeID }
-    let words = GroupTurn.words(of: text, in: team)
-    guard !speakers.isEmpty, !words.isEmpty, RelayStop.kind(words) == nil else { return false }
+    let speakers = groupTurnSpeakers(text)
+    guard !speakers.isEmpty else { return false }
     if state.paused { resume() }
     var bubble = AgentMessage(role: "you", text: text)
     bubble.mentions = speakers
