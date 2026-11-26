@@ -3,13 +3,11 @@ import Foundation
 import SereinCore
 @testable import SereinEngines
 
-/// Verifies the shared swarm message board, unlimited autonomous team policy, zero-permission
-/// upgrade rules, end-to-end `peer_swarm` over `Engines`, `GenericACPDriver` + ACP steering,
+/// Verifies the shared swarm message board, zero-permission upgrade rules, end-to-end `peer_swarm` over `Engines`, `GenericACPDriver` + ACP steering,
 /// `LaunchContract.warmTags`, and `HarnessStuck.isLoopbackAddress`.
 extension AssistantCoreChecks {
   static func swarmBoard(_ check: Check) throws {
     try checkBoardInterleavings(check)
-    try checkAutoTeamPolicy(check)
     try checkAllowAllUpgrade(check)
     try checkPeerSwarmTools(check)
     try checkPeerSwarmExecution(check)
@@ -77,43 +75,6 @@ extension AssistantCoreChecks {
       try check(
         SwarmMonitor.stallTarget(board: board, now: base.addingTimeInterval(1_000), idleAfter: 60) == nil,
         "Monitor returns nil once board is finished")
-    }
-  }
-
-  // MARK: - Unlimited AutoTeamPolicy
-
-  private static func checkAutoTeamPolicy(_ check: Check) throws {
-    var records: [AutoTeamPolicy.BotRecord] = []
-    for i in 1...10 {
-      let teamID = "team-\((i - 1) / 3 + 1)"
-      let decision = AutoTeamPolicy.admit(
-        id: "bot-\(i)", role: "specialist-\(i)", createdBy: "coordinator", parentTaskID: teamID,
-        existing: records, activeChain: ["coordinator"])
-      guard case .admit(let rec) = decision else {
-        try check(false, "Unlimited AutoTeamPolicy admits bot \(i) across team \(teamID)")
-        return
-      }
-      try check(rec.createdBy == "coordinator" && rec.connectedApps.isEmpty, "Bot \(i) records creator and starts with zero connected apps")
-      records.append(rec)
-    }
-    try check(records.count == 10, "AutoTeamPolicy admits more than 2 bots and more than 1 team without artificial caps")
-
-    let dup = AutoTeamPolicy.admit(
-      id: "bot-dup", role: "SPECIALIST-1", createdBy: "bot-2", parentTaskID: "team-1",
-      existing: records, activeChain: ["coordinator", "bot-2"])
-    if case .reject = dup {
-      try check(true, "Duplicate active role on the same task is rejected case-insensitively")
-    } else {
-      try check(false, "Duplicate active role must be rejected")
-    }
-
-    let cycle = AutoTeamPolicy.admit(
-      id: "bot-2", role: "fresh-role", createdBy: "bot-3", parentTaskID: "team-2",
-      existing: records, activeChain: ["coordinator", "bot-2", "bot-3"])
-    if case .reject = cycle {
-      try check(true, "Cycle in activeChain is rejected")
-    } else {
-      try check(false, "Cycle in activeChain must be rejected")
     }
   }
 

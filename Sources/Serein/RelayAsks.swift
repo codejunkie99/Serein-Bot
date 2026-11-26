@@ -39,9 +39,9 @@ extension AssistantDesk {
     let chat: String
     let prompt: String
   }
-  /// What a relaunch keeps: the hour's counts and the hidden chats that may be left over.
+  /// What a relaunch keeps: the hidden chats that may be left over. A book from before keeps the
+  /// hour's counts too, which decoding ignores.
   struct AskBook: Codable {
-    var rate: AskPolicy.Rate
     var threads: [String]
   }
 }
@@ -77,7 +77,6 @@ extension RelayOrchestrator {
       threads.append(thread)
       names.append(target.name)
     }
-    desk.askRate.start(asker: asker.id, runs: threads, now: now)
     saveAsks()
     let line = AskLines.asked(names)
     deliver(receipt: nil, line: line, into: askerChat)
@@ -232,7 +231,6 @@ extension RelayOrchestrator {
     ask.shown = shown
     ask.prompt = prompt
     desk.asks[thread] = ask
-    desk.askRate.finish(asker: ask.askerID, run: thread)
     saveAsks()
     if var names = desk.asking[ask.askerChat] {
       if let i = names.firstIndex(of: ask.targetName) { names.remove(at: i) }
@@ -314,23 +312,17 @@ extension RelayOrchestrator {
     let saved: Set<String> = Set(agent.conversations.map(\.id))
     // Seat chats are the ledger's, kept while it keeps their row (`loadSeatChats`).
     let open: [String] = Array(desk.hiddenThreads).filter { saved.contains($0) && !$0.hasPrefix(Self.seatPrefix) }.sorted()
-    persist(AssistantDesk.AskBook(rate: desk.askRate, threads: open), Self.asksFile)
+    persist(AssistantDesk.AskBook(threads: open), Self.asksFile)
   }
   /// A target's answer is not in yet.
   func askWaits(_ thread: String) -> Bool {
     guard let ask = desk.asks[thread] else { return false }
     return ask.prompt == nil
   }
-  /// At launch: the hour's counts come back without open runs, and hidden chats a quit left
-  /// behind go.
+  /// At launch: hidden chats a quit left behind go.
   func loadAsks() {
-    // Through the unreadable guard (SPEC I13): a book that does not decode is never written
-    // over, so the hour's count is not reset by a save.
+    // Through the unreadable guard (SPEC I13): a book that does not decode is never written over.
     guard let book = readState(AssistantDesk.AskBook.self, Self.asksFile) else { return }
-    var rate = book.rate
-    rate.relaunched()
-    rate.trim(now: Date())
-    desk.askRate = rate
     desk.hiddenThreads.formUnion(book.threads)
     let leftover = book.threads
     guard !leftover.isEmpty else { return }
@@ -340,37 +332,18 @@ extension RelayOrchestrator {
       self.saveAsks()
     }
   }
-  /// Every 15 seconds: a late answer whose chat is on screen and idle starts its turn.
-  func sweepAsks(now: Date) {
-    deliverLateAnswers()
-    var rate = desk.askRate
-    rate.trim(now: now)
-    desk.askRate = rate
-  }
 }
 
 extension RelayToolHost {
-  /// `assistant_ask {to, question}`: no card, since it only reads. Refused when the asker was
-  /// itself asked (depth 1), past the limits, for a paused target, or when no task slot is free.
+  /// `assistant_ask {to, question}`: no card, since it only reads. Any assistant may ask any other,
+  /// from any turn, a hand-off's run too; refused only for a paused, unknown or own target.
   func askAssistants(_ a: [String: Any]) async throws -> [String: Any] {
     let team = relay.team
     guard let asker = acting ?? team.main else { throw SereinError.invalid(ActionAdmission.needsPerson) }
-    let turn = frame.admission
     let request: AskPolicy.Request
     switch AskPolicy.parse(a, askerID: asker.id, team: team, paused: relay.pausedAssistants) {
     case .success(let parsed): request = parsed
     case .failure(let refusal): throw SereinError.invalid(refusal.words)
-    }
-    if let refusal = AskPolicy.refusal(request, turn: turn, rate: relay.desk.askRate, now: Date()) {
-      throw SereinError.invalid(refusal.words)
-    }
-    // Serein (the main assistant) may ask anyone; another assistant asks its team mates and Serein.
-    if asker.id != team.mainProfileID {
-      let mates: Set<String> = Set(team.handoffTargets(from: asker.id).map(\.id))
-      for id in request.targetIDs where id != team.mainProfileID && !mates.contains(id) {
-        let name = relay.profileName(id)
-        throw SereinError.invalid("\(name) is not on \(asker.name)'s team. Ask Serein to ask \(name).")
-      }
     }
     let threads = relay.startAsk(request, asker: asker, frame: frame)
     let deadline = Date().addingTimeInterval(AskPolicy.inlineWait)

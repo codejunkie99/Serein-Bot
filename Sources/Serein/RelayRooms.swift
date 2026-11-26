@@ -283,27 +283,27 @@ extension RelayOrchestrator {
 
   /// A room with `lead` seated at the person's reach narrowed to its own; `id` nil gives a new id.
   private func newRoom(_ id: Workroom.ID?, root: Workroom.Root, lead: RelayProfile.ID, thread: String, now: Date) -> Workroom {
-    let reach = Reach.person(personScope).narrowed(to: profile(id: lead).scope)
+    let reach = Reach.ofPerson(personScope).narrowed(to: profile(id: lead).scope)
     return id.map { Workroom(id: $0, root: root, lead: lead, thread: thread, reach: reach, now: now) }
       ?? Workroom(root: root, lead: lead, thread: thread, reach: reach, now: now)
   }
 
   /// Each assistant's reach today, for `Workroom.renarrow` before a seat runs.
   var reachNow: [RelayProfile.ID: Reach] {
-    Dictionary(team.profiles.map { ($0.id, Reach.person(personScope).narrowed(to: $0.scope)) }, uniquingKeysWith: { a, _ in a })
+    Dictionary(team.profiles.map { ($0.id, Reach.ofPerson(personScope).narrowed(to: $0.scope)) }, uniquingKeysWith: { a, _ in a })
   }
 
   /// `Staffing.decide` for `sender`, with no card. The seat is `parent`'s, for a hand-off's own run;
-  /// else the lead of the room `chat`'s turn roots, opened now as `pack` would open it, so the make
-  /// budget is the root's. Returns the room too, for the verdict's caller to apply.
+  /// else the lead of the room `chat`'s turn roots, opened now as `pack` would open it, so what it
+  /// makes is recorded on that root. Returns the room too, for the verdict's caller to apply.
   /// `message`: the person's message the room roots at, when it is not the chat's newest yet.
   func staff(_ wanted: Staffing.Wanted, sender: RelayProfile, parent: AssistantHandoff?, chat: String,
-             readOutside: Bool, message: String? = nil) -> (verdict: Staffing.Verdict, room: Workroom.ID) {
+             message: String? = nil) -> (verdict: Staffing.Verdict, room: Workroom.ID) {
     let room: Workroom
     let seat: Workroom.Seat
     if let parent, let id = parent.room {
       room = rooms.room(id) {
-        newRoom(id, root: .person(thread: parent.askedIn, message: "handoff-" + (parent.rootID ?? parent.id)),
+        newRoom(id, root: .chat(thread: parent.askedIn, message: "handoff-" + (parent.rootID ?? parent.id)),
                 lead: parent.chain?.first ?? parent.from, thread: parent.askedIn, now: parent.createdAt)
       }
       // A running part always has its seat (`Rooms.launch`); a stand-in keeps the chain rules.
@@ -311,14 +311,13 @@ extension RelayOrchestrator {
         ?? Workroom.Seat(id: "h-" + parent.id, who: sender.id, thread: parent.threadID,
                          reach: room.ceiling.narrowed(to: sender.scope), parent: room.seats[0].id, handoff: parent.id)
     } else {
-      let root = Workroom.Root.person(thread: chat, message: message ?? lastPersonMessage(chat) ?? "turn-" + UUID().uuidString)
+      let root = Workroom.Root.chat(thread: chat, message: message ?? lastPersonMessage(chat) ?? "turn-" + UUID().uuidString)
       let id = rooms.open(root) { newRoom(nil, root: root, lead: sender.id, thread: chat, now: Date()) }
       room = rooms.room(id) { newRoom(id, root: root, lead: sender.id, thread: chat, now: Date()) }
       seat = room.seats[0]
     }
     // Archive is not built yet: an assistant off the roster is refused with the same words.
-    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: [], ledger: handoffLedger,
-                                  readOutside: readOutside, now: Date())
+    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: [], ledger: handoffLedger, now: Date())
     return (verdict, room.id)
   }
 
@@ -391,8 +390,8 @@ extension RelayOrchestrator {
   /// assistant name, for notes.
   private func seatOf(_ record: AssistantHandoff, in id: Workroom.ID) -> (Workroom.Seat.ID, [Workroom.Seat.ID: String]) {
     let room = rooms.room(id) {
-      Workroom(id: id, root: .person(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)),
-               lead: record.chain?.first ?? record.from, thread: record.askedIn, reach: Reach.person(personScope), now: record.createdAt)
+      Workroom(id: id, root: .chat(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)),
+               lead: record.chain?.first ?? record.from, thread: record.askedIn, reach: Reach.ofPerson(personScope), now: record.createdAt)
     }
     let seat = room.seats.first { $0.handoff == record.id }?.id ?? "h-" + record.id
     return (seat, Dictionary(room.seats.map { ($0.id, profileName($0.who)) }, uniquingKeysWith: { a, _ in a }))
@@ -414,7 +413,7 @@ extension RelayOrchestrator {
   /// The person's own words since the room opened, verbatim, newest last: their messages in the
   /// root's chat from the root message on, or what they handed over themselves ("board-<id>").
   private func personWords(_ root: Workroom.Root, _ record: AssistantHandoff) -> [HandoffPacket.Quote] {
-    guard case .person(let thread, let message) = root else { return [] }
+    guard case .chat(let thread, let message) = root else { return [] }
     if message.hasPrefix("board-") {
       let handed = message == "board-" + record.id ? record : handoffLedger.records.first { "board-" + $0.id == message }
       return handed.map { [.init(text: $0.task, at: $0.createdAt)] } ?? []

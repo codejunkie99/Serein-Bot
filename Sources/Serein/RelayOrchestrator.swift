@@ -2358,6 +2358,12 @@ import SereinCore
       }
       return
     }
+    // The person stopped a turn of the chat's own, not for a new message: what it handed on stops too.
+    if run.spec.relay, run.spec.initiator == .relay, run.record.outcome == .stopped,
+      !(redirecting && run.spec.threadID == threadID)
+    {
+      stopHandedOn(run)
+    }
     // A scheduled turn that ran in its owner's own chat (`drainScheduled`).
     if let owner = ownerRun, owner.thread == run.spec.threadID, run.spec.relay {
       endOwnerRun(run, needs: needs)

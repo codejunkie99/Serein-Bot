@@ -5,7 +5,7 @@ import SwiftUI
 /// + menu and its New Serein row, File › New Serein… (⌃⌘N) and a team's Add Assistant menu. It
 /// shows where you are, so the sidebar never opens or moves for it. A face in the next free tint
 /// with its eyes closed until the first letter, the field ("Name your new Serein"), the problem in
-/// 12 `danger` (taken, too long, or the full roster), then Cancel and Make Serein (primary, off
+/// 12 `danger` (taken or too long), then Cancel and Make Serein (primary, off
 /// while the field is empty or has a problem), which reads "Making…" while the assistant is made.
 /// Return makes, Esc cancels. Made, its chat opens with the message box ready.
 struct NewSereinSheet: View {
@@ -27,9 +27,8 @@ private struct NewSereinForm: View {
   @FocusState private var focused: Bool
   @Environment(\.palette) var p
   private var tint: String { AssistantColour.next(used: relay.team.profiles.map(\.colour)) }
-  private var full: Bool { relay.team.profiles.count >= AssistantBoard.rosterLimit }
   private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
-  private var off: Bool { trimmed.isEmpty || full || problem != nil || making }
+  private var off: Bool { trimmed.isEmpty || problem != nil || making }
   var body: some View {
     SheetFrame(title: "New Serein", subtitle: "It gets its own chat. Name it for its job, like Inbox or Travel.", back: nil, footer: {
       Spacer(minLength: 0)
@@ -39,9 +38,7 @@ private struct NewSereinForm: View {
         .accessibilityLabel(making ? "Making the new Serein" : "Make Serein")
     }) {
       field
-      if full {
-        Text(AssistantBoard.fullRoster).font(UIStyle.meta).foregroundStyle(p.danger).fixedSize(horizontal: false, vertical: true)
-      } else if let problem {
+      if let problem {
         Text(verbatim: problem).font(UIStyle.meta).foregroundStyle(p.danger).fixedSize(horizontal: false, vertical: true)
       }
     }
@@ -59,7 +56,7 @@ private struct NewSereinForm: View {
       TextField("Name your new Serein", text: $name)
         .textFieldStyle(.plain).font(AssistantType.name).foregroundStyle(p.ink)
         .focused($focused)
-        .disabled(full || making)
+        .disabled(making)
         .onSubmit(make)
         .accessibilityLabel("New Serein's name")
     }

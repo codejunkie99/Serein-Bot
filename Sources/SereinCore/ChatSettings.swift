@@ -151,12 +151,11 @@ public struct SettingsLedger: Codable, Equatable, Sendable {
 }
 
 extension Admission {
-  /// At Allow all nothing asks the person (owner 2026-11-25): what would show a card applies in
-  /// their own turn, with its receipt and Undo, and is refused in any other turn. Below Allow all
-  /// the verdict stands.
-  public static func atLevel(_ verdict: Verdict, turn: Turn, level: ApprovalLevel) -> Verdict {
-    guard level == .proactive, verdict == .ask else { return verdict }
-    return turn == .person ? .apply : .refuse(onlyThePerson)
+  /// At Allow all nothing asks the person (owner 2026-11-25): what would show a card applies,
+  /// with its receipt and Undo. Below Allow all the verdict stands. Only the person's own turn
+  /// ever gets a card (`decide`).
+  public static func atLevel(_ verdict: Verdict, level: ApprovalLevel) -> Verdict {
+    level == .proactive && verdict == .ask ? .apply : verdict
   }
 }
 

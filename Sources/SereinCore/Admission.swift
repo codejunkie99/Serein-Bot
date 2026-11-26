@@ -1,9 +1,12 @@
 import Foundation
 
 /// One rule for changes an assistant makes to Serein itself (reminders, routines, memory, links):
-/// the person's own typed words approve the change they name; an assistant can only propose;
-/// deleting and widening always ask. Making assistants and teams is `Staffing`'s, which never asks. Sending, buying, deleting data and page
-/// actions are not here: `ApprovalGate` keeps deciding those, unchanged.
+/// in the person's own turn their typed words approve the change they name, and deleting and
+/// widening show a card below Allow all. A turn the person did not start (another assistant's,
+/// a schedule's, a link's) applies every change with its receipt and Undo, since nobody is there
+/// to press a card (owner, 2026-11-26: "No permissions required"). Making assistants and teams
+/// is `Staffing`'s, which never asks. Sending, buying, deleting data and page actions are not
+/// here: `ApprovalGate` keeps deciding those, unchanged.
 public enum Admission {
   /// Who started the turn that asks for the change.
   public enum Turn: Equatable, Sendable {
@@ -43,24 +46,14 @@ public enum Admission {
     case refuse(String)
   }
 
-  static let noOneHere = "Nobody is here to approve that. Ask the person in their chat."
-  static let onlyThePerson = "Only the person can do that. Propose it to them instead."
-  static let tooDeep = "An assistant that was asked cannot ask another one."
-
   /// The verdict for one change. `wordsNameIt`: the person's message names this change
   /// (`TypedConsent.names`). Where it matters and is false, the person gets a card.
   public static func decide(_ change: Change, turn: Turn, wordsNameIt: Bool) -> Verdict {
-    switch (change, turn) {
-    case (.schedule(signIns: true), .person): return .ask
-    case (.schedule, .person), (.memory, .person), (.ownChange, .person), (.undo, .person): return .apply
-    case (.shareMemory, .person), (.makeLink, .person): return wordsNameIt ? .apply : .ask
-    case (.widen, .person): return .ask
-    case (.board, .person): return wordsNameIt ? .apply : .ask
-    case (.deleteAssistant, .person), (.deleteAssistant, .assistant): return .ask
-    case (.ask, .person), (.ask, .unattended): return .apply
-    case (.ask, .assistant): return .refuse(tooDeep)
-    case (_, .unattended): return .refuse(noOneHere)
-    case (_, .assistant): return .refuse(onlyThePerson)
+    guard turn == .person else { return .apply }
+    switch change {
+    case .schedule(signIns: true), .widen, .deleteAssistant: return .ask
+    case .schedule, .memory, .ownChange, .undo, .ask: return .apply
+    case .shareMemory, .makeLink, .board: return wordsNameIt ? .apply : .ask
     }
   }
 }

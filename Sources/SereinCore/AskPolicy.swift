@@ -1,15 +1,15 @@
 import Foundation
 
-/// The light ask (`assistant_ask`): one assistant puts a read-only question to one to three other
+/// The light ask (`assistant_ask`): one assistant puts a read-only question to any other
 /// assistants and gets their answers back as data. It needs no card, because it cannot act: each
 /// target runs in a hidden chat where `ApprovalGate` governs every step as an unattended one.
 ///
 /// Rules, all pure here:
-/// - At most `maxTargets` targets. An asked assistant cannot ask (depth 1, `Admission`).
+/// - Any number of targets, from any turn: the person's, a hand-off's or a schedule's. Nothing
+///   counts asks per asker or per hour. A target answers with no assistant tools (its run has
+///   `relay: false`), so an ask never nests and cannot loop.
 /// - The tool waits `inlineWait` for answers; a later answer comes back as its own turn. A target's
 ///   run stops at `runCap`. An answer keeps at most `answerLimit` characters.
-/// - Each asker has at most `maxOpen` open asks and `maxPerHour` in an hour (`Rate`); each target
-///   counts as one ask.
 /// - The scope never widens: the target uses its places that the asker also has. Only when the
 ///   person's own words in this turn name the target, or Serein (the main assistant) asks for the
 ///   person, does the target use its full scope (`reach`).
@@ -17,22 +17,16 @@ import Foundation
 ///   answer lands. A mark that cannot be saved holds the words back.
 /// - An answer is untrusted data. The asker's model reads it only inside a fence (`fence`).
 public enum AskPolicy {
-  public static let maxTargets = 3
   /// How long the tool waits for answers before it returns. Less than `RelayTools.maxWait`.
   public static let inlineWait: TimeInterval = 15
   /// The longest a target's run may take.
   public static let runCap: TimeInterval = 90
   /// The most characters of one answer that come back.
   public static let answerLimit = 1_200
-  /// Open asks per asker. Each target is one ask.
-  public static let maxOpen = 3
-  /// Asks per asker in one hour. Each target is one ask.
-  public static let maxPerHour = 20
-  public static let hour: TimeInterval = 3_600
   public static let questionLimit = HandoffLedger.taskLimit
 
-  /// One ask, read from the tool's arguments: who asks, whom (1 to 3, each once, in the order
-  /// named) and the question.
+  /// One ask, read from the tool's arguments: who asks, whom (each once, in the order named) and
+  /// the question.
   public struct Request: Equatable, Sendable {
     public var askerID: String
     public var targetIDs: [String]
@@ -49,31 +43,20 @@ public enum AskPolicy {
     case noQuestion
     case questionTooLong
     case noTargets
-    case tooManyTargets
     /// No assistant has this name.
     case unknown(String)
     case itself
     /// The target is paused. It holds its name.
     case paused(String)
-    /// The asker is itself answering an ask or a hand-off (depth 1).
-    case asked
-    case tooManyOpen
-    /// The hour is full; one more ask is possible after this many minutes.
-    case hourFull(minutes: Int)
 
     public var words: String {
       switch self {
       case .noQuestion: return "Write the question to ask."
       case .questionTooLong: return "Keep the question under \(AskPolicy.questionLimit) characters."
-      case .noTargets: return "Name 1 to \(AskPolicy.maxTargets) assistants to ask."
-      case .tooManyTargets: return "Ask at most \(AskPolicy.maxTargets) assistants at once."
+      case .noTargets: return "Name the assistants to ask."
       case .unknown(let name): return "No assistant is called \(name). Check the name and try again."
       case .itself: return "An assistant cannot ask itself."
-      case .paused(let name): return "\(name) is paused. Ask another assistant, or ask the person to turn \(name) on again."
-      case .asked: return Admission.tooDeep
-      case .tooManyOpen: return "This assistant already waits for \(AskPolicy.maxOpen) answers. Wait for one, then ask again."
-      case .hourFull(let minutes):
-        return "This assistant asked \(AskPolicy.maxPerHour) questions in the last hour, the most. Try again in \(minutes) minute\(minutes == 1 ? "" : "s")."
+      case .paused(let name): return "\(name) is paused. Ask another assistant."
       }
     }
   }
@@ -98,15 +81,7 @@ public enum AskPolicy {
       if paused.contains(target.id) { return .failure(.paused(target.name)) }
       if !ids.contains(target.id) { ids.append(target.id) }
     }
-    guard ids.count <= maxTargets else { return .failure(.tooManyTargets) }
     return .success(Request(askerID: askerID, targetIDs: ids, question: question))
-  }
-
-  /// Why `request` cannot start now, or nil. `turn` is the kind of turn the asker is in: an
-  /// asked assistant (`.assistant`) cannot ask again. `rate` holds the asker's counts.
-  public static func refusal(_ request: Request, turn: Admission.Turn, rate: Rate, now: Date) -> Refusal? {
-    if case .refuse = Admission.decide(.ask, turn: turn, wordsNameIt: true) { return .asked }
-    return rate.refusal(asker: request.askerID, runs: request.targetIDs.count, now: now)
   }
 
   // MARK: Scope
@@ -267,67 +242,5 @@ public enum AskPolicy {
     var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if name.hasPrefix("@") { name = String(name.dropFirst()).trimmingCharacters(in: .whitespaces) }
     return name
-  }
-
-  // MARK: Rate
-
-  /// The asks of each asker: when each one started in the last hour and which runs are still
-  /// open (`running`). A value: every function takes the time, so the checks can run an hour in a moment.
-  /// The shell can save it so a relaunch does not reset the hour; `relaunched` clears open runs,
-  /// because no run lives through a relaunch.
-  public struct Rate: Codable, Equatable, Sendable {
-    /// Start times per asker id, one per target run.
-    public var started: [String: [Date]]
-    /// Open run ids per asker id.
-    public var running: [String: [String]]
-
-    public init(started: [String: [Date]] = [:], running: [String: [String]] = [:]) {
-      self.started = started
-      self.running = running
-    }
-
-    public func openCount(_ asker: String) -> Int { running[asker]?.count ?? 0 }
-    /// Asks started in the hour before `now`. A time after `now` (the clock moved back) still counts.
-    public func lastHour(_ asker: String, now: Date) -> Int { recent(asker, now: now).count }
-
-    /// Why `runs` more asks from `asker` cannot start at `now`, or nil.
-    public func refusal(asker: String, runs: Int, now: Date) -> Refusal? {
-      if openCount(asker) + runs > AskPolicy.maxOpen { return .tooManyOpen }
-      let times = recent(asker, now: now)
-      let over = times.count + runs - AskPolicy.maxPerHour
-      guard over > 0 else { return nil }
-      guard over <= times.count else { return .hourFull(minutes: 60) }
-      // The `over` oldest asks must leave the hour first; the last of them sets the time.
-      let freeAt = times[over - 1].addingTimeInterval(AskPolicy.hour)
-      let seconds = max(freeAt.timeIntervalSince(now), 0)
-      let minutes = max(1, Int((seconds / 60).rounded(.up)))
-      return .hourFull(minutes: minutes)
-    }
-
-    /// Counts asks that start now: one per run id.
-    public mutating func start(asker: String, runs: [String], now: Date) {
-      trim(now: now)
-      started[asker, default: []].append(contentsOf: Array(repeating: now, count: runs.count))
-      running[asker, default: []].append(contentsOf: runs)
-    }
-    /// One run ended (answered, stopped or failed). It still counts for the hour.
-    public mutating func finish(asker: String, run: String) {
-      running[asker]?.removeAll { $0 == run }
-      if running[asker]?.isEmpty == true { running[asker] = nil }
-    }
-    /// Drops start times older than an hour.
-    public mutating func trim(now: Date) {
-      var kept: [String: [Date]] = [:]
-      for (asker, times) in started {
-        let recent = times.filter { now.timeIntervalSince($0) < AskPolicy.hour }
-        if !recent.isEmpty { kept[asker] = recent }
-      }
-      started = kept
-    }
-    public mutating func relaunched() { running = [:] }
-
-    func recent(_ asker: String, now: Date) -> [Date] {
-      (started[asker] ?? []).filter { now.timeIntervalSince($0) < AskPolicy.hour }.sorted()
-    }
   }
 }

@@ -30,11 +30,9 @@ extension RelayOrchestrator {
   func startSwarm(_ task: String, count: Int, lead: RelayProfile, parent: AssistantHandoff?, chat: String,
                   registry: ModelRegistry? = nil) -> SwarmStart {
     if parent?.side == .swarm { return .refused(Swarm.deepWords) }
-    let root = parent.map { $0.rootID ?? $0.id }
-    let underRoot = root.map { id in handoffLedger.records.filter { $0.id == id || $0.rootID == id }.count } ?? 1
     let routes = swarmRoutes(width: min(count, Swarm.cap), registry: registry)
-    let width = Swarm.width(asked: count, routes: routes.count, underRoot: underRoot)
-    guard width > 0 else { return .refused(routes.isEmpty ? Swarm.noRouteWords : Swarm.fullWords) }
+    let width = Swarm.width(asked: count, routes: routes.count)
+    guard width > 0 else { return .refused(Swarm.noRouteWords) }
 
     let holder = parent ?? openSwarmLead(task, lead: lead, chat: chat)
     var seats: [AssistantHandoff] = []
@@ -68,7 +66,7 @@ extension RelayOrchestrator {
     let message = lastPersonMessage(chat) ?? "handoff-" + record.id
     record.mention = .byPerson(message: message)
     if agent.readsPersonal(thread: chat) { record.personal = true }
-    record = pack(record, root: .person(thread: chat, message: message), sender: agent.hub.run(for: chat))
+    record = pack(record, root: .chat(thread: chat, message: message), sender: agent.hub.run(for: chat))
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
     return record

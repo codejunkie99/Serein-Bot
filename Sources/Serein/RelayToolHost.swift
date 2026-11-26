@@ -12,11 +12,6 @@ import SereinCore
   /// Personal-tab bindings never persist or come from model arguments.
   private var herePages: [String: SereinPage] = [:]
 
-  /// Tools that create, change or cancel the person's schedules and alerts.
-  static let scheduleTools: Set<String> = [
-    "reminder_create", "reminder_update", "goal_create", "goal_update", "reminder_cancel", "watch_create", "watch_cancel",
-  ]
-
   /// The frame of the turn this call came from (`call`), never another running turn's. Only
   /// `call` and `clicked` enter the host's tools, and each binds one; with none (a path that
   /// skipped both) it is a frame of nobody's turn, which the person's checks refuse.
@@ -51,14 +46,9 @@ import SereinCore
   private func answer(_ name: String, _ a: [String: Any]) async throws -> [String: Any] {
     if RelayTools.personalNames.contains(name) { return try await personalTool(name, a) }
     if RelayTools.researchNames.contains(name) { return try await researchTool(name, a) }
-    // A turn the person did not start changes no schedule, with no card: a check-in, a report,
-    // a hand-off's result, and every unattended turn (a routine, a watch, a link; SPEC 3.6, 3.9).
-    // The one exception: a scheduled run acting on the person's words sets one follow-up for
-    // itself (RelayFollowUp); a link's run has no such words.
-    if Self.scheduleTools.contains(name), !frame.byPerson {
-      guard name == "reminder_create", frame.unattended, let words = frame.authority else {
-        throw SereinError.invalid(Self.lowerTrust)
-      }
+    // A scheduled run acting on the person's words sets its follow-up for itself (RelayFollowUp).
+    // Any other turn the person did not start changes schedules as `Admission` says: it applies.
+    if name == "reminder_create", !frame.byPerson, frame.unattended, let words = frame.authority {
       return try followUp(a, source: words, profileID: frame.acting)
     }
     // In the person's own turn, a check-back on something Serein did needs no card either: it
@@ -879,13 +869,13 @@ import SereinCore
   /// One change to Serein itself, by `Admission` (`RelayOrchestrator.admission`): apply goes on, ask
   /// shows the card `gateAgentWrite` shows (a call outside any turn always asks), refuse says why.
   /// `named` is false when the person's words do not name what the change reaches (a routine for
-  /// another assistant, a request Serein carries out): then an apply asks too.
+  /// another assistant, a request Serein carries out): then an apply in their own turn asks too.
   private func admit(
     _ change: Admission.Change, effect: ApprovalGate.Effect, title: String, detail: String, scheduled: Bool = false,
     named: Bool = true
   ) async throws {
     var verdict = frame.admission(change)
-    if verdict == .apply, !named { verdict = .ask }
+    if verdict == .apply, !named, frame.byPerson { verdict = .ask }
     switch verdict {
     case .apply: return
     case .ask: try await gateAgentWrite(effect, title: title, detail: detail, scheduled: scheduled)

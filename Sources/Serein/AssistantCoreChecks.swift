@@ -114,6 +114,7 @@ enum AssistantCoreChecks {
     ("mentionPlan", AssistantCoreChecks.mentionPlan),
     ("swarm", AssistantCoreChecks.swarm),
     ("staffing", AssistantCoreChecks.staffing),
+    ("botsUnbounded", AssistantCoreChecks.botsUnbounded),
     ("keyFailure", AssistantCoreChecks.keyFailure),
     ("secureField", AssistantCoreChecks.secureField),
     ("assistantOwn", AssistantCoreChecks.assistantOwn),
@@ -130,7 +131,6 @@ enum AssistantCoreChecks {
     ("swarmBoard", AssistantCoreChecks.swarmBoard),
     ("swarmWriters", AssistantCoreChecks.swarmWriters),
     ("stuckLoopback", AssistantCoreChecks.stuckLoopback),
-    ("autoTeams", AssistantCoreChecks.autoTeams),
     ("acpRegistry", AssistantCoreChecks.acpRegistry),
     ("grokEngine", AssistantCoreChecks.grokEngine),
     ("cursorEngine", AssistantCoreChecks.cursorEngine),
@@ -196,14 +196,15 @@ enum AssistantCoreChecks {
     try check(A.decide(.schedule(signIns: false), turn: .person, wordsNameIt: true) == .apply, "A typed reminder applies")
     try check(A.decide(.schedule(signIns: true), turn: .person, wordsNameIt: true) == .ask, "A routine with kept sign-ins asks")
     try check(A.decide(.deleteAssistant, turn: .person, wordsNameIt: true) == .ask, "Delete always asks the person")
-    try check(A.decide(.deleteAssistant, turn: .assistant, wordsNameIt: true) == .ask, "An assistant's delete is a card")
     try check(A.decide(.widen, turn: .person, wordsNameIt: true) == .ask, "Widening always asks")
     try check(A.decide(.ask, turn: .person, wordsNameIt: true) == .apply, "Asking another assistant needs no card")
-    if case .refuse = A.decide(.ask, turn: .assistant, wordsNameIt: true) {} else { try check(false, "An asked assistant cannot ask again") }
-    for change: A.Change in [.schedule(signIns: false), .memory, .ownChange, .shareMemory, .makeLink, .widen, .deleteAssistant, .undo, .board] {
-      if case .refuse = A.decide(change, turn: .unattended, wordsNameIt: true) {} else {
-        try check(false, "An unattended turn cannot change \(change)")
-      }
+    // A bot's turn, a routine's or a hook's never gets a card or a refusal: nobody is there to
+    // answer, and bots work on their own. What a bot reaches stays narrowed by Reach.
+    let every: [A.Change] = [.schedule(signIns: false), .schedule(signIns: true), .memory, .ownChange, .shareMemory, .makeLink,
+                             .widen, .deleteAssistant, .undo, .board, .ask]
+    for turn: A.Turn in [.assistant, .unattended] {
+      try check(every.allSatisfy { A.decide($0, turn: turn, wordsNameIt: false) == .apply },
+        "A \(turn) turn applies every change with no card and no refusal")
     }
     try check(TypedConsent.names(.shareMemory, in: "Share that with every assistant"), "\"Share\" names a share")
     try check(!TypedConsent.names(.shareMemory, in: "Remember that Ana is a client"), "Remember alone does not share")

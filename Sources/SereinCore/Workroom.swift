@@ -12,11 +12,10 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
   public private(set) var ceiling: Reach
   /// Monotonic: once true it never returns to false. Every later packet and seat thread carries it.
   public private(set) var personal: Bool
-  /// Assistants this room made, for the make budget (`Staffing.makesPerRoot`). Never shrinks, so
-  /// an Undo of a make does not refund it.
+  /// Assistants this room made, newest last: the record of what the task made, so each can be
+  /// shown and removed. Never a budget, and it never shrinks. A file from before keeps a
+  /// `teamsMade` count, which decoding ignores.
   public private(set) var made: [RelayProfile.ID]
-  /// Teams this room saved, for `Staffing.teamsPerRoot`. Never shrinks.
-  public private(set) var teamsMade: Int
   /// Packets numbered in this room. Never shrinks, so a packet number is never given twice.
   public private(set) var packets: Int
   public var state: State
@@ -27,11 +26,14 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
 
   /// What set the room going. Rooms are idempotent on it: one root, one room.
   public enum Root: Codable, Equatable, Sendable {
-    /// `message` is the id of the person's bubble in `thread`.
-    case person(thread: String, message: String)
+    /// The person's message: `message` is the id of their bubble in `thread`.
+    case chat(thread: String, message: String)
     case scheduled(reminder: String)
     case watch(String)
     case hook(String)
+    // A room saved before the rename keeps opening. In Swift, `.person(` stays the approval
+    // door's own word (scripts/check_approval_door.py).
+    enum CodingKeys: String, CodingKey { case chat = "person", scheduled, watch, hook }
   }
 
   public struct Seat: Codable, Equatable, Identifiable, Sendable {
@@ -70,7 +72,6 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
     ceiling = reach
     personal = false
     made = []
-    teamsMade = 0
     packets = 0
     state = .open
     openedAt = now
@@ -81,7 +82,6 @@ public struct Workroom: Codable, Equatable, Identifiable, Sendable {
 
   public mutating func markPersonal() { personal = true }
   public mutating func recordMade(_ id: RelayProfile.ID) { made.append(id) }
-  public mutating func recordTeam() { teamsMade += 1 }
   /// The next packet's number. `taken`: the highest one already given elsewhere (the ledger), for
   /// a room.json that a crash left behind it.
   public mutating func nextPacket(after taken: Int = 0) -> Int {
@@ -116,7 +116,7 @@ public struct Reach: Codable, Equatable, Sendable {
   }
 
   /// The person's own reach: their settings as `AssistantScope.effective` reads them.
-  public static func person(_ scope: AssistantScope) -> Reach { Reach(scope) }
+  public static func ofPerson(_ scope: AssistantScope) -> Reach { Reach(scope) }
 
   /// Intersection of places and apps, union of Never sites. `wanted` nil copies.
   public func narrowed(to wanted: AssistantScope?) -> Reach { Reach(AssistantScope.effective(wanted, person: scope)) }

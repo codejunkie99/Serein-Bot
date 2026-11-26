@@ -81,9 +81,6 @@ public enum AssistantBoard {
     default: return 4
     }
   }
-  /// The roster holds this many assistants at most; a full roster refuses New assistant.
-  public static let rosterLimit = RelayTeam.maxProfiles
-  public static let fullRoster = "\(RelayTeam.maxProfiles) Sereins is the most. Delete one to add another."
   /// Never sites an assistant may list; the editor refuses more.
   public static let neverSitesLimit = 100
   /// The VoiceOver value of an assistant row: the state, then the idle marks that apply.
@@ -165,10 +162,10 @@ extension RelayTeam {
     team.groups = teams.map { $0.id == group.id ? group : $0 }
     return team
   }
-  /// Adds an assistant to a team; nil when it is already in, the team is full, or either is unknown.
+  /// Adds an assistant to a team; nil when it is already in, or either is unknown.
   public func addingMember(_ profileID: String, to groupID: String) -> RelayTeam? {
     guard var group = group(groupID), profiles.contains(where: { $0.id == profileID }),
-      !group.memberIDs.contains(profileID), group.memberIDs.count < AssistantGroup.maxMembers
+      !group.memberIDs.contains(profileID)
     else { return nil }
     group.memberIDs.append(profileID)
     return replacingGroup(group)
@@ -218,11 +215,10 @@ extension RelayTeam {
     return team
   }
   /// A copy of a team, and on request of its assistants ("Scout copy"), who can do the same and
-  /// never more. nil when the name is taken or the roster would overflow.
+  /// never more. nil when the name is taken.
   public func duplicatingGroup(_ groupID: String, as name: String, copyingMembers: Bool) -> RelayTeam? {
     guard let group = group(groupID) else { return nil }
     guard copyingMembers else { return addingGroup(AssistantGroup(name: name, memberIDs: group.memberIDs, leadID: group.leadID)) }
-    guard profiles.count + group.memberIDs.count <= Self.maxProfiles else { return nil }
     var team = self
     var copies: [String: String] = [:]
     for id in group.memberIDs {

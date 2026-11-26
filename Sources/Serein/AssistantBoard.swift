@@ -139,7 +139,7 @@ extension RelayOrchestrator {
     ToastCenter.shared.show(text, actionTitle: "Undo", commandZ: true) { [weak self] in self?.undoTeam(entry) }
   }
   /// New assistant: inherits everything, Speaks first Never, the next free tint. nil refuses:
-  /// the name is empty or taken, the roster is full, or Serein is mid-reply.
+  /// the name is empty or taken, or Serein is mid-reply.
   func addAssistant(named name: String) -> RelayProfile? {
     guard addProfile(name), let made = team.profiles.last else { return nil }
     persist(RelayPersona(name: made.name), team.folder(made.id) + "/persona.json")
@@ -500,14 +500,15 @@ extension RelayOrchestrator {
   // MARK: the person's own hand-off
 
   /// Why the person cannot hand work to `target` from the active assistant now, in the words the
-  /// chat shows, or nil. The depth rule never applies: the person is not a handed-over task.
+  /// chat shows, or nil. No count applies, and neither does the depth rule: the person is not a
+  /// handed-over task.
   func handoffRefusal(to target: RelayProfile) -> String? {
     guard let sender = team.active else { return "No assistant is answering." }
     guard sender.id != target.id else { return "\(target.name) is already in this chat." }
     guard team.handoffTargets(from: sender.id).contains(where: { $0.id == target.id }) else {
       return "\(target.name) isn't in a team with \(sender.name)."
     }
-    return handoffLedger.refusal(from: sender.id, fromName: sender.name, to: target.id, toName: target.name, now: Date())
+    return nil
   }
   /// Ask Writer to Continue, a message dropped on Writer's row, Hand Off to Writer…: the words go
   /// to Writer's Main chat at once. The person is the sender, so no turn is needed.

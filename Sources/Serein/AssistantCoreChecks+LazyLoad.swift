@@ -138,11 +138,10 @@ extension AssistantCoreChecks {
       "tool_run sends Serein the inner tool's own call, so it takes the same dispatch, asks and receipts")
     // Serein decides by the name it receives (RelayAssistantTools.deleteAssistant): the call
     // above carries the inner name, so the same rule answers it.
-    var refused = false
-    if case .refuse = Admission.decide(.deleteAssistant, turn: .unattended, wordsNameIt: true) { refused = true }
+    let refused = Staffing.mayRework(RelayProfile(id: "scout", name: "Scout"), in: .unattended) != nil
     try check(
       refused && (viaRun["name"] as? String) == "assistant_delete" && !ToolGroups.hidden.contains(ToolGroups.runTool),
-      "An unattended turn that deletes an assistant through tool_run gets the refusal a direct call gets")
+      "An unattended turn that deletes the person's assistant through tool_run gets the refusal a direct call gets")
     try check(
       (try? ToolGroups.request(["name": "app_read"], reachable: hiddenNames)) == nil
         && (try? ToolGroups.request(["name": "nothing"], reachable: hiddenNames)) == nil

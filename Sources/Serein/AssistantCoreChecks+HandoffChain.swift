@@ -47,17 +47,13 @@ extension AssistantCoreChecks {
       "A fifth assistant on one task is refused")
 
     var wide = L(records: [root])
-    for i in 1..<L.maxPerRoot { wide.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }
-    try check(refusal(wide, root, to: "scout")?.contains("\(L.maxPerRoot) times") == true, "A ninth hand-off under one root is refused")
-    wide.records.removeLast()
-    try check(refusal(wide, root, to: "scout") == nil, "The eighth hand-off under one root is allowed")
+    for i in 1...30 { wide.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }
+    try check(refusal(wide, root, to: "scout") == nil, "One task may hand off any number of times: a 31st hand-off under one root is allowed")
     // Closed hand-offs of other tasks, newer than this task's closed parts and more than the ledger keeps.
     var long = L(records: [root])
-    for i in 1..<L.maxPerRoot { long.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }
+    for i in 1..<8 { long.records.append(link("w\(i)", "writer", "editor", parent: root, state: .done)) }
     for i in 0...L.kept { long.records.append(link("x\(i)", "ana", "scout", state: .done)) }
     long.trim(now: now)
-    try check(refusal(long, root, to: "scout")?.contains("\(L.maxPerRoot) times") == true,
-      "A ninth hand-off under one root is still refused after the ledger trims its closed records")
     long.records[0].state = .done
     long.trim(now: now)
     try check(long.records.count == L.kept, "Once a task has ended, its closed parts are trimmed like any other")

@@ -5,8 +5,9 @@ The owner chose autonomous staffing (2026-11-25): an assistant seats, makes or s
 no card, and a refusal is a sentence the model follows. `Staffing.decide` has no ask verdict, so
 the type holds the core; this script holds the shell. The bodies of the tools that staff
 (assistant_handoff, assistant_make, team_make) and of `RelayOrchestrator.staff` may not call a
-card or an admission ask, and the removed card paths may not come back. The behavior is checked
-by `--verify-assistant-core` (suite staffing).
+card or an admission ask, and the removed card paths may not come back. Since 2026-11-26 bots
+also make bots and teams with no headcount: the removed caps may not come back either. The
+behavior is checked by `--verify-assistant-core` (suites staffing and botsUnbounded).
 """
 import os
 import re
@@ -104,6 +105,11 @@ STAFFING = {
 }
 CARD = re.compile(r"\b(confirmAnswer|confirm|gateTeam|askPerson|Admission\.decide|TypedConsent)\b|\.ask\b")
 GONE = re.compile(r"\b(team_propose|proposeTeam|gateTeam|MakeProposals|foldIntoTargetChat|showProposalCard|answerProposal)\b")
+# Headcounts on bots and teams, removed 2026-11-26. Pacing is real RAM, quota, cycles and depth.
+CAPS = re.compile(
+    r"\b(makesPerRoot|teamsPerRoot|teamsMade|recordTeam|retryClean|maxProfiles|maxMembers|rosterFull|fullRoster"
+    r"|AutoTeams|AutoTeamPolicy|maxPerRoot|maxPerReaderPerDay|onlyThePerson|noOneHere|maxTargets|maxPerHour"
+    r"|tooManyTargets|hourFull|tooManyOpen|HandoffLedger\.maxOpenPerAssistant)\b")
 
 
 def body(text, opener):
@@ -123,6 +129,8 @@ def problems(path, text):
     """What `path` breaks, as lines of text. `text` has its comments blanked."""
     found = [f"{path}:{n}: a removed card path is back ({m.group(1)})"
              for n, line in enumerate(text.splitlines(), 1) for m in [GONE.search(line)] if m]
+    found += [f"{path}:{n}: a removed cap on bots or teams is back ({m.group(1)})"
+              for n, line in enumerate(text.splitlines(), 1) for m in [CAPS.search(line)] if m]
     for opener in STAFFING.get(path, []):
         got = body(text, opener)
         if got is None:
@@ -143,6 +151,10 @@ def self_check():
         (teams, "func handOff(a) { }\n"): 1,
         ("Sources/SereinCore/Relay.swift", 'tool("team_propose")\n'): 1,
         ("Sources/SereinCore/Relay.swift", 'tool("team_make")\n'): 0,
+        ("Sources/SereinCore/Staffing.swift", "guard room.made.count < makesPerRoot else {}\n"): 1,
+        ("Sources/SereinCore/RelayTeam.swift", "// maxProfiles was 16\n"): 0,
+        ("Sources/SereinCore/RoutineOffers.swift", "if open >= RoutineOffers.maxOpenPerAssistant {}\n"): 0,
+        ("Sources/SereinCore/AssistantTeams.swift", "HandoffLedger.maxOpenPerAssistant\n"): 1,
     }
     bad = [f"{sample!r} gave {got}" for sample, want in samples.items()
            if len(got := problems(sample[0], strip_comments(sample[1]))) != want]

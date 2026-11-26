@@ -33,11 +33,9 @@ struct StaffingWorld: Encodable, Equatable {
       RelayProfile(id: "w", name: "Writer", createdAt: base, scope: AssistantScope(destinations: [.web, .mail], apps: ["composio:gmail"])),
       RelayProfile(id: "c", name: "Coder", createdAt: base, scope: AssistantScope(destinations: [.mac, .project, .web])),
     ]
-    // One short of the roster cap with the room's two makes, so the cap binds.
-    let fillers = (1...(RelayTeam.maxProfiles - named.count - 1)).map { RelayProfile(id: "f\($0)", name: "Filler \($0)", createdAt: base) }
-    let room = Workroom(id: "r1", root: .person(thread: "main-main", message: "m1"), lead: "main", thread: "main-main",
-                        reach: Reach.person(person), now: base)
-    return StaffingWorld(room: room, team: RelayTeam(profiles: named + fillers, activeID: "main"))
+    let room = Workroom(id: "r1", root: .chat(thread: "main-main", message: "m1"), lead: "main", thread: "main-main",
+                        reach: Reach.ofPerson(person), now: base)
+    return StaffingWorld(room: room, team: RelayTeam(profiles: named, activeID: "main"))
   }
 
   /// `a` is no wider than `b`: its places and apps inside, its Never sites a superset.
@@ -53,7 +51,7 @@ struct StaffingWorld: Encodable, Equatable {
 
   /// Applies a verdict for `seat` asking for `wanted`; nil when refused or not applicable.
   func asking(_ wanted: Staffing.Wanted, by seat: Workroom.Seat) -> StaffingWorld? {
-    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: Set(archived), ledger: ledger, readOutside: false, now: Self.base)
+    let verdict = Staffing.decide(wanted, by: seat, in: room, team: team, archived: Set(archived), ledger: ledger, now: Self.base)
     var next = self
     switch (verdict, wanted) {
     case (.seat(let reach), .teammate(let id)):
@@ -102,7 +100,7 @@ struct StaffingWorld: Encodable, Equatable {
     }
     for who in Set(w.room.seats.map(\.who)).sorted() where w.narrowed[who] == nil {
       var n = w
-      n.narrowed[who] = Reach.person(AssistantScope(destinations: [.web], apps: []))
+      n.narrowed[who] = Reach.ofPerson(AssistantScope(destinations: [.web], apps: []))
       n.room.renarrow(n.narrowed)
       out.append(("\(who) is narrowed to the Web", n))
     }
@@ -119,7 +117,8 @@ struct StaffingWorld: Encodable, Equatable {
 enum StaffingMachine {
   static var machine: FormalMachine<StaffingWorld> {
     FormalMachine(
-      name: "staffing", bounds: "15 on the roster, \(StaffingWorld.seatsCap) seats, archive, narrow, Undo", start: StaffingWorld.start,
+      name: "staffing", bounds: "3 on the roster, \(StaffingWorld.seatsCap) seats, makes with no count up to the seats, archive, narrow, Undo",
+      start: StaffingWorld.start,
       steps: StaffingWorld.steps,
       invariants: [
         ("seat reach within its parent's, within the ceiling", { w in
@@ -133,8 +132,16 @@ enum StaffingMachine {
           w.room.seats.allSatisfy { s in w.narrowed[s.who].map { StaffingWorld.within(s.reach, $0) } ?? true }
         }),
         ("a make the rule allows always applies", { w in !w.makeRefusedAfterYes }),
-        ("roster at most \(RelayTeam.maxProfiles)", { w in w.team.profiles.count <= RelayTeam.maxProfiles }),
-        ("at most \(Staffing.makesPerRoot) makes per root", { w in w.room.made.count <= Staffing.makesPerRoot }),
+        ("every make is on the roster and in the room's record", { w in
+          let made = w.team.profiles.filter { $0.lineage?.madeIn == w.room.id }.map(\.id)
+          return made.allSatisfy(w.room.made.contains)
+        }),
+        ("no chain holds an assistant twice or runs past the depth limit", { w in
+          w.ledger.records.allSatisfy { r in
+            let holders = r.holders
+            return Set(holders).count == holders.count && holders.count <= HandoffLedger.maxChain
+          }
+        }),
         ("a made assistant carries its lineage and no connected apps", { w in
           w.room.made.allSatisfy { id in
             w.team.profiles.first { $0.id == id }.map { $0.lineage?.madeIn == w.room.id && $0.scope?.apps == [] } ?? true

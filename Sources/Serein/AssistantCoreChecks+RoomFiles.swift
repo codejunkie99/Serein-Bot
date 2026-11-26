@@ -24,9 +24,9 @@ extension AssistantCoreChecks {
     func text(_ url: URL) -> String { (try? String(contentsOf: url, encoding: .utf8)) ?? "" }
 
     let at = Date(timeIntervalSince1970: 1_800_000_000)
-    let root = Workroom.Root.person(thread: "chat", message: "m1")
+    let root = Workroom.Root.chat(thread: "chat", message: "m1")
     func lead() -> Workroom {
-      Workroom(root: root, lead: "serein", thread: "chat", reach: .person(AssistantScope(destinations: [.web, .answer])), now: at)
+      Workroom(root: root, lead: "serein", thread: "chat", reach: .ofPerson(AssistantScope(destinations: [.web, .answer])), now: at)
     }
     var built = 0
     func build(_ task: String) -> (Workroom) async -> HandoffPacket {

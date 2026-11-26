@@ -85,8 +85,7 @@ extension AssistantCoreChecks {
       let queuedBubble = relay.desk.facts[chat]?.above.first { $0.id == asked }
       try check(relay.pending.isEmpty && side.from == lead && side.to == lead && side.askedIn == chat && side.parentID == nil
           && relay.handoffsStarting.contains(side.threadID) && side.threadID.hasPrefix(RelayOrchestrator.seatPrefix)
-          && seen(asked) == 1 && queuedBubble.map { LiveTurnFacts.draws($0, profiles: relay.team.profiles) } == true
-          && relay.handoffLedger.daily.isEmpty,
+          && seen(asked) == 1 && queuedBubble.map { LiveTurnFacts.draws($0, profiles: relay.team.profiles) } == true,
         "no queue: a busy chat plus a new message gives a side seat right away, its message renders in the live chat, with no queue")
 
       // 2. Its answer posts once, under that message, in the origin chat.

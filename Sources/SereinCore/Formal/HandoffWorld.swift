@@ -2,7 +2,7 @@ import Foundation
 
 /// The hand-off lifecycle as `RelayTeams` (Sources/Serein/RelayTeams.swift) drives `HandoffLedger`:
 /// the Chain and Report machines both explore it. Every ledger change goes through the shipped
-/// reducers (`admit`, `chainRefusal`, `refusal`, `running`, `closable`, `expire`, `stop`,
+/// reducers (`admit`, `chainRefusal`, `running`, `closable`, `expire`, `stop`,
 /// `claimReport`). The shell glue around them (`closeHandoff`, `launch`, `finishHandoff`,
 /// `deliverChainResults`, `deliverHandoffReports`, `sweepHandoffs`, and `postReport` in
 /// RelayChannel.swift) lives in the app target, which
@@ -56,9 +56,8 @@ struct HandoffWorld: Encodable, Equatable {
         .joined(separator: ",")
     }
     let counts = [claims, readerTurns, wakes].map { $0.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",") }
-    let daily = ledger.daily.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
     let posts = [posted.sorted().joined(separator: ","), held.sorted().joined(separator: ",")]
-    return (rows + [live.joined(separator: ","), daily] + counts + posts + ["\(unclaimedReads) \(crashes) \(dayLater)"]).joined(separator: ";")
+    return (rows + [live.joined(separator: ",")] + counts + posts + ["\(unclaimedReads) \(crashes) \(dayLater)"]).joined(separator: ";")
   }
 
   static let base = Date(timeIntervalSince1970: 1_800_000_000)
@@ -80,11 +79,10 @@ struct HandoffWorld: Encodable, Equatable {
     return claimed
   }
 
-  /// `sendHandoff` after the `assistant_handoff` tool's checks: the chain rule for a part, then the
-  /// sender's open limit and the reader's daily one. nil when refused.
+  /// `sendHandoff` after the `assistant_handoff` tool's checks: the chain rule for a part (a loop
+  /// or past `HandoffLedger.maxChain`), and nothing counted. nil when refused.
   func sending(from sender: String, to target: String, parent: AssistantHandoff?, mention: AssistantHandoff.Mention? = nil) -> HandoffWorld? {
     if let parent, ledger.chainRefusal(parent: parent, fromName: sender, to: target, toName: target) != nil { return nil }
-    guard ledger.refusal(from: sender, fromName: sender, to: target, toName: target, now: now) == nil else { return nil }
     var next = self
     let id = "h\(ledger.records.count + 1)"
     let record = AssistantHandoff(

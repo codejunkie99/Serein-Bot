@@ -98,7 +98,7 @@ struct SwarmWorld: Codable, Equatable {
             lead.side = .swarmLead
             lead.mention = .byPerson(message: "m")
             n.ledger.admit(lead, now: t0)
-            for (k, route) in routes.prefix(Swarm.width(asked: Swarm.cap, routes: routes.count, underRoot: 1)).enumerated() {
+            for (k, route) in routes.prefix(Swarm.width(asked: Swarm.cap, routes: routes.count)).enumerated() {
               var seat = AssistantHandoff(id: "s\(k)", from: "serein", to: "serein", task: "t", threadID: "seat-s\(k)", askedIn: "seat-L",
                                           team: "", teamName: "", createdAt: t0, parent: lead)
               seat.side = .swarm

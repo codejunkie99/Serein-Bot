@@ -167,15 +167,14 @@ extension AssistantCoreChecks {
     try check(value(draft(["name": "Scout", "can_use": "web, mail"]))?.places == [.web, .mail], "can_use can be one line with commas")
     try check(value(draft(["name": "Scout", "can_use": [String]()]))?.places == [], "An empty can_use gives no places")
 
-    var full = team
-    for i in 0..<(RelayTeam.maxProfiles - 2) { full.profiles.append(RelayProfile(id: "x\(i)", name: "Helper \(i)")) }
-    let refusedFull = full.making(Draft(name: "One more", job: nil, places: [.web]), person: person)
-    if case .failure(let p) = refusedFull {
-      try check(p == .rosterFull && p.words == AssistantBoard.fullRoster, "A full roster refuses a new assistant")
+    var big = team
+    for i in 0..<40 { big.profiles.append(RelayProfile(id: "x\(i)", name: "Helper \(i)")) }
+    if case .success = big.making(Draft(name: "One more", job: nil, places: [.web]), person: person) {
+      try check(true, "A roster of any size takes one more assistant")
     } else {
-      try check(false, "A full roster refuses a new assistant")
+      try check(false, "A roster of any size takes one more assistant")
     }
-    let problems: [Draft.Problem] = [.noName, .nameTooLong, .notOneLine, .nameTaken("Planner"), .jobTooLong, .rosterFull]
+    let problems: [Draft.Problem] = [.noName, .nameTooLong, .notOneLine, .nameTaken("Planner"), .jobTooLong, .notSaved]
     try check(problems.allSatisfy { lifecyclePlain($0.words) && !$0.words.isEmpty }, "Every make refusal is in plain words")
 
     let now = Date(timeIntervalSince1970: 1_800_000_000)

@@ -10,7 +10,7 @@ extension AssistantCoreChecks {
   private static let key = "sk-proj-" + String(repeating: "A1b2", count: 8)
 
   private static func reachOf(_ places: Set<AssistantPlace>, never: [String] = [], apps: [String]? = nil) -> Reach {
-    Reach.person(AssistantScope(destinations: places, neverSites: never, apps: apps))
+    Reach.ofPerson(AssistantScope(destinations: places, neverSites: never, apps: apps))
   }
   /// `a` reaches no further than `b`: fewer places, every Never site of `b`, no app `b` lacks.
   private static func within(_ a: Reach, _ b: Reach) -> Bool {
@@ -22,18 +22,23 @@ extension AssistantCoreChecks {
     (0..<(1 << places.count)).map { mask in Set(places.indices.filter { mask & (1 << $0) != 0 }.map { places[$0] }) }
   }
   private static func room(lead: String = "serein", reach: Reach = reachOf([.web, .answer, .mail])) -> Workroom {
-    Workroom(id: "r_test", root: .person(thread: "chat-1", message: "m1"), lead: lead, thread: "seat-1", reach: reach, now: at)
+    Workroom(id: "r_test", root: .chat(thread: "chat-1", message: "m1"), lead: lead, thread: "seat-1", reach: reach, now: at)
   }
 
   static func workroom(_ check: Check) throws {
     var r = room()
     try check(r.seats.map(\.id) == ["s1"] && r.seats[0].parent == nil && r.ceiling == r.seats[0].reach && r.nextSeatID == "s2",
       "A room opens with its lead in s1 at the ceiling")
-    try check(r.state == .open && !r.personal && r.made.isEmpty && r.teamsMade == 0, "A new room is open, unmarked, and has made nothing")
+    try check(r.state == .open && !r.personal && r.made.isEmpty, "A new room is open, unmarked, and has made nothing")
     r.markPersonal()
     r.markPersonal()
     let decoded = try JSONDecoder().decode(Workroom.self, from: JSONEncoder().encode(r))
     try check(decoded == r && decoded.personal, "room.json round-trips and keeps the personal mark")
+    let old = try JSONEncoder().encode(r.root)
+    let saved = String(decoding: old, as: UTF8.self)
+    try check(saved.contains("\"person\"") && !saved.contains("\"chat\"")
+      && (try? JSONDecoder().decode(Workroom.Root.self, from: Data(#"{"person":{"thread":"chat-1","message":"m1"}}"#.utf8))) == r.root,
+      "A room's root keeps its saved key, so a room.json written before the rename still opens")
 
     let names = ["s1": "Serein", "s2": "Theo"]
     let notes = [
@@ -241,8 +246,8 @@ extension AssistantCoreChecks {
     var r = room()
     let lead = r.seats[0]
     func decide(_ w: Staffing.Wanted, by seat: Workroom.Seat? = nil, in room: Workroom? = nil, team t: RelayTeam = team,
-                ledger: HandoffLedger = HandoffLedger(), readOutside: Bool = false) -> Staffing.Verdict {
-      Staffing.decide(w, by: seat ?? lead, in: room ?? r, team: t, archived: ["old"], ledger: ledger, readOutside: readOutside, now: at)
+                ledger: HandoffLedger = HandoffLedger()) -> Staffing.Verdict {
+      Staffing.decide(w, by: seat ?? lead, in: room ?? r, team: t, archived: ["old"], ledger: ledger, now: at)
     }
     func isCarryOn(_ v: Staffing.Verdict, _ words: String) -> Bool {
       if case .carryOn(let text) = v { return text.contains(words) }
@@ -278,50 +283,59 @@ extension AssistantCoreChecks {
     let deepSeat = Workroom.Seat(id: "s2", who: "theo", thread: "t4", reach: lead.reach, parent: "s1", handoff: "h4")
     try check(isCarryOn(decide(.newAssistant(draft), by: deepSeat, ledger: HandoffLedger(records: [deep])), "passed through \(HandoffLedger.maxChain)"),
       "A seat four assistants deep cannot make a fifth")
+    // No headcounts: past every old cap (8 seats a room, 2 makes a room, 16 on the roster,
+    // 20 hand-offs a reader a day), a teammate is still seated and a new assistant still made.
     var crowded = room()
-    for i in 2...(HandoffLedger.maxPerRoot + 1) {
+    for i in 2...30 {
       crowded.seats.append(.init(id: "s\(i)", who: "theo", thread: "t\(i)", reach: lead.reach, parent: "s1", handoff: "h\(i)"))
     }
-    try check(isCarryOn(decide(.teammate("theo"), in: crowded), "handed on \(HandoffLedger.maxPerRoot) times")
-      && isCarryOn(decide(.newAssistant(draft), in: crowded), "handed on"), "A room seats at most 8 teammates")
-    if case .retryClean(let words) = decide(.newAssistant(draft), readOutside: true) {
-      try check(words.contains("outside"), "A turn that read outside text gets the retry-clean route for a make")
-    } else { try check(false, "A turn that read outside text gets the retry-clean route for a make") }
-    if case .retryClean = decide(.team, readOutside: true) {} else { try check(false, "A turn that read outside text cannot save a team") }
-    try check(decide(.teammate("theo"), readOutside: true) == .seat(lead.reach.narrowed(to: profiles[1].scope)), "Reading outside text does not stop a hand-off to a teammate")
-
-    r.recordMade("flights")
-    if case .make = decide(.newAssistant(draft)) {} else { try check(false, "A room that made one assistant may make a second") }
-    r.recordMade("hotels")
-    try check(isCarryOn(decide(.newAssistant(draft)), "already made \(Staffing.makesPerRoot)") && isCarryOn(decide(.newAssistant(draft)), "Hand this to"),
-      "A room makes at most 2 assistants, and the 3rd is refused with a way on")
-    try check(decide(.team) == .makeTeam, "A room may save one team")
-    r.recordTeam()
-    try check(isCarryOn(decide(.team), "already saved a team"), "A room saves at most 1 team")
-    let full = RelayTeam(profiles: (0..<RelayTeam.maxProfiles).map { RelayProfile(id: "p\($0)", name: "P\($0)") }, activeID: "p0")
-    try check(isCarryOn(decide(.newAssistant(draft), in: room(lead: "p0"), team: full), "roster is full"), "A full roster refuses a make with a way on")
-    var withArchived = full
-    withArchived.profiles[1].id = "old"
-    try check(isCarryOn(decide(.newAssistant(draft), in: room(lead: "p0"), team: withArchived), "1 of them archived, which still count"),
-      "An archived assistant still holds a roster place, as RelayTeam.making counts it, and the refusal says so")
-    if case .failure(.rosterFull) = full.making(draft, person: [.web]) {} else { try check(false, "RelayTeam.making refuses the same full roster") }
-
-    // The 20th hand-off into one reader in a day closes it to everyone; another reader stays open.
+    try check(decide(.teammate("theo"), in: crowded) == .seat(lead.reach.narrowed(to: profiles[1].scope))
+      && decide(.newAssistant(draft), in: crowded) == .make(lead.reach.narrowed(to: AssistantScope(destinations: [.web, .mac], apps: [])), lineage),
+      "A room with 29 teammates seated still seats and makes more")
+    for i in 0..<10 { r.recordMade("made-\(i)") }
+    if case .make = decide(.newAssistant(draft)) {} else { try check(false, "A room that made 10 assistants may make an 11th") }
+    let full = RelayTeam(profiles: (0..<40).map { RelayProfile(id: "p\($0)", name: "P\($0)") }, activeID: "p0")
+    if case .make = decide(.newAssistant(draft), in: room(lead: "p0"), team: full) {} else {
+      try check(false, "A roster of 40 still takes a made assistant")
+    }
+    if case .success = full.making(draft, person: [.web]) {} else { try check(false, "RelayTeam.making takes a roster of 40") }
     var busy = HandoffLedger()
-    for i in 0..<HandoffLedger.maxPerReaderPerDay {
+    for i in 0..<25 {
       var h = hop("d\(i)", "a\(i)", "theo", nil)
-      h.state = .done
+      h.state = i < 5 ? .running : .done
       busy.admit(h, now: at)
     }
-    try check(busy.refusal(from: "serein", fromName: "Serein", to: "theo", toName: "Theo", now: at)?.contains("20 tasks today") == true
-      && busy.refusal(from: "serein", fromName: "Serein", to: "old", toName: "Old", now: at) == nil
-      && busy.refusal(from: "serein", fromName: "Serein", to: "theo", toName: "Theo", now: at.addingTimeInterval(86_400)) == nil,
-      "The day's cap is per reader and per day")
-    try check(isCarryOn(decide(.teammate("theo"), ledger: busy), "20 tasks today"), "decide refuses a reader at its daily cap")
+    try check(decide(.teammate("theo"), ledger: busy) == .seat(lead.reach.narrowed(to: profiles[1].scope)),
+      "A reader sent 25 tasks today, 5 still open, still takes another")
+
+    // Bots rework only what bots made; the person's own assistants take work from them.
+    var made = profiles[1]
+    made.lineage = lineage
+    try check(Staffing.mayRework(profiles[1], in: .assistant)?.contains("set up by the person") == true
+      && Staffing.mayRework(profiles[1], in: .unattended) != nil
+      && Staffing.mayRework(made, in: .assistant) == nil && Staffing.mayRework(profiles[1], in: .person) == nil,
+      "A bot's turn may change or archive an assistant a bot made, never one the person made")
+
+    // Stopping a lead stops what its turn handed on, and nothing else.
+    let since = at.addingTimeInterval(-1)
+    var front = hop("f1", "serein", "theo", nil)
+    front.createdAt = at
+    let child = hop("f2", "theo", "a", front)
+    var seat = hop("b1", "serein", "theo", nil)
+    seat.side = .busy
+    let earlier = AssistantHandoff(id: "e1", from: "serein", to: "theo", task: "t", threadID: "t-e1", askedIn: "chat-1", team: "",
+                                   teamName: "All", createdAt: at.addingTimeInterval(-60), state: .running)
+    let elsewhere = AssistantHandoff(id: "o1", from: "serein", to: "theo", task: "t", threadID: "t-o1", askedIn: "chat-2", team: "",
+                                     teamName: "All", createdAt: at, state: .running)
+    var closed = hop("c1", "serein", "a", nil)
+    closed.state = .done
+    let cascade = HandoffLedger(records: [front, child, seat, earlier, elsewhere, closed]).handedOn(from: "chat-1", since: since)
+    try check(cascade == ["f1", "f2"],
+      "A stopped turn's cascade takes its open hand-offs and their children, never a side seat, an older turn's or another chat's [\(cascade.sorted())]")
 
     // Staffing.make: what the shell's changeTeam and the formal machine both apply.
     guard case .make(let reach, let made) = Staffing.decide(.newAssistant(draft), by: lead, in: room(), team: team, archived: [],
-                                                             ledger: HandoffLedger(), readOutside: false, now: at),
+                                                             ledger: HandoffLedger(), now: at),
       case .success(let plan) = Staffing.make(draft, reach: reach, lineage: made, team: team, id: "flights", now: at)
     else { return try check(false, "A make the rule allows applies") }
     try check(plan.profile.lineage == made && plan.team.profiles.last?.lineage == made, "A made assistant carries madeBy and madeIn")

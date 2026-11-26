@@ -1454,10 +1454,6 @@ struct AddProfileField: View {
       problem = "Another assistant is called \(clean)."
       return
     }
-    guard relay.team.profiles.count < AssistantBoard.rosterLimit else {
-      problem = AssistantBoard.fullRoster
-      return
-    }
     guard relay.addAssistant(named: clean) != nil else {
       problem = "\(clean) wasn't made. Try again when the reply is done."
       return

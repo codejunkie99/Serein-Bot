@@ -6,7 +6,6 @@ import SereinCore
 extension AssistantCoreChecks {
   static func asks(_ check: Check) throws {
     try asksLimits(check)
-    try asksRate(check)
     try asksScope(check)
     try asksAnswers(check)
   }
@@ -27,15 +26,13 @@ extension AssistantCoreChecks {
     ],
     activeID: "main")
 
-  // MARK: limits and depth
+  // MARK: parse
 
   private static func asksLimits(_ check: Check) throws {
     typealias P = AskPolicy
-    try check(P.maxTargets == 3, "An ask has at most 3 targets")
     try check(P.inlineWait == 15 && P.inlineWait < TimeInterval(RelayTools.maxWait), "The tool waits 15 seconds for answers, less than the longest wait")
     try check(P.runCap == 90, "A target's run stops at 90 seconds")
     try check(P.answerLimit == 1_200, "An answer keeps at most 1,200 characters")
-    try check(P.maxOpen == 3 && P.maxPerHour == 20, "An asker has at most 3 open asks and 20 in an hour")
 
     func parse(_ a: [String: Any], asker: String = "scout", paused: Set<String> = []) -> Result<P.Request, P.Refusal> {
       P.parse(a, askerID: asker, team: asksTeam, paused: paused)
@@ -54,10 +51,10 @@ extension AssistantCoreChecks {
     let several = request(parse(["to": ["planner", "@Writer", "Planner"], "question": "Hi"]))
     try check(several?.targetIDs == ["planner", "writer"], "Names match in any case, with or without @, and each counts once")
     try check(request(parse(["to": "Planner, Writer", "question": "Hi"]))?.targetIDs == ["planner", "writer"], "One line with commas names several")
-    let four = parse(["to": ["Planner", "Writer", "Inbox Zero", "Serein"], "question": "Hi"])
-    try check(refused(four) == .tooManyTargets, "A fourth target is refused")
-    let chief = request(parse(["to": ["Planner", "Writer", "Inbox Zero"], "question": "Hi"], asker: "main"))
-    try check(chief?.targetIDs.count == 3, "Serein can ask three assistants at once")
+    let four = request(parse(["to": ["Planner", "Writer", "Inbox Zero", "Serein"], "question": "Hi"]))
+    try check(four?.targetIDs.count == 4, "An ask has no target count: four targets are all asked")
+    let chief = request(parse(["to": ["Planner", "Writer", "Inbox Zero", "Scout"], "question": "Hi"], asker: "main"))
+    try check(chief?.targetIDs.count == 4, "Serein can ask every other assistant at once")
     try check(refused(parse(["to": [String](), "question": "Hi"])) == .noTargets, "An ask names at least one assistant")
     try check(refused(parse(["to": "Planner", "question": "   "])) == .noQuestion, "An ask needs a question")
     let tooLong = String(repeating: "a", count: P.questionLimit + 1)
@@ -66,63 +63,8 @@ extension AssistantCoreChecks {
     try check(refused(parse(["to": "Scout", "question": "Hi"])) == .itself, "An assistant cannot ask itself")
     try check(refused(parse(["to": "Planner", "question": "Hi"], paused: ["planner"])) == .paused("Planner"), "A paused assistant is not asked")
 
-    guard let ask = one else {
-      try check(false, "Scout's ask reads")
-      return
-    }
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    try check(P.refusal(ask, turn: .person, rate: P.Rate(), now: now) == nil, "A person's turn can ask")
-    try check(P.refusal(ask, turn: .unattended, rate: P.Rate(), now: now) == nil, "A routine's turn can ask")
-    try check(P.refusal(ask, turn: .assistant, rate: P.Rate(), now: now) == .asked, "An asked assistant cannot ask (depth 1)")
-    var full = P.Rate()
-    full.start(asker: "scout", runs: ["a", "b", "c"], now: now)
-    try check(P.refusal(ask, turn: .person, rate: full, now: now) == .tooManyOpen, "An ask past the asker's limit is refused")
-
-    let refusals: [P.Refusal] = [
-      .noQuestion, .questionTooLong, .noTargets, .tooManyTargets, .unknown("Nobody"), .itself, .paused("Planner"), .asked,
-      .tooManyOpen, .hourFull(minutes: 1),
-    ]
+    let refusals: [P.Refusal] = [.noQuestion, .questionTooLong, .noTargets, .unknown("Nobody"), .itself, .paused("Planner")]
     try check(refusals.allSatisfy { asksPlain($0.words) && !$0.words.isEmpty }, "Every ask refusal is in plain words")
-    try check(P.Refusal.hourFull(minutes: 1).words.hasSuffix("1 minute."), "One minute reads \"1 minute\"")
-  }
-
-  // MARK: rate
-
-  private static func asksRate(_ check: Check) throws {
-    typealias P = AskPolicy
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    var counter = P.Rate()
-    counter.start(asker: "scout", runs: ["a1", "a2"], now: now)
-    try check(counter.openCount("scout") == 2 && counter.lastHour("scout", now: now) == 2, "Each target counts as one ask")
-    try check(counter.refusal(asker: "scout", runs: 1, now: now) == nil, "A third open ask is allowed")
-    try check(counter.refusal(asker: "scout", runs: 2, now: now) == .tooManyOpen, "A fourth open ask is refused")
-    try check(counter.refusal(asker: "planner", runs: 3, now: now) == nil, "Limits are for each asker")
-    counter.finish(asker: "scout", run: "a1")
-    try check(counter.openCount("scout") == 1 && counter.lastHour("scout", now: now) == 2, "A finished ask is not open but still counts for the hour")
-
-    let data = try JSONEncoder().encode(counter)
-    let decoded = try JSONDecoder().decode(P.Rate.self, from: data)
-    try check(decoded == counter, "The counts can be saved and read back")
-
-    var hour = P.Rate()
-    for i in 0..<20 {
-      let at = now.addingTimeInterval(Double(i) * 60)
-      hour.start(asker: "scout", runs: ["r\(i)"], now: at)
-      hour.finish(asker: "scout", run: "r\(i)")
-    }
-    let afterTwenty = now.addingTimeInterval(20 * 60)
-    try check(hour.lastHour("scout", now: afterTwenty) == 20, "Twenty asks in the hour are counted")
-    try check(hour.refusal(asker: "scout", runs: 1, now: afterTwenty) == .hourFull(minutes: 40), "The twenty-first ask in an hour is refused, with the minutes to wait")
-    try check(hour.refusal(asker: "scout", runs: 1, now: now.addingTimeInterval(3_600)) == nil, "One hour after the first ask, one more is allowed")
-    try check(hour.refusal(asker: "scout", runs: 2, now: now.addingTimeInterval(3_600)) == .hourFull(minutes: 1), "Two more wait until a second ask leaves the hour")
-    hour.trim(now: now.addingTimeInterval(2 * 3_600))
-    try check(hour.started.isEmpty, "Trim drops times older than an hour")
-
-    var back = P.Rate()
-    back.start(asker: "scout", runs: ["f"], now: now.addingTimeInterval(600))
-    try check(back.lastHour("scout", now: now) == 1, "A time after now (the clock moved back) still counts")
-    back.relaunched()
-    try check(back.openCount("scout") == 0 && back.lastHour("scout", now: now) == 1, "A relaunch clears open asks and keeps the hour")
   }
 
   // MARK: scope
