@@ -110,6 +110,7 @@ enum AssistantCoreChecks {
     ("groupTurn", AssistantCoreChecks.groupTurn),
     ("noQueue", AssistantCoreChecks.noQueue),
     ("mentionPlan", AssistantCoreChecks.mentionPlan),
+    ("swarm", AssistantCoreChecks.swarm),
     ("staffing", AssistantCoreChecks.staffing),
     ("keyFailure", AssistantCoreChecks.keyFailure),
     ("secureField", AssistantCoreChecks.secureField),

@@ -117,6 +117,7 @@ public enum FormalCheck {
     ("staffing", { StaffingMachine.machine.check() }),
     ("packet", { PacketMachine.machine.check() }),
     ("seats", { SeatMachine.machine.check() }),
+    ("swarm", { SwarmMachine.machine.check() }),
     ("settings-undo", { SettingsMachine.machine.check() }),
   ]
 

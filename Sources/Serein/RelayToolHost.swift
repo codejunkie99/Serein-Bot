@@ -196,6 +196,7 @@ import SereinCore
     case "team_make": return try await makeTeam(a)
     case "assistant_handoff": return try await handOff(a)
     case "channel_say": return try await channelSay(a)
+    case "swarm_start": return try await swarmStart(a)
     // One assistant at a time, judged by the admission rule; each change lands as a receipt
     // with Undo (RelayAssistantTools.swift).
     case "assistant_list": return listAssistants()

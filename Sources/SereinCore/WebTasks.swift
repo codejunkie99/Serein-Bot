@@ -347,6 +347,7 @@ public struct AgentStep: Codable, Equatable, Identifiable {
     case "assistant_ask": return "Asked an assistant"
     case "assistant_handoff": return "Handed work to " + ((arguments["to"] as? String).map { String($0.prefix(40)) } ?? "a teammate")
     case "channel_say": return "Sent a message in the chat"
+    case "swarm_start": return "Asked several models at once"
     case "room_read": return "Read its team room"
     case "room_note": return "Left a note for the team"
     case "room_report": return "Reported back"

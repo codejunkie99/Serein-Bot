@@ -29,7 +29,19 @@ public enum RelayTools {
   ]).union(assistantNames).union(researchNames).union(MacFiles.toolNames).union(AppPlaces.toolNames)
   /// Offered only while the assistant has someone to hand work to (the helper's `--team`): the
   /// active one in Serein's run, a hand-off's target in its own. The host checks again on every call.
-  public static let teamNames: Set<String> = ["assistant_handoff", "channel_say"]
+  public static let teamNames: Set<String> = ["assistant_handoff", "channel_say", "swarm_start"]
+  /// One task to up to three seats of the caller, each on a different model (`Swarm`).
+  public static var swarmStartTool: [String: Any] {
+    [
+      "name": "swarm_start",
+      "description": "Work that needs more hands or a second opinion, not a new specialist: up to 3 seats of you work on the same task at once, each on a different model Serein picks by the usage each has left. It starts at once, with no card. The seats do not see this chat, so task is a brief: the goal, when it counts as done, and any file, page or note they need. When every seat is back you get one turn with all their answers, labelled by model, and write the one answer; a seat's words never post in the chat. count: how many seats, 1 to 3 (default 3); fewer models free means fewer seats. A result with carry_on started nothing: do what its words say, and never ask the person.",
+      "inputSchema": [
+        "type": "object",
+        "properties": ["task": ["type": "string"], "count": ["type": "integer", "minimum": 1, "maximum": 3]],
+        "required": ["task"], "additionalProperties": false,
+      ],
+    ]
+  }
   /// The chat's one channel: any assistant posts there and tags others by name, who each take a
   /// turn there (`GroupTurn`).
   public static var channelSayTool: [String: Any] {

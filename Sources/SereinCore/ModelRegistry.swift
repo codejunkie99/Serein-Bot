@@ -22,11 +22,20 @@ public struct ModelRegistry: Equatable, Sendable {
     public var remaining: Remaining
     /// Tokens the provider's own reports counted for Serein in the last `UsageTally.spendLife`.
     public var tokens5h: Int
-    public init(route: ModelRoute, provider: String, remaining: Remaining, tokens5h: Int = 0) {
+    /// The same, for this model alone (`UsageTally.modelKey`).
+    public var modelTokens5h: Int
+    public init(route: ModelRoute, provider: String, remaining: Remaining, tokens5h: Int = 0, modelTokens5h: Int = 0) {
       self.route = route
       self.provider = provider
       self.remaining = remaining
       self.tokens5h = tokens5h
+      self.modelTokens5h = modelTokens5h
+    }
+    /// The share left that orders a pick: its provider's own count, or all of it while nothing
+    /// said otherwise (a plan publishes no count until it refuses).
+    var left: Double {
+      if case .fraction(let share) = remaining { return share }
+      return 1
     }
   }
   public struct Need: Equatable, Sendable {
@@ -58,19 +67,23 @@ public struct ModelRegistry: Equatable, Sendable {
       if let until = limited[route.provider], until > now {
         if case .limited(let counted) = remaining { remaining = .limited(until: max(counted, until)) } else { remaining = .limited(until: until) }
       }
-      return Row(route: route, provider: who, remaining: remaining, tokens5h: tally.tokens(who, now: now))
+      return Row(route: route, provider: who, remaining: remaining, tokens5h: tally.tokens(who, now: now),
+                 modelTokens5h: tally.tokens(UsageTally.modelKey(who, route.model), now: now))
     })
   }
 
   /// Up to `width` routes (at most `widthCap`) for seats that run side by side, never one route
   /// twice. It keeps routes that can answer now, meet `need`, and are neither limited nor out of
-  /// usage; orders them free, then a plan, then a route that bills each use, then fewest tokens
-  /// spent lately, keeping the rows' order otherwise; and takes one route per provider before a
-  /// second from any, and at most `perProvider` from one. Fewer usable routes than asked returns fewer.
+  /// usage; orders them free, then a plan, then a route that bills each use, then most usage left,
+  /// then fewest tokens spent lately by the provider and then by the model, keeping the rows'
+  /// order otherwise; and takes one route per provider before a second from any, and at most
+  /// `perProvider` from one. Fewer usable routes than asked returns fewer.
   public func pick(need: Need, width: Int) -> [ModelRoute] {
     let wanted = min(max(width, 0), Self.widthCap)
     let ordered = rows.filter { $0.usable(need) }.enumerated().sorted {
-      (Self.costRank($0.element.route), $0.element.tokens5h, $0.offset) < (Self.costRank($1.element.route), $1.element.tokens5h, $1.offset)
+      let (a, b) = ($0.element, $1.element)
+      return (Self.costRank(a.route), -a.left, a.tokens5h, a.modelTokens5h, $0.offset)
+        < (Self.costRank(b.route), -b.left, b.tokens5h, b.modelTokens5h, $1.offset)
     }.map(\.element)
     var picked: [Row] = []
     var providers: Set<String> = []
@@ -139,6 +152,8 @@ public struct UsageTally: Codable, Equatable, Sendable {
     entry.spent = entry.spent.filter { at.timeIntervalSince($0.at) < Self.spendLife } + [Spend(tokens: tokens, at: at)]
     entries[provider] = entry
   }
+  /// The key one model's spend is kept under, beside its provider's (`noteSpent`).
+  public static func modelKey(_ provider: String, _ model: String) -> String { provider + "|" + model }
   public func tokens(_ provider: String, now: Date) -> Int {
     (entries[provider]?.spent ?? []).filter { $0.at <= now && now.timeIntervalSince($0.at) < Self.spendLife }.reduce(0) { $0 + $1.tokens }
   }

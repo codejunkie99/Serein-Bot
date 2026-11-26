@@ -8,10 +8,10 @@ import SereinCore
 /// is free. Side seats share the delegated-run cap; past it the message says so and runs when a
 /// seat frees.
 extension RelayOrchestrator {
-  /// Side seats running or starting, plus delegated runs working, are under the cap.
+  /// Side seats and swarm seats running or starting, plus delegated runs working, are under the cap.
   var sideSeatFree: Bool {
     let seated = handoffLedger.records.filter {
-      $0.side != nil && ($0.state == .running || ($0.state == .waiting && handoffsStarting.contains($0.threadID)))
+      $0.side?.takesSeat == true && ($0.state == .running || ($0.state == .waiting && handoffsStarting.contains($0.threadID)))
     }
     return SideSeat.free(seated: seated.count, delegated: liveTasks)
   }

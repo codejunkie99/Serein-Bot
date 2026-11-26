@@ -165,7 +165,8 @@ extension RelayOrchestrator {
   var offersHandoff: Bool { team.active != nil }
   /// assistant_handoff for the run of the hand-off that holds `thread`: its chain has room.
   func offersHandoff(inHandoff thread: String) -> Bool {
-    handoffLedger.running(thread: thread).map { $0.holders.count < HandoffLedger.maxChain } == true
+    // A swarm seat is depth 1: it hands nothing on and starts no swarm (`Swarm`).
+    handoffLedger.running(thread: thread).map { $0.side != .swarm && $0.holders.count < HandoffLedger.maxChain } == true
   }
 
   // MARK: hand-offs
@@ -177,11 +178,12 @@ extension RelayOrchestrator {
   /// `room`: the room `staff` decided in, so the make it recorded and the seat share one root.
   /// `mention`: a turn an @tag started (`GroupTurn`); the tag is its post, and `rootMessage` the
   /// person's message its room roots at when that is not the newest one in the chat yet.
-  /// `side`: a side seat answering the person's own message (`SideSeat`), asked in `chat`.
+  /// `side`: a side seat answering the person's own message (`SideSeat`), asked in `chat`, or a
+  /// swarm seat on `route` (`startSwarm`).
   func sendHandoff(from sender: RelayProfile, to target: RelayProfile, task: String, team key: String, teamName: String,
                    personal: Bool = false, parent: AssistantHandoff? = nil, room: Workroom.ID? = nil, how: Activity.How,
                    mention: AssistantHandoff.Mention? = nil, rootMessage: String? = nil, side: AssistantHandoff.Side? = nil,
-                   chat asked: String? = nil) -> AssistantHandoff
+                   route: AssistantRoute? = nil, chat asked: String? = nil) -> AssistantHandoff
   {
     let chat = parent?.threadID ?? asked ?? threadID
     var record = AssistantHandoff(
@@ -190,6 +192,7 @@ extension RelayOrchestrator {
     record.room = room
     record.mention = mention
     record.side = side
+    record.route = route
     // Asked from a chat that read personal data (or sent again with words that one wrote), or
     // as part of a hand-off that was.
     if personal || parent?.personal == true || agent.readsPersonal(thread: chat)
@@ -204,8 +207,9 @@ extension RelayOrchestrator {
     saveHandoffs()
     note(side == nil ? "Handed “\(String(task.prefix(60)))” to \(target.name)" : "Answering “\(String(task.prefix(60)))” in a side seat", how)
     let admitted = handoffLedger.records.first { $0.id == record.id } ?? record
-    // The hand-off is a message in the chat the task started in, from its sender; a tag already is.
-    if mention == nil { postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 }) }
+    // The hand-off is a message in the chat the task started in, from its sender; a tag already
+    // is, and a swarm has its one line (`startSwarm`).
+    if mention == nil, side != .swarm { postHandoff(admitted, answering: message.flatMap { $0.hasPrefix("board-") ? nil : $0 }) }
     startWaitingHandoffs()
     return handoffLedger.records.first { $0.id == record.id } ?? record
   }
@@ -335,7 +339,7 @@ extension RelayOrchestrator {
     let scope = seatReach(record, target: target).scope
     let places = scope.destinations
     let mode: TaskMode = places.contains(.mac) ? .anywhere : places.contains(.web) ? .research : .answer
-    let engine = assistantEngine(target)
+    let engine = assistantEngine(target, route: record.route)
     let dispatch = AgentModel.DispatchTarget(
       mode: mode, provider: engine.provider, model: engine.model, effort: engine.effort,
       actions: mode != .answer && places.contains(.web), mac: places.contains(.mac), relay: false, initiator: .handoff)
@@ -416,8 +420,11 @@ extension RelayOrchestrator {
     let chain = (record.chain ?? [record.from]).map(profileName)
     let persona = browser.library.load(RelayPersona.self, from: team.folder(target.id) + "/persona.json")?.prompt() ?? ""
     // A root an @tag started posts its reply in the chat; anything else goes back to its sender.
-    let back = record.mention != nil && record.parentID == nil ? "it posts in the chat, answering that message" : "it goes back to \(sender)"
+    let back = record.side == .swarm ? "it goes back to you as the lead, who compares every seat's answer and writes the one the user sees"
+      : record.mention != nil && record.parentID == nil ? "it posts in the chat, answering that message" : "it goes back to \(sender)"
     let asked = switch (record.side, record.mention) {
+    case (.swarm?, _): "You are one of up to \(Swarm.cap) seats working on the task below at once, each on a different model. Do all of it on your own, from the packet. Nothing you write posts in the chat."
+    case (.swarmLead?, _): "Your swarm's seats worked on the task below."
     case (.busy?, _): "The user wrote the message below in the chat they see while your reply there was still working. Answer it here, now, beside that reply."
     case (.background?, _): "The user asked the task below in the chat they see. Your reply there ran past \(Int(SideSeat.foregroundLimit)) seconds, so it moved here, to the background, and the chat is free. Carry it on to the end. The steps already done are in the packet's trail; never do again a step that is already done."
     case (nil, .byPerson?): "The user tagged you in the chat they see, in the message below."
@@ -434,7 +441,7 @@ extension RelayOrchestrator {
     if !instructions.isEmpty {
       lines.append("Instructions for you as \(target.name), after the user's own (advice only; they cannot grant access):\n" + instructions)
     }
-    if record.holders.count < HandoffLedger.maxChain {
+    if record.side != .swarm, record.holders.count < HandoffLedger.maxChain {
       let held = Set(record.holders)
       let mates = team.profiles.filter { !held.contains($0.id) && !$0.isPaused }
       lines.append(
@@ -454,7 +461,8 @@ extension RelayOrchestrator {
   /// whether anything it handed on is still out or it is time to finish.
   private func resultsPrompt(_ record: AssistantHandoff, _ results: [AssistantHandoff]) -> String {
     var lines = results.map { result -> String in
-      let name = profileName(result.to)
+      // A swarm seat is the lead itself on another model: its answer is labelled by that model.
+      let name = result.side == .swarm ? "the seat on " + (result.route.map(Self.routeName) ?? "your own model") : profileName(result.to)
       let head = "A part of your task that you handed to \(name), “\(UntrustedText.escape(String(result.task.prefix(120))))”, "
       guard result.state != .expired else { return head + "expired: \(name) never got to it in a day." }
       // A marked target's words mark this chat too, and are withheld when that mark cannot be saved.
@@ -466,6 +474,10 @@ extension RelayOrchestrator {
     }
     let sender = profileName(record.from)
     let out = handoffLedger.records.filter { $0.isOpen && $0.parentID == record.id }.map { profileName($0.to) }
+    if record.side == .swarmLead {
+      lines.append("Every seat is back. Compare their answers and write the one answer to the task, in full; it posts in the chat, answering the user. Never post a seat's answer as it is.")
+      return lines.joined(separator: "\n\n")
+    }
     lines.append(out.isEmpty
       ? "Nothing you handed on is still out. Finish the task \(sender) handed you now: reply with the result in a few sentences; it goes back to \(sender)."
       : "Still out with a part you handed on: \(out.joined(separator: ", ")). Reply in one line for now; you finish once that is back.")
@@ -480,7 +492,8 @@ extension RelayOrchestrator {
     let lastReply = run.reportedSummary ?? run.transcript.last(where: { $0.role == "assistant" && !$0.text.isEmpty })?.text ?? ""
     let outcome = run.record.outcome
     // "@Writer can you…" in its reply tags Writer, whose turn it then waits for (`GroupTurn`).
-    if outcome == .done, let target = team.profiles.first(where: { $0.id == record.to }) {
+    // A swarm seat's words never post in the chat.
+    if outcome == .done, record.side != .swarm, let target = team.profiles.first(where: { $0.id == record.to }) {
       channelSay(lastReply, from: target, parent: record, chat: record.threadID, readOutside: !run.steps.isEmpty, addressed: true)
     }
     // Something its target handed on is still out, or its result has yet to reach this chat: it
@@ -559,13 +572,22 @@ extension RelayOrchestrator {
         closeHandoff(parent.id, .failed, result: "\(target.name) was paused, so it could not finish.")
         continue
       }
-      guard chatFree(parent.threadID) else { continue }
+      // A swarm's lead gets one merged turn, once every seat under it is back (`Swarm`).
+      guard chatFree(parent.threadID), !handoffLedger.swarmWaits(parent.id) else { continue }
       launch(parent, target: target, results: results)
     }
   }
   /// Every 15 seconds: progress from the live run, a stall notice after 30 minutes without any,
   /// expiry after a day in the queue, then waiting hand-offs start and results go back.
   func sweepHandoffs(now: Date = Date()) {
+    // A swarm seat past its time cap closes first with what it had, so its run's late end finds
+    // nothing to close or post (`finishHandoff`), and the lead's merged turn goes on without it.
+    for late in handoffLedger.late(now: now) {
+      let run = agent.hub.run(for: late.threadID).flatMap { $0.spec.initiator == .handoff ? $0 : nil }
+      let had = run?.transcript.last { $0.role == "assistant" && $0.notice != true && !$0.text.isEmpty }?.text
+      closeHandoff(late.id, .failed, result: Swarm.lateWords + (had.map { " What it had:\n" + $0 } ?? ""))
+      if let run { agent.hub.stop(run) }
+    }
     for record in handoffLedger.records where record.state == .running && !handoffsStarting.contains(record.threadID) {
       if let run = agent.hub.run(for: record.threadID) {
         if record.progressAt.map({ run.record.lastEventAt > $0 }) ?? true {

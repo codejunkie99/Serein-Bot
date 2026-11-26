@@ -39,6 +39,8 @@ extension RelayOrchestrator {
   @discardableResult
   func postReport(_ record: AssistantHandoff) -> Bool {
     guard !record.isOpen else { return false }
+    // A swarm seat's words never post: its lead's one merged answer does, as that lead's reply.
+    if record.side == .swarm { return true }
     let origin = originChat(record)
     // A side seat answers the person's message, which a quit may have lost from a busy chat: it
     // goes in first, under its own id, so the answer has its question.
@@ -74,7 +76,7 @@ extension RelayOrchestrator {
 
   /// A decision or a question a seat noted for the team, about its hand-off's post.
   func postNote(_ note: RoomNote, room: Workroom.ID, record: AssistantHandoff) {
-    guard note.kind == .decision || note.kind == .ask else { return }
+    guard note.kind == .decision || note.kind == .ask, record.side != .swarm else { return }
     let origin = originChat(record)
     var post = AgentMessage(role: "assistant", text: "", notice: true)
     post.id = "room-note-\(room)-\(note.seq)"

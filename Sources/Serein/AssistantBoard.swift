@@ -328,10 +328,11 @@ extension RelayOrchestrator {
   /// `RelayToolHost.modelAndEffort`); else Serein's own (Settings › Assistants › Default AI app) at its
   /// default model. Its Main chat, hand-offs to it, its turns of speaking first and the tasks it
   /// starts without naming an AI app all use this.
-  func assistantEngine(_ profile: RelayProfile?) -> (provider: Provider, model: String, effort: String) {
+  /// `route`: a swarm seat's own, picked from the registry, in place of the assistant's.
+  func assistantEngine(_ profile: RelayProfile?, route seat: AssistantRoute? = nil) -> (provider: Provider, model: String, effort: String) {
     // No route of its own: it thinks as Serein does (`RelayTeam.route(of:)`), so an assistant never
     // lands on an AI app nobody chose (Claude Code first by default, even when it is signed out).
-    if let route = profile.flatMap(team.route(of:)) {
+    if let route = seat ?? profile.flatMap(team.route(of:)) {
       let chosen = Provider(rawValue: route.provider)
       // A route refused now (signed out, a version gate) stays: its turn fails closed at send with
       // that reason, never moved silently onto Serein's engine, which could change who pays.

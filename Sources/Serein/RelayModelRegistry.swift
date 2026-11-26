@@ -7,7 +7,7 @@ extension RelayOrchestrator {
   static let usageTallyFile = "relay/usage-tally.json"
 
   /// Every route the AI apps list, as the model list builds them, with what each provider's own
-  /// signals said about its usage. Nothing picks from it yet.
+  /// signals said about its usage. A swarm picks its seats' models from it (`swarmRoutes`).
   func modelRegistry(now: Date = Date()) -> ModelRegistry {
     let routes = Provider.allCases.flatMap { provider in
       agent.routes(provider, models: HarnessRegistry.shared.models(provider).filter { !$0.isLegacy }.map(\.id))
@@ -31,7 +31,11 @@ extension RelayOrchestrator {
   func tallyUsage(_ run: AgentRun, now: Date = Date()) {
     let provider = Self.usageProvider(run.spec.provider, model: run.spec.model)
     if let share = run.usageLeft { usageTally.noteLeft(provider, share, at: now) }
-    if let tokens = run.record.tokens ?? run.reportedContext { usageTally.noteSpent(provider, tokens, at: now) }
+    // Against the provider and against the model, so a swarm's seats on one provider part.
+    if let tokens = run.record.tokens ?? run.reportedContext {
+      usageTally.noteSpent(provider, tokens, at: now)
+      usageTally.noteSpent(UsageTally.modelKey(provider, run.spec.model), tokens, at: now)
+    }
     run.usageLeft = nil
     run.reportedContext = nil
     if let limit = run.usageLimit { usageTally.noteLimited(provider, limit, at: now) }

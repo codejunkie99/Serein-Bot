@@ -677,9 +677,17 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
 
   /// A side seat (`SideSeat`): the person's own message to its chat's assistant, answered in a
   /// hidden seat beside a busy turn (`busy`) or carried on from a turn that ran long
-  /// (`background`). `from` and `to` are that assistant, and the seat holds it once. nil for a hand-off.
+  /// (`background`). A swarm (`Swarm`): one seat of it on its own model (`swarm`), and the row
+  /// that holds its seats for the lead's one merged turn (`swarmLead`). `from` and `to` are that
+  /// assistant, and the seat holds it once. nil for a hand-off.
   public var side: Side? = nil
-  public enum Side: String, Codable, Sendable { case busy, background }
+  public enum Side: String, Codable, Sendable {
+    case busy, background, swarm, swarmLead
+    /// Its run takes one of `SideSeat.cap`. A swarm's lead row only waits for its seats.
+    public var takesSeat: Bool { self != .swarmLead }
+  }
+  /// The model a swarm seat runs on, picked by `Swarm.routes`; nil runs on its target's own.
+  public var route: AssistantRoute? = nil
   /// Its report post is owed to the origin chat (false) or is there (true). nil in older ledgers
   /// and while it is open; only a row that closes owes one, so an old row is never posted again.
   public var posted: Bool? = nil
@@ -759,6 +767,15 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
   /// those has reached its chat.
   public func closable(_ id: String) -> Bool {
     !records.contains { $0.parentID == id && ($0.isOpen || $0.reported != true) }
+  }
+  /// Whether `id`'s results still wait for a swarm seat under it, so its one merged turn has
+  /// every seat's answer (`Swarm`).
+  public func swarmWaits(_ id: AssistantHandoff.ID) -> Bool {
+    records.contains { $0.parentID == id && $0.side == .swarm && $0.isOpen }
+  }
+  /// Swarm seats running past `Swarm.timeCap`: the sweep closes each with what it had.
+  public func late(now: Date) -> [AssistantHandoff] {
+    records.filter { $0.side == .swarm && $0.state == .running && now.timeIntervalSince($0.startedAt ?? $0.createdAt) >= Swarm.timeCap }
   }
   /// Whether `a` holds its chat for `b`: part of a task `a` was handed is open with `b`, or with
   /// someone who holds theirs for `b`. A hand-off back the other way would never start.
