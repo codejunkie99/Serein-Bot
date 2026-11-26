@@ -1,6 +1,15 @@
 import Foundation
 
-/// The pinned driver provides screen, input and accessibility services inside the Linux guest.
+/// Cua Driver (trycua/cua, libs/cua-driver, MIT, Copyright (c) 2025 Cua AI, Inc.): the screen,
+/// input and accessibility engine Serein can use inside its built-in computer. Serein ships one
+/// release of it, unmodified, pinned here; nothing else of Cua is used. The binary runs only in
+/// the Linux guest, never on this Mac. Licence: docs/licenses/Cua-MIT.txt, and the driver's own
+/// notices beside the binary (`Computer/cua-driver-notices.md`).
+///
+/// Trademarks: "Cua" and "Cua Driver" are trademarks of Cua AI, Inc. (cua/legal/TRADEMARKS.md).
+/// Serein calls the binary Cua Driver only while it is the unmodified release pinned below; a
+/// changed or rebuilt binary must get another name, and Serein never names its own features
+/// after Cua.
 public enum CuaDriverRelease {
   /// The release, from GitHub's public release data (tag `cua-driver-rs-v0.53.2`, published
   /// 2026-11-18). Its `SHA256SUMS` lists each `archiveSHA256`; the other digests are of the files
@@ -10,7 +19,7 @@ public enum CuaDriverRelease {
   public static let tag = "cua-driver-rs-v0.53.2"
   public static let archive = "cua-driver-rs-0.53.2-linux-arm64.tar.gz"
   public static let archiveSHA256 = "2f74b07519f9a148ecaee62e80a4bd41dd328c8901728f87d87e5bce070f1c4e"
-  /// Top-level folder in the driver archive.
+  /// The folder at the top of the archive; the binary, `LICENSE` and `THIRD_PARTY_NOTICES.md` are in it.
   public static let archiveFolder = "cua-driver-rs-0.53.2-linux-arm64"
   public static let binarySHA256 = "b15c1c7300865b6b7033652872a3dfd3b54f14db12714ce7cd0fb0fb18a35df5"
   public static let amd64Archive = "cua-driver-rs-0.53.2-linux-x86_64.tar.gz"

@@ -8,7 +8,17 @@ import Foundation
 
 // MARK: - Paced reveal
 
-/// Reveals text in character increments to keep grapheme clusters intact.
+/// A streaming reply arrives in bursts: nothing for a moment, then a sentence at once. Drawn as it
+/// arrives, it reads as stuttering. Revealed at a steady pace a little behind what has arrived, it
+/// reads as being written. The pace has a floor, so a slow stream still moves, and a catch-up
+/// budget, so a big burst is worked off in well under a second.
+///
+/// It reveals a word at a time: a prefix ends at the end of the text or just before a space, and
+/// while the stream goes on it stops short of the last word, which can be half sent, until the
+/// text has not grown for `tailSettles` seconds.
+///
+/// Counts are in characters
+/// (`Character`), so an emoji or an accented letter is never cut in two.
 public enum PacedReveal {
   /// The slowest the reveal goes, so a trickle of text still moves.
   public static let minCharactersPerSecond: Double = 90

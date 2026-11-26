@@ -1,3 +1,5 @@
+// Adapted from terminal-mac (MIT), Copyright (c) 2026 Govijr.
+// See docs/THIRD_PARTY_NOTICES.md.
 import Foundation
 import Darwin
 

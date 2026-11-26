@@ -1,6 +1,10 @@
 import Foundation
 
-/// Tools for running tasks and managing notes and reminders.
+/// Relay: the assistant summoned from anywhere on the Mac (⌥Space). It is one long-lived Anywhere
+/// run of the user's chosen harness that orchestrates the rest of Serein: it starts, watches and
+/// stops other agent runs, works in task tabs, operates Mac apps, and keeps the user's notes and
+/// reminders. Stop words, follow-up steering, sourced notes and reminder schedules are ported code;
+/// see docs/THIRD_PARTY_NOTICES.md. Everything here is pure, so it is checked in SereinChecks.
 public enum RelayTools {
   /// Where `agent_start` sends a task: a known project folder, isolated web tabs, Mac apps, a
   /// plain answer, or `here`: the tab the user's own message carried (“do it here”), only after

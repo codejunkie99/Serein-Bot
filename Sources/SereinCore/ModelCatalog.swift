@@ -1,6 +1,7 @@
 import Foundation
 
-/// Model capabilities displayed in the picker.
+/// What the picker shows beside a model: from models.dev (MIT, bundled as Catalog/models-dev.json
+/// with its license; THIRD_PARTY_NOTICES.md).
 public struct ModelFacts: Codable, Equatable, Sendable {
   public var tools: Bool
   public var vision: Bool

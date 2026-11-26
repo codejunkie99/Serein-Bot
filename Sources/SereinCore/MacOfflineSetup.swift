@@ -26,6 +26,8 @@ public enum MacOfflineSetup {
      "StandardErrorPath": home + "/Library/Application Support/Serein/connection.log"]
   }
 
+  // macOS's autologin format, also documented in Lume's MIT offline setup implementation.
+  // Pad before XOR, including a terminator when the password is a multiple of 12 bytes.
   public static func loginPassword(_ password: String) -> Data {
     let key: [UInt8] = [0x7d, 0x89, 0x52, 0x23, 0xd2, 0xbc, 0xdd, 0xea, 0xa3, 0xb9, 0x1f]
     var bytes = Array(password.utf8)

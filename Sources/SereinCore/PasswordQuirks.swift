@@ -1,6 +1,7 @@
 import Foundation
 
-/// Site-specific password rules for pages without a passwordrules attribute.
+/// Per-site password rules from Apple's password-manager-resources (`quirks/password-rules.json`,
+/// MIT). Used by the generator when a page has no `passwordrules` attribute of its own.
 public struct PasswordQuirks: Sendable {
   private let rules: [String: String]
 

@@ -50,6 +50,8 @@ public enum MacComputerPolicy {
   }
 }
 
+// The flat guest protocol is adapted from terminal-mac (MIT), Copyright (c) 2026 Govijr.
+// See docs/THIRD_PARTY_NOTICES.md. Values are strings; no executable host response is accepted.
 public struct MacGuestFailure: LocalizedError {
   public let message: String
   public init(_ message: String) { self.message = message }
