@@ -2538,6 +2538,11 @@ struct RelayPanelView: View {
       .textFieldStyle(.plain).font(AssistantType.body).lineLimit(1...6).focused($focused)
       .padding(.vertical, 12)
       .frame(minHeight: AssistantMetrics.barHeight)
+      // The text itself is one 16-point line in the 44-point bar: the rest of the bar between ＋
+      // and Send shows the text cursor too, and a click there puts the caret at the draft's end.
+      .contentShape(Rectangle())
+      .onTapGesture { focusFieldAtEnd() }
+      .textInputCursor()
       .onSubmit { send(interrupt: false) }
       .shiftReturnNewLine()
       .onKeyPress(keys: [.return], phases: .down) { press in
@@ -2578,6 +2583,16 @@ struct RelayPanelView: View {
         if docked { mentions.update(relay: relay, draft: surface.draft, focused: now, states: assistantStates) }
       }
       .onDisappear { if docked { mentions.close() } }
+  }
+  /// A click in the bar around the field: the field takes the keyboard with the caret after the
+  /// draft, not the whole draft selected (as focusing a field does), so typing never replaces it.
+  private func focusFieldAtEnd() {
+    guard !focused else { return }
+    focused = true
+    DispatchQueue.main.async {
+      guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+      editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+    }
   }
   /// + : in the window, the list of what to add or go to (ComposerAddList.swift; "@" at the start
   /// of an empty draft opens it too); the floating panel keeps Attach a File… and Add an App….
@@ -2972,15 +2987,22 @@ enum ChatTurns {
   static func draws(_ index: Int, in shown: [AgentMessage]) -> Bool {
     let message: AgentMessage = shown[index]
     if message.condensed != nil { return true }
-    if let line = message.line, !line.isEmpty { return true }
-    if message.role == "you", let automatic = RelayAutomatic.kind(of: message.text) {
-      // Serein speaking first has no line: its reply is the first thing the turn draws.
-      guard RelayAutomatic.showsLine(automatic) else { return false }
+    if let line = message.line, !line.isEmpty { return !RoutineRuns.isBriefFailure(line) }
+    if message.role == "you", let kind = RelayAutomatic.kind(of: message.text) {
+      guard RelayAutomatic.showsLine(kind) else { return false }
       let next: AgentMessage? = index + 1 < shown.count ? shown[index + 1] : nil
       return !(next.map { $0.role == "assistant" && RelayAutomatic.isQuiet(reply: $0.text) } ?? false)
     }
     if message.role == "assistant", RelayAutomatic.hidesReply(message, after: shown[..<index]) { return false }
     return message.role == "you" || RelayMessages.drawsReply(message)
+  }
+  /// When the message drawn last before `index` was sent, for the time divider: rows that draw
+  /// nothing (a check-in's prompt, a hidden reply) never move it. The message just before when
+  /// none before it draws.
+  static func lastDrawnTime(before index: Int, in shown: [AgentMessage]) -> Date? {
+    guard index > 0 else { return nil }
+    let drawn: Int? = (0..<index).last { draws($0, in: shown) }
+    return shown[drawn ?? index - 1].sentAt
   }
 }
 
@@ -3003,6 +3025,15 @@ extension RelayAutomatic {
     if RelayProactive.isNothing(message.text) { return true }
     guard isQuiet(reply: message.text), let asked = earlier.last(where: { $0.role != "assistant" }) else { return false }
     return kind(of: asked.text) != nil
+  }
+  /// The item a reply's ⋯ menu gains when Serein spoke first, in the line's place: the way to
+  /// where the brief or the check-ins are turned off. nil for a turn that keeps its line.
+  static func settingsTitle(_ kind: Kind) -> String? {
+    switch kind {
+    case .brief: return "Daily brief settings…"
+    case .checkIn, .attention: return "Check-in settings…"
+    case .scheduled, .goal, .alert, .webhook, .macAccess: return nil
+    }
   }
 }
 
@@ -3295,7 +3326,10 @@ private struct RelayMessages: View {
       UnreadLine().onAppear { SereinSessions.shared.attach(relay: relay) }
       AwaySummaryCard(relay: relay, firstUnreadAt: message.sentAt, goToCard: goToCard)
     }
-    if MessageTimeline.startsGroup(message.sentAt, after: index > 0 ? layout.shown[index - 1].sentAt : nil), let at = message.sentAt {
+    if ChatTurns.draws(index, in: layout.shown),
+      MessageTimeline.startsGroup(message.sentAt, after: ChatTurns.lastDrawnTime(before: index, in: layout.shown)),
+      let at = message.sentAt
+    {
       MessageTimeLine(at: at)
     }
     messageBody(message, index: index, next: next, layout: layout)
@@ -3318,13 +3352,14 @@ private struct RelayMessages: View {
                        undo: undoCondense == nil ? nil : { undoCondense?(message.id) })
     } else if let line = message.line, !line.isEmpty {
       // Serein's own line: the centred capsule with the faces it names, a folded line that opens
-      // to its words, or a warning about an assistant's held-back answer.
-      HostLineView(message: message, profiles: profiles)
+      // to its words, or a warning about an assistant's held-back answer. Never the brief's failure.
+      if !RoutineRuns.isBriefFailure(line) { HostLineView(message: message, profiles: profiles) }
     } else if message.role == "you", let automatic = RelayAutomatic.kind(of: message.text) {
-      // Serein started this turn itself: never the prompt. A check-in or the brief is just its
-      // next message; any other turn says what started it and why. Nothing at all when it had
-      // nothing to say.
-      if !quiet, RelayAutomatic.showsLine(automatic) { AutomaticTurnLine(prompt: message.text, kind: automatic).padding(.top, 4) }
+      // Serein started this turn itself: what started it and why, never the prompt; nothing at
+      // all when it had nothing to say, or when Serein spoke first (its message comes in alone).
+      if !quiet && RelayAutomatic.showsLine(automatic) {
+        AutomaticTurnLine(prompt: message.text, kind: automatic).padding(.top, 4)
+      }
     } else if message.role == "assistant", RelayAutomatic.hidesReply(message, after: layout.shown[..<index]) {
       EmptyView()
     } else if message.role == "you" {

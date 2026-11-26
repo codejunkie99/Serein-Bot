@@ -2,9 +2,8 @@ import Foundation
 
 /// A message Serein wrote to itself to start a turn nobody typed: a check-in, the brief, a run
 /// that needs attention, a scheduled request, a goal check, an alert's change or a webhook. Each
-/// is recognised by the fixed first words of its own template. The chat never shows the prompt:
-/// a check-in or the brief reads as Serein's next message, any other turn has a short line saying
-/// what started it and why (`showsLine`), and note learning leaves it out: it is not the
+/// is recognised by the fixed first words of its own template. The chat shows a short line saying
+/// what started the turn and why, never the prompt, and note learning leaves it out: it is not the
 /// person's words, and parts of it (a webhook's body, a watched page, a goal's findings) are
 /// untrusted. Everything here is pure, so it is checked in AutomaticTurnChecks.
 public enum RelayAutomatic {
@@ -29,6 +28,16 @@ public enum RelayAutomatic {
     return nil
   }
 
+  /// Whether the chat shows the turn's line. A check-in, the brief and “needs attention” are
+  /// Serein speaking first, so its message comes in on its own, as a text would. The rest name the
+  /// person's own request, alert or goal, or an outside sender whose words are untrusted, and keep it.
+  public static func showsLine(_ kind: Kind) -> Bool {
+    switch kind {
+    case .checkIn, .brief, .attention: return false
+    case .scheduled, .goal, .alert, .webhook, .macAccess: return true
+    }
+  }
+
   /// The line the chat shows in the prompt's place: what started the turn, in the person's terms
   /// (“Your scheduled request: “Check my inbox””). nil for the person's own messages.
   public static func label(_ text: String) -> String? {
@@ -42,27 +51,6 @@ public enum RelayAutomatic {
     case .alert: return "Your alert" + quoted(between(RelayWatch.changeLead, "” changed.", in: text)) + " changed"
     case .webhook: return "A webhook arrived" + (between("Source: ", ".\n", in: text).map { " from \(String($0.prefix(60)))" } ?? "")
     case .macAccess: return MacAccessWait.line
-    }
-  }
-
-  /// Whether the chat draws a line where this turn began. Serein speaking first (a check-in, the
-  /// brief, something it noticed) reads as its next message, with nothing above it. A turn that
-  /// something of the person's set off keeps its line: the reply answers words the chat never
-  /// shows, and a webhook's or a watched page's are untrusted.
-  public static func showsLine(_ kind: Kind) -> Bool {
-    switch kind {
-    case .checkIn, .brief, .attention: return false
-    case .scheduled, .goal, .alert, .webhook, .macAccess: return true
-    }
-  }
-
-  /// The item a reply's ⋯ menu gains when Serein spoke first, in the line's place: the way to
-  /// where the brief or the check-ins are turned off. nil for a turn that keeps its line.
-  public static func settingsTitle(_ kind: Kind) -> String? {
-    switch kind {
-    case .brief: return "Daily brief settings…"
-    case .checkIn, .attention: return "Check-in settings…"
-    case .scheduled, .goal, .alert, .webhook, .macAccess: return nil
     }
   }
 

@@ -15,11 +15,13 @@ import UniformTypeIdentifiers
     var parts = ["# \(title)", "Exported from Serein on \(date.formatted(date: .long, time: .shortened))."]
     for (index, message) in messages.enumerated() {
       // As the chat shows them: a check-in with nothing to say is hidden, and a prompt Serein
-      // wrote to itself is its short label, never words under “You”.
+      // wrote to itself is its short label, never words under “You”; no label when Serein spoke
+      // first (a check-in, the brief), whose reply stands alone.
       if message.role == "assistant" && RelayAutomatic.hidesReply(message, after: messages[..<index]) { continue }
-      if message.role == "you", let label = RelayAutomatic.label(message.text) {
+      if message.role == "you", let kind = RelayAutomatic.kind(of: message.text), let label = RelayAutomatic.label(message.text) {
         let next = index + 1 < messages.count ? messages[index + 1] : nil
         if let next, next.role == "assistant" && RelayAutomatic.isQuiet(reply: next.text) { continue }
+        guard RelayAutomatic.showsLine(kind) else { continue }
         parts.append("*\(label)*")
         continue
       }

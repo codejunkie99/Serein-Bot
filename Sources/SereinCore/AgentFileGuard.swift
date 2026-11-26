@@ -460,6 +460,13 @@ public enum AgentFileGuard {
   /// hold other tools' settings and data; another tool's link in bin stays closed, as its target
   /// is not readable. A top-level folder, the home folder or one that holds it (a plain
   /// ~/bin/codex) would open the user's files to the model's shell commands: then the file alone.
+  ///
+  /// A link met on the way that sits inside the install, above the file it runs, opens its folder
+  /// too: Codex's own installer (0.172) reaches `releases/<version>/bin/codex` through the link
+  /// `~/.codex/packages/standalone/current`, and with that folder closed Codex cannot start itself
+  /// ("failed to load AGENTS.md instructions … execvp() … Operation not permitted"). Only that
+  /// install folder opens: the rest of ~/.codex (sign-in, sessions, history) stays denied, since a
+  /// nearer path's rule wins (checked with `codex sandbox` 0.172.0, 2026-11-25).
   public static func installPaths(_ executable: String) -> [String] {
     let given = URL(fileURLWithPath: executable)
     let linkFolder = given.deletingLastPathComponent().resolvingSymlinksInPath()
@@ -473,7 +480,44 @@ public enum AgentFileGuard {
     let target = safe(version) ? version.path : real.path
     let isLink = linkFolder.appendingPathComponent(given.lastPathComponent).path != real.path
     let linkOutside = !(linkFolder.path + "/").hasPrefix(target + "/")
-    return isLink && linkOutside && safe(linkFolder) ? [linkFolder.path, target] : [target]
+    var paths = isLink && linkOutside && safe(linkFolder) ? [linkFolder.path, target] : [target]
+    for folder in linkFolders(executable) where safe(folder) {
+      let path = folder.path
+      guard real.path.hasPrefix(path + "/"), !paths.contains(path), !(path + "/").hasPrefix(target + "/") else { continue }
+      paths.append(path)
+    }
+    return paths
+  }
+  /// The folder of each link met while following `executable` to its file, in their physical
+  /// spelling, the given link's own folder first. A link in the middle of a path counts: the
+  /// sandbox must read it to follow it.
+  static func linkFolders(_ executable: String) -> [URL] {
+    func normal(_ components: [String]) -> [String] {
+      var out = ["/"]
+      for part in components.dropFirst() where !part.isEmpty && part != "." {
+        if part == ".." { if out.count > 1 { out.removeLast() } } else { out.append(part) }
+      }
+      return out
+    }
+    var parts = normal(URL(fileURLWithPath: executable).pathComponents)
+    var folders: [URL] = []
+    var index = 1
+    var hops = 0
+    while index < parts.count, hops < 32 {
+      let prefix = NSString.path(withComponents: Array(parts[...index]))
+      guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: prefix) else {
+        index += 1
+        continue
+      }
+      hops += 1
+      let parent = Array(parts[..<index])
+      folders.append(URL(fileURLWithPath: NSString.path(withComponents: parent)).resolvingSymlinksInPath())
+      let rest = Array(parts[(index + 1)...])
+      let pieces = destination.split(separator: "/").map(String.init)
+      parts = normal((destination.hasPrefix("/") ? ["/"] : parent) + pieces + rest)
+      index = 1
+    }
+    return folders
   }
   public static func codexArguments(
     folder: URL, writable: Bool, attachments: [URL] = [], executable: String? = nil, privateRoots: [URL] = []

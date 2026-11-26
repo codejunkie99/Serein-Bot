@@ -157,6 +157,37 @@ extension SmokeTest {
       problem(reports([], type: "dangerFullAccess"), writable: true, opened: CodexChecks.profileWrites(writeProfile)) != nil,
       "Full access is refused at every level")
 
+    // Codex 0.172's own installer: ~/.local/bin/codex → ~/.codex/packages/standalone/current/bin/codex,
+    // with `current` a link to releases/<version>. The sandbox must read the folder that holds
+    // `current`, or Codex cannot start itself again to read AGENTS.md.
+    let install = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("serein-codex-install-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: install) }
+    let standalone = install.appendingPathComponent("codex-home/packages/standalone")
+    let release = standalone.appendingPathComponent("releases/0.172.0-aarch64-apple-darwin")
+    try FileManager.default.createDirectory(at: release.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    try Data().write(to: release.appendingPathComponent("bin/codex"))
+    try FileManager.default.createSymbolicLink(atPath: standalone.appendingPathComponent("current").path, withDestinationPath: release.path)
+    let localBin = install.appendingPathComponent("local-bin")
+    try FileManager.default.createDirectory(at: localBin, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      atPath: localBin.appendingPathComponent("codex").path, withDestinationPath: standalone.appendingPathComponent("current/bin/codex").path)
+    let opened = AgentFileGuard.installPaths(localBin.appendingPathComponent("codex").path)
+    try check(
+      Set(opened) == Set([localBin, release, standalone].map { $0.resolvingSymlinksInPath().path }),
+      "Codex's own install opens its link folder, its release and the folder holding `current`, nothing above")
+    // Homebrew: a relative link from bin into the Caskroom, with no link in between.
+    let brew = install.appendingPathComponent("brew")
+    let cask = brew.appendingPathComponent("Caskroom/codex/0.162.0")
+    try FileManager.default.createDirectory(at: cask, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: brew.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    try Data().write(to: cask.appendingPathComponent("codex-aarch64-apple-darwin"))
+    try FileManager.default.createSymbolicLink(
+      atPath: brew.appendingPathComponent("bin/codex").path, withDestinationPath: "../Caskroom/codex/0.162.0/codex-aarch64-apple-darwin")
+    try check(
+      Set(AgentFileGuard.installPaths(brew.appendingPathComponent("bin/codex").path))
+        == Set([brew.appendingPathComponent("bin"), cask].map { $0.resolvingSymlinksInPath().path }),
+      "A Homebrew link opens bin and its version folder as before, never all of Homebrew")
+
     // Probe reads version, sign-in and the person's config layers once.
     try check(await engines.probe(.codex, executable: codex) == .ready(version: "0.169.0"), "The probe reads 0.169.0 and a signed-in Codex")
     try check(rpc("config/read").count == 1, "The probe reads Codex's config layers once from a short-lived app server")

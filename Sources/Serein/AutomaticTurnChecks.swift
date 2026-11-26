@@ -66,6 +66,29 @@ extension SmokeTest {
       "The chat draws nothing for a check-in's or the brief's prompt, and the line for a scheduled request")
     let gaps: Set<String> = ChatTurns.breaks(spoke)
     try check(gaps == ["a2", "a3", "s1"], "A check-in's and the brief's reply start their turn; a scheduled request's line starts its own")
+    // Serein speaking first reads like a text: no time on its own above a prompt nobody sees.
+    func at(_ message: AgentMessage, _ minutes: Double) -> AgentMessage {
+      var dated = message
+      dated.sentAt = Date(timeIntervalSinceReferenceDate: 800_000_000 + minutes * 60)
+      return dated
+    }
+    let dated: [AgentMessage] = zip(spoke, [0, 1, 180, 181, 300, 301, 302, 303]).map { at($0, $1) }
+    try check(ChatTurns.lastDrawnTime(before: 3, in: dated) == dated[1].sentAt
+      && ChatTurns.lastDrawnTime(before: 5, in: dated) == dated[3].sentAt
+      && MessageTimeline.startsGroup(dated[3].sentAt, after: ChatTurns.lastDrawnTime(before: 3, in: dated)),
+      "The time above Serein's own message is measured from the last message drawn, so it sits above that message")
+    let spokeExport = ChatExport.markdown(title: "Serein", messages: dated, assistant: "Serein")
+    try check(!spokeExport.contains("Serein checked in") && !spokeExport.contains("*Daily brief*")
+      && spokeExport.contains("Your review starts in 20 minutes.") && spokeExport.contains("*Your scheduled request “Check my inbox"),
+      "Export leaves out the check-in and brief lines and keeps their replies and a scheduled request's line")
+    let briefReminder = RelayReminder(id: RelayBriefing.reminderID, text: RelayBriefing.text, due: Date(), repeats: .daily, action: true)
+    let ownReminder = RelayReminder(id: "r", text: "Summarise my inbox", due: Date(), repeats: .daily, action: true)
+    var failedLine = AgentMessage(role: "assistant", text: "", notice: true)
+    failedLine.line = RoutineRuns.failureLine(briefReminder, failure: "Timed out.")
+    try check(RoutineRuns.isBriefFailure(RoutineRuns.failureLine(briefReminder, failure: "Timed out."))
+      && !RoutineRuns.isBriefFailure(RoutineRuns.failureLine(ownReminder, failure: "Timed out."))
+      && !ChatTurns.draws(0, in: [failedLine]),
+      "The brief's failure line is not drawn in the chat; a scheduled request's failure line still is")
     let kinds: [RelayAutomatic.Kind] = [.checkIn, .brief, .attention, .scheduled, .goal, .alert, .webhook]
     try check(kinds.allSatisfy { RelayAutomatic.why($0).contains("Settings › Serein") || $0 == .attention },
       "Each line says why the person is seeing it and where to change it")

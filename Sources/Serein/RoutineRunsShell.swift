@@ -3,7 +3,7 @@ import SereinCore
 
 /// The routine run rules (`RoutineRuns`, SereinCore/RoutineRules.swift) applied to Serein's live
 /// schedules and alerts: one retry for a run that took no step, the one failure line in the run's
-/// chat, the watch wake cap and the check-in quiet window. A retry queues like Run now, so it runs
+/// chat (none for the brief), the watch wake cap and the check-in quiet window. A retry queues like Run now, so it runs
 /// under the same unattended rules, cards and grants as the run it repeats.
 extension RelayOrchestrator {
   /// A routine run failed. True when one retry is queued (the caller records nothing yet); false
@@ -16,7 +16,10 @@ extension RelayOrchestrator {
         || desk.facts[thread]?.receipts.isEmpty == false
     } ?? false
     guard RoutineRuns.mayRetry(live, acted: acted), !state.paused, live.paused != true else {
-      deliver(receipt: nil, line: RoutineRuns.failureLine(live, failure: failure), into: thread)
+      // The brief is Serein speaking first: its failure stays in its history, not the chat.
+      if live.id != RelayBriefing.reminderID {
+        deliver(receipt: nil, line: RoutineRuns.failureLine(live, failure: failure), into: thread)
+      }
       return false
     }
     let delay: TimeInterval = RoutineRuns.retryDelay(after: failure)

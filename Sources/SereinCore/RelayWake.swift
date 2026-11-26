@@ -70,8 +70,9 @@ public struct RelayMissedRun: Equatable, Identifiable, Sendable {
   }
   /// “Morning brief” for the daily brief (its words are the model's instructions); otherwise the
   /// request's words, on one line and clipped.
+  public static let briefName = "Morning brief"
   public var name: String {
-    if reminder.id == RelayBriefing.reminderID { return "Morning brief" }
+    if reminder.id == RelayBriefing.reminderID { return Self.briefName }
     let text = reminder.text.components(separatedBy: .newlines).joined(separator: " ")
       .trimmingCharacters(in: .whitespaces)
     return text.count > 60 ? String(text.prefix(59)) + "…" : text

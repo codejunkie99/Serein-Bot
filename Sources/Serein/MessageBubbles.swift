@@ -164,13 +164,22 @@ struct MessageTimeLine: View {
 /// Its parent stack's spacing is `AssistantMetrics.turnInnerGap`.
 struct TurnLead: View {
   let message: AgentMessage
-  let after: AgentMessage?
+  /// When the message drawn before this one was sent; nil for the first.
+  let before: Date?
   let breaks: Set<String>
+  init(message: AgentMessage, after: AgentMessage?, breaks: Set<String>) {
+    self.init(message: message, before: after?.sentAt, breaks: breaks)
+  }
+  init(message: AgentMessage, before: Date?, breaks: Set<String>) {
+    self.message = message
+    self.before = before
+    self.breaks = breaks
+  }
   var body: some View {
     if breaks.contains(message.id) {
       Color.clear.frame(height: AssistantMetrics.turnGap - 2 * AssistantMetrics.turnInnerGap).accessibilityHidden(true)
     }
-    if MessageTimeline.startsGroup(message.sentAt, after: after?.sentAt), let at = message.sentAt { MessageTimeLine(at: at) }
+    if MessageTimeline.startsGroup(message.sentAt, after: before), let at = message.sentAt { MessageTimeLine(at: at) }
   }
 }
 

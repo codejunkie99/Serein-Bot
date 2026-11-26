@@ -209,6 +209,11 @@ public enum RoutineRuns {
     let reason = why.isEmpty ? "." : ": " + (why.count > 160 ? String(why.prefix(159)) + "…" : why)
     return "“\(name)” failed\(after)" + reason
   }
+  /// The brief's failure line. The brief is Serein speaking first, so its failure stays in the
+  /// brief's history and is not posted to the chat; a line an earlier version posted is hidden.
+  public static func isBriefFailure(_ line: String) -> Bool {
+    line.hasPrefix("“\(RelayMissedRun.briefName)” failed")
+  }
   /// A missed run that runs now instead of being listed: missed while the Mac slept or Serein was
   /// closed, with a time it should have run in the last 12 hours. One run, however many slots it
   /// missed. A run missed while Stop Everything held Serein stays listed for the person.
