@@ -84,6 +84,22 @@ extension AssistantCoreChecks {
       && !SettingsDenylist.refuses(AgentSetting.talkShortcut.rawValue) && !SettingsDenylist.refuses(AgentSetting.talkPill.rawValue)
       && !SettingsDenylist.refuses(RelayController.pillKey),
       "The chat can turn the pill off or on and change the shortcut, and Settings shows both on the Ask from any app page")
+
+    // On by default, with Fn taken from macOS's own Globe action (GlobeConflict.takeover).
+    let fresh = AssistantMigration.plan(freshInstall: true, enabled: nil, proactive: nil, autopilot: nil, learnsNotes: nil)
+    try check(GlobalAccess.newInstallDefault && fresh.contains(.bool(AssistantMigration.enabledKey, true)),
+      "A new install can talk to Serein from any app from the start")
+    try check(GlobeConflict.takeover(fnCalls: true, current: 2, saved: nil) == .take(saving: 2)
+      && GlobeConflict.takeover(fnCalls: true, current: nil, saved: nil) == .take(saving: GlobeConflict.systemDefault)
+      && GlobeConflict.takeover(fnCalls: true, current: 3, saved: 2) == .take(saving: 3),
+      "While Fn calls Serein, the emoji picker, input source or Dictation on Globe is turned off, keeping what it was")
+    try check(GlobeConflict.takeover(fnCalls: true, current: GlobeConflict.doNothing, saved: 2) == .keep
+      && GlobeConflict.warning(for: .fn, usage: GlobeConflict.doNothing) == nil,
+      "Once Globe does nothing, Fn goes to Serein alone and Settings shows no warning")
+    try check(GlobeConflict.takeover(fnCalls: false, current: GlobeConflict.doNothing, saved: 1) == .giveBack(1)
+      && GlobeConflict.takeover(fnCalls: false, current: 3, saved: 1) == .forget
+      && GlobeConflict.takeover(fnCalls: false, current: 2, saved: nil) == .keep,
+      "Turning Fn off gives Globe back what it did, unless the person chose another action meanwhile")
   }
 }
 #endif
