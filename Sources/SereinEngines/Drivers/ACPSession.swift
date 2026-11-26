@@ -494,7 +494,9 @@ private actor ACPLink {
     retries += 1
     // Grok 1.0.89 names a try's error `reason`, and its last failed try's `message`.
     let update = params["update"]
-    let why = String((update?["reason"]?.string ?? update?["message"]?.string ?? "no reason given").prefix(600))
+    let why = String(
+      ([update?["reason"]?.string, update?["message"]?.string].compactMap { $0?.isEmpty == false ? $0 : nil }.first
+        ?? "no reason given").prefix(600))
     events.yield(.notice("\(dialect.cli.displayName) is retrying its model (\(retries)): \(why)"))
     guard retries >= Self.retryLimit else { return }
     gaveUp = "\(dialect.cli.displayName) could not reach its model after \(retries) tries: \(why)"

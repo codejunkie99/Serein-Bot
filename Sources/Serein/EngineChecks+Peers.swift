@@ -140,9 +140,11 @@ extension AssistantCoreChecks {
         "Quota: a callee that ran tools before its usage limit fails, with when its CLI's jobs start again")
       let other = await peers.handle(.ask(agents: [.opencode], question: "hi"), task: "top")
       notes.check(other.text.contains("opencode: answered"), "Quota: other CLIs keep running while one is held")
+      let earlyStart = ContinuousClock.now
       let early = await peers.handle(.ask(agents: [.claude], question: "three"), task: "top")
-      notes.check(started(.claude) == 1 && early.text.contains("claude: waiting for its limit to reset"),
-        "Quota: a new call to the held CLI waits for the reset too")
+      let earlyElapsed = ContinuousClock.now - earlyStart
+      notes.check(started(.claude) == 1 && early.text.contains("claude: waiting for its limit to reset") && earlyElapsed < .milliseconds(250),
+        "Quota: a new call to the held CLI waits for the reset and returns right away instead of blocking for inlineCap")
       world.gate[.claude] = nil
       let resumed = await settles(codex, ["claude says: two"])
       let third = await settles("top", ["claude says: three"])
@@ -174,6 +176,96 @@ extension AssistantCoreChecks {
       world.gate[.opencode] = nil
       let cleared = await settles("top", ["opencode says: a", "opencode says: b", "opencode says: c"])
       notes.check(cleared && started(.opencode) == before + 8, "Quota: the first try that gets through releases every held job at once")
+
+      // Hard billing / 402 failure with no reset time fails immediately instead of probing forever.
+      world.gate[.claude] = .init(text: "HTTP 402 Payment Required: insufficient credits.")
+      let billing = await peers.handle(.ask(agents: [.claude], question: "bill"), task: "top")
+      notes.check(billing.text.contains("claude: failed:") && billing.text.contains("billing or credit limit"),
+        "Quota: a hard billing or credit error with no reset fails immediately instead of looping")
+      world.gate[.claude] = nil
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+
+    // Second fast world: stale completion guard, maxUnclearProbes cap, faster 429 probes, and safe failover.
+    var fast = Peers.Limits()
+    fast.probeFirst = 0.6
+    fast.rateProbeFirst = 0.12
+    fast.probeMost = 0.6
+    fast.maxUnclearProbes = 1
+    fast.failoverThreshold = 1.5
+    try peerWorld(check, limits: fast) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+
+      // An older in-flight job finishing after an unnamed limit hits must NOT drop the hold.
+      world.gate[.opencode] = .init(text: "Internal error: Workspace usage limit reached. Model use is paused until the limit resets.")
+      let burst = await peers.handle(.burst([
+        PeerJob(agent: .opencode, prompt: "SLOW-INFLIGHT"),
+        PeerJob(agent: .opencode, prompt: "limited-one"),
+      ]), task: "top")
+      notes.check(burst.text.contains("opencode says: SLOW-INFLIGHT")
+        && burst.text.contains("opencode: waiting for its limit to clear"),
+        "Quota: an older in-flight job finishing after a limit hits does not drop the unclear hold")
+      _ = await peers.handle(.stop(run: nil), task: "top")
+
+      // maxUnclearProbes stops infinite retries on an unnamed rate limit (and rateProbeFirst probes fast).
+      world.gate[.claude] = .init(text: "Rate limit exceeded. Try again later.")
+      let capped = await peers.handle(.ask(agents: [.claude], question: "cap"), task: "top")
+      let capSettled = capped.text.contains("claude: failed:") && capped.text.contains("after 1 checks")
+      var sawCap = capSettled
+      if !sawCap {
+        for _ in 0..<10 {
+          let w = await peers.handle(.wait(runs: [], seconds: 1), task: "top").text
+          if w.contains("claude: failed:") && w.contains("after 1 checks") { sawCap = true; break }
+        }
+      }
+      notes.check(sawCap && started(.claude) == 2,
+        "Quota: unnamed rate limit probes on rateProbeFirst and fails cleanly after maxUnclearProbes")
+      world.gate[.claude] = nil
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+
+    // Third fast world: clean holds for safe failover vs short named waits.
+    try peerWorld(check, limits: fast) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+
+      // Safe failover: a long limit (> failoverThreshold) reroutes immediately to a backup CLI.
+      world.host.setFallback { cli, excluded in
+        cli == .claude && !excluded.contains(.codex) ? .codex : nil
+      }
+      world.gate[.claude] = .init(text: "You've hit your session limit", reset: Date().addingTimeInterval(10))
+      let failedOver = await peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top")
+      notes.check(failedOver.text.contains("codex (for claude, at limit): answered")
+        && failedOver.text.contains("codex says: urgent"),
+        "Quota: a long limit fails over immediately to a safe backup CLI and notes the handoff")
+
+      // A second ask while claude is already held fails over up front without calling claude again.
+      let beforeUpfront = started(.claude)
+      let upfront = await peers.handle(.ask(agents: [.claude], question: "second"), task: "top")
+      notes.check(started(.claude) == beforeUpfront
+        && upfront.text.contains("codex (for claude, at limit): answered")
+        && upfront.text.contains("codex says: second"),
+        "Quota: a new call to an already-limited CLI fails over immediately without waiting")
+
+      // A short named wait (<= failoverThreshold) stays on the requested CLI instead of switching.
+      world.host.setFallback { cli, excluded in
+        cli == .opencode && !excluded.contains(.codex) ? .codex : nil
+      }
+      world.gate[.opencode] = .init(text: "Please retry in 0.6s. Rate limit exceeded.")
+      let short = await peers.handle(.ask(agents: [.opencode], question: "brief"), task: "top")
+      world.gate[.opencode] = nil
+      var shortAnswered = short.text.contains("opencode says: brief")
+      if !shortAnswered {
+        for _ in 0..<10 {
+          let w = await peers.handle(.wait(runs: [], seconds: 1), task: "top").text
+          if w.contains("opencode says: brief") { shortAnswered = true; break }
+        }
+      }
+      notes.check(shortAnswered && !short.text.contains("for opencode, at limit"),
+        "Quota: a short named wait stays on the requested CLI instead of failing over")
       _ = await peers.handle(.stop(run: nil), task: "top")
     }
   }
@@ -208,6 +300,18 @@ extension AssistantCoreChecks {
       && HarnessRetry.classify(.message(grokRate)) == .transient(.rateLimited),
       "Grok: its rate limit names no delay")
     try check(delay("retry in 0s") == nil && delay("try again in 9999h") == nil, "A delay of nothing or past a week is not believed")
+    try check(delay("Please retry in 30 seconds.") == 30
+      && delay("Please retry in 5 minutes.") == 300
+      && delay("Your quota will reset after 10 minutes.") == 600,
+      "Spelled-out seconds and minutes work with retry in and reset after")
+    try check(delay("Please try again in 2m 30s.") == 150, "Spaced compound delays keep both parts")
+    try check(delay("Please retry in 23.5s. Or try again in 9999h.") == 23.5,
+      "An out-of-horizon delay in the same text does not discard a valid delay")
+    try check(UsageLimit.needsBilling("HTTP 402 Payment Required: insufficient credits")
+      && UsageLimit.needsBilling("errorCode: credits_required")
+      && !UsageLimit.needsBilling("You have exhausted your daily quota on this model.")
+      && !UsageLimit.needsBilling("Workspace usage limit reached."),
+      "Hard billing and credit errors are distinguished from resettable quotas")
   }
 
   private struct PeerWorld: Sendable {
@@ -273,9 +377,13 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   private let lock = NSLock()
   private var seen: [PeerCallee] = []
   private var closed: [String] = []
+  private var fallbackPicker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?
   var callees: [PeerCallee] { lock.withLock { seen } }
   var released: [String] { lock.withLock { closed } }
   func task(of cli: HarnessDriver) -> String? { callees.first { $0.cli == cli }.map { "task:" + $0.thread.id } }
+  func setFallback(_ picker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?) {
+    lock.withLock { fallbackPicker = picker }
+  }
 
   func request(for callee: PeerCallee) async throws -> TurnRequest {
     lock.withLock { seen.append(callee) }
@@ -285,6 +393,11 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   }
 
   func release(task: String) async { lock.withLock { closed.append(task) } }
+
+  func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver? {
+    let picker = lock.withLock { fallbackPicker }
+    return picker?(cli, excluding)
+  }
 }
 
 /// A CLI's limit, switched on by a check: each turn fails with `text`, after a tool step when
@@ -341,6 +454,12 @@ private final class PeerSession: EngineSession, @unchecked Sendable {
     let asked = prompt.message
     continuation.yield(.accepted)
     if asked.contains("HOLD") { continuation.yield(.text("working on it")); return }
+    if asked.contains("SLOW-INFLIGHT") {
+      try? await Task.sleep(for: .milliseconds(120))
+      continuation.yield(.text("\(cli.rawValue) says: \(asked)"))
+      continuation.yield(.turnDone(.endTurn))
+      return
+    }
     if asked.contains("FAIL"), cli == .opencode { continuation.yield(.turnDone(.failed("boom"))); return }
     if let refusal = gate[cli] {
       if asked.contains("TOOL") { continuation.yield(.toolStarted(id: "t1", name: "bash", arguments: "{}", shellCommand: "ls")) }

@@ -137,9 +137,9 @@ extension AssistantCoreChecks {
             for n in range(1, 4):
                 note("_x.ai/session_notification", sid, {"sessionUpdate": "retry_state", "type": "retrying", "attempt": n,
                     "max_retries": 15, "error_type": "http", "reason": "tcp connect error: Connection refused (os error 61)"})
-            # As Grok 1.0.89 recorded it: a failed try names its error `message`.
+            # As Grok 1.0.89 recorded it: a failed try names its error `message` (and an empty `reason` must not hide it).
             note("_x.ai/session_notification", sid, {"sessionUpdate": "retry_state", "type": "failed", "error_type": "http",
-                "message": "reqwest error stream: error decoding response body"})
+                "reason": "", "message": "reqwest error stream: error decoding response body"})
             wait_cancel(body, 3)
             ok(i, {"stopReason": "cancelled"}); return
         elif body.endswith("HANG"):

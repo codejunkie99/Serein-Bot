@@ -248,7 +248,8 @@ public enum PeerTools {
         shown = Set(["writer", "reviewer"].compactMap { role in report.jobs.lastIndex { $0.role?.hasPrefix(role) == true } })
       }
       for (index, job) in report.jobs.enumerated() {
-        lines.append("- \(job.agent.rawValue)\(job.role.map { ", \($0)" } ?? ""): \(words(job.state))")
+        let switched = job.reroutedFrom.map { " (for \($0.rawValue), at limit)" } ?? ""
+        lines.append("- \(job.agent.rawValue)\(switched)\(job.role.map { ", \($0)" } ?? ""): \(words(job.state))")
         if case .answered(let answer) = job.state, shown.contains(index) {
           lines.append(UntrustedText.wrap("agent_answer", String(answer.suffix(answerLimit)), ref: job.agent.rawValue))
         }
@@ -349,10 +350,13 @@ public struct PeerJobReport: Sendable, Equatable {
   /// "writer, round 1" in a bridge.
   public var role: String?
   public var state: PeerJobState
-  public init(agent: HarnessDriver, role: String? = nil, state: PeerJobState) {
+  /// The original CLI when this job failed over to `agent` because that CLI hit a limit.
+  public var reroutedFrom: HarnessDriver?
+  public init(agent: HarnessDriver, role: String? = nil, state: PeerJobState, reroutedFrom: HarnessDriver? = nil) {
     self.agent = agent
     self.role = role
     self.state = state
+    self.reroutedFrom = reroutedFrom
   }
 }
 

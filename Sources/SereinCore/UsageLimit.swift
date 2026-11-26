@@ -57,10 +57,10 @@ public struct UsageLimit: Equatable, Sendable {
       guard match(#"hit your (?:session|weekly|opus|sonnet) limit"#, text) != nil
         || match(#"your (?:session|weekly|opus|sonnet) limit resets"#, text) != nil
       else { return nil }
-      return UsageLimit(resetsAt: claudeReset(text, now: now, calendar: calendar))
+      return UsageLimit(resetsAt: claudeReset(text, now: now, calendar: calendar) ?? retryAfter(text, now: now))
     case .codex?:
       guard match(#"hit your usage limit"#, text) != nil else { return nil }
-      return UsageLimit(resetsAt: codexReset(text, now: now, calendar: calendar))
+      return UsageLimit(resetsAt: codexReset(text, now: now, calendar: calendar) ?? retryAfter(text, now: now))
     case nil:
       return nil
     default:
@@ -69,22 +69,33 @@ public struct UsageLimit: Equatable, Sendable {
     }
   }
 
+  /// True when the refusal names a billing or credit exhaustion error that waiting will not clear
+  /// on its own. Callers check this only when no reset delay was named.
+  public static func needsBilling(_ output: String) -> Bool {
+    let text = String(output.prefix(textLimit)).replacingOccurrences(of: "\u{2019}", with: "'")
+    return match(
+      #"\b402\b|\bcredits_required\b|\bpayment required\b|\bout of (?:usage )?credits\b|\binsufficient credits\b|\bbilling\b"#,
+      text) != nil
+  }
+
   /// The delay a model provider named in its error words, as a time: Google's “Please retry in
   /// 23.5s.”, Gemini CLI's “Suggested retry after 23s.” and “Your quota will reset after 10m.”,
   /// OpenAI's “Please try again in 6m0s.”, Pi's “Try again in ~143 min.”, and Oh My Pi's
-  /// “Provider requested 8580000ms wait” and “retry-after-ms=8580000”. The longest one wins, since
-  /// every limit has reset by then. Words with no number (“try again later”) name nothing.
+  /// “Provider requested 8580000ms wait” and “retry-after-ms=8580000”. Also reads spelled-out
+  /// units (“30 seconds”, “5 minutes”) and spaced compounds (“2m 30s”). Each delay is bounded
+  /// before taking the longest, so one out-of-horizon number cannot void a valid delay.
   public static func retryAfter(_ output: String, now: Date) -> Date? {
     let text = String(output.prefix(textLimit))
     var waits: [TimeInterval] = []
-    for raw in captures(#"\b(?:retry|try again|resets?) (?:in|after) ~?((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)\b"#, text) {
-      if let seconds = duration(raw.lowercased()) { waits.append(seconds) }
+    let unit = #"(?:milliseconds?|ms|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)"#
+    let pattern = #"\b(?:retry|try again|resets?) (?:in|after) ~?((?:\d+(?:\.\d+)?\s*"# + unit + #"(?:\s+(?=\d))?)+)\b"#
+    for raw in captures(pattern, text) {
+      if let seconds = delaySeconds(raw.lowercased()) { waits.append(seconds) }
     }
-    for raw in captures(#"\btry again in ~?(\d+) min(?:ute)?s?\b"#, text) { waits.append((Double(raw) ?? 0) * 60) }
     for raw in captures(#"\b(?:requested|requires) (\d+) ?ms wait\b|\bretry-after-ms=(\d+)\b"#, text) {
-      waits.append((Double(raw) ?? 0) / 1000)
+      if let ms = Double(raw) { waits.append(ms / 1000) }
     }
-    return bounded(waits.max().map { now.addingTimeInterval($0) }, now: now)
+    return waits.compactMap { bounded(now.addingTimeInterval($0), now: now) }.max()
   }
 
   /// An API route's refusal: HTTP 429 only, with its reset from `Retry-After` (seconds or an HTTP
@@ -303,6 +314,28 @@ public struct UsageLimit: Equatable, Sendable {
         let unit = Range(found.range(at: 2), in: text).map({ String(text[$0]) })
       else { return nil }
       total += number * (["ms": 0.001, "s": 1, "m": 60, "h": 3600][unit] ?? 0)
+    }
+    return total
+  }
+  /// Compact or spelled-out delay text (“23.5s”, “30 seconds”, “2m 30s”, “143 min”): nil for anything else.
+  private static func delaySeconds(_ text: String) -> TimeInterval? {
+    guard text.count <= 60,
+      let expression = try? NSRegularExpression(
+        pattern: #"(\d+(?:\.\d+)?)\s*(milliseconds?|ms|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)"#)
+    else { return nil }
+    let matches = expression.matches(in: text, range: NSRange(text.startIndex..., in: text))
+    guard !matches.isEmpty else { return nil }
+    var total: TimeInterval = 0
+    for found in matches {
+      guard let number = Range(found.range(at: 1), in: text).flatMap({ Double(text[$0]) }),
+        let unit = Range(found.range(at: 2), in: text).map({ String(text[$0]) })
+      else { return nil }
+      let factor: TimeInterval
+      if unit == "ms" || unit.hasPrefix("millisecond") { factor = 0.001 }
+      else if unit.hasPrefix("h") { factor = 3600 }
+      else if unit.hasPrefix("m") { factor = 60 }
+      else { factor = 1 }
+      total += number * factor
     }
     return total
   }

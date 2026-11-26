@@ -1688,6 +1688,13 @@ import SereinCore
     limitedApps[provider.rawValue] = until ?? now.addingTimeInterval(Self.unnamedLimitWait)
     namedLimitResets[provider.rawValue] = until
   }
+  /// Shared with `AppPeerHost` so team-tool limits and chat failover read one limit table.
+  func notePeerLimit(_ provider: Provider, until: Date?, now: Date = Date()) {
+    noteLimited(provider, until: until, now: now)
+  }
+  func limitedProviders(now: Date = Date()) -> Set<String> {
+    Set(limitedApps.filter { $0.value > now }.keys).union(failedApps.filter { $0.value > now }.keys)
+  }
   /// The AI app a usage-limit hold would move to now (`ModelFallback.elsewhere`): the person's
   /// backups from another AI app first, then any other installed, signed-in AI app that can
   /// answer as the assistant, never one whose own limit is still on.

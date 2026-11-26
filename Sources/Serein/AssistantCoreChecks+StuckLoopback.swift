@@ -57,13 +57,36 @@ extension AssistantCoreChecks {
       return nil
     }
     let client = socket(AF_INET, SOCK_STREAM, 0)
-    guard client >= 0, call({ p, _ in Darwin.connect(client, p, size) }) == 0 else {
+    guard client >= 0 else {
       close(listener)
-      if client >= 0 { close(client) }
+      return nil
+    }
+    let flags = fcntl(client, F_GETFL, 0)
+    if flags >= 0 { _ = fcntl(client, F_SETFL, flags | O_NONBLOCK) }
+    let deadline = ContinuousClock.now + .seconds(3)
+    func remainingMs() -> Int32 {
+      let left = deadline - ContinuousClock.now
+      let ms = left.components.seconds * 1000 + left.components.attoseconds / 1_000_000_000_000_000
+      return Int32(max(0, min(ms, 3000)))
+    }
+    let connectResult = call({ p, _ in Darwin.connect(client, p, size) })
+    let connectPending = connectResult < 0 && errno == EINPROGRESS
+    var connected = connectResult == 0
+    if connectPending {
+      var writable = pollfd(fd: client, events: Int16(POLLOUT), revents: 0)
+      if poll(&writable, 1, remainingMs()) == 1 {
+        var soError: Int32 = 0
+        var errLen = socklen_t(MemoryLayout<Int32>.size)
+        if getsockopt(client, SOL_SOCKET, SO_ERROR, &soError, &errLen) == 0, soError == 0 { connected = true }
+      }
+    }
+    guard connected else {
+      close(listener)
+      close(client)
       return nil
     }
     var ready = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
-    let accepted = poll(&ready, 1, 3000) == 1 ? accept(listener, nil, nil) : -1
+    let accepted = poll(&ready, 1, remainingMs()) == 1 ? accept(listener, nil, nil) : -1
     guard accepted >= 0 else {
       close(listener)
       close(client)
