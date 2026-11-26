@@ -26,6 +26,8 @@ import SwiftUI
     case .tabSleep: return defaults.integer(forKey: "serein.sleepMinutes")
     case .updateChecks: return Updates.shared.checksAutomatically
     case .updateInstalls: return Updates.shared.installsAutomatically
+    case .talkShortcut: return defaults.string(forKey: RelayOrchestrator.summonKey) ?? RelayHotKey.summon
+    case .talkPill: return RelayController.pillOn
     }
   }
   /// One setting as Settings shows it, in the words `set` takes (`setting_change`).
@@ -61,6 +63,20 @@ import SwiftUI
         if on { Updates.shared.checksAutomatically = true }
         Updates.shared.installsAutomatically = on
       }
+    case .talkShortcut:
+      // Its stored key ends in "Key", which the denylist reads as a secret; a shortcut is not one.
+      RelayOrchestrator.setSetting(value, forKey: RelayOrchestrator.summonKey)
+      RelayController.shared?.install()
+      var result: [String: Any] = ["setting": name, "value": setting.show(stored(setting))]
+      if RelayController.shared?.summonTaken == true {
+        result["note"] = "Another app already uses that shortcut, so it does not reach Serein. Pick another."
+      } else if !RelayOrchestrator.enabled {
+        result["note"] = "It works once Ask Serein from any app is on (Settings › Ask from any app)."
+      }
+      return result
+    case .talkPill:
+      try write(value, RelayController.pillKey)
+      RelayController.shared?.install()
     }
     return ["setting": name, "value": setting.show(stored(setting))]
   }
