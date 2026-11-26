@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// The team tools a task's agent uses to work with other agent CLIs (`--peers`): ask one agent or

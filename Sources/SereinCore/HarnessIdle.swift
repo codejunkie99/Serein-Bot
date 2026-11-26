@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// How long a thread's warm CLI stays up after a turn before it is closed. The next turn resumes

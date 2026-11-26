@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// Whether a failed turn is sent again, and after how long. A provider hiccup (429, 5xx,

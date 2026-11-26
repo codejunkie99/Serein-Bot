@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// What a CLI that has gone quiet mid-turn is doing. Healthy CLIs go silent for minutes (a slow
