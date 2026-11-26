@@ -820,11 +820,14 @@ struct ModelPill: View {
   var assistant: (id: String, name: String)? = nil
   /// In the chat's top row: this high, in the same capsule as the assistant's name pill beside it.
   var headerHeight: CGFloat? = nil
+  /// Under Serein's message bar: the name alone in `meta`, no tile or chevron.
+  var quiet = false
   @ObservedObject private var registry = HarnessRegistry.shared
   @State private var open = false
   @Environment(\.palette) var p
   init(agent: AgentModel, chat: String? = nil, compact: Bool = false, assistant: (id: String, name: String)? = nil,
-       headerHeight: CGFloat? = nil) {
+       headerHeight: CGFloat? = nil, quiet: Bool = false) {
+    self.quiet = quiet
     self.agent = agent
     self.chat = chat
     self.compact = compact
@@ -838,6 +841,11 @@ struct ModelPill: View {
     let choose: String = assistant.map { "Choose the model \($0.name) thinks with." } ?? "Choose the model for this chat."
     let label: String = assistant.map { "Model for \($0.name)" } ?? "Model for this chat"
     Button { open.toggle() } label: {
+      if quiet {
+        Text(name).font(UIStyle.meta).foregroundStyle(p.ink).lineLimit(1).truncationMode(.tail)
+          .frame(maxWidth: 160, alignment: .trailing)
+          .padding(.horizontal, 4).frame(height: 24).contentShape(Rectangle())
+      } else {
       HStack(spacing: 5) {
         ModelMonogram(provider: engine.provider, size: 14)
         if !compact {
@@ -852,6 +860,7 @@ struct ModelPill: View {
         // high. A chat header's pill keeps its 18, so both header lines fit.
         .padding(.vertical, assistant == nil || headerHeight != nil ? 0 : 3)
         .contentShape(Rectangle())
+      }
     }.buttonStyle(AssistantPressStyle()).fixedSize()
       .help("\(engine.provider.name) · \(name). " + choose)
       .accessibilityLabel(label)
