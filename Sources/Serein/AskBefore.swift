@@ -1,8 +1,8 @@
 import SereinCore
 import SwiftUI
 
-/// “Serein asks before” as a dial (affectUI Autonomy Dial): Every step, Only risky steps or
-/// Proactive as stops, the chosen level's note, then the real actions that level lets Serein do on
+/// “Serein asks before” as a dial (affectUI Autonomy Dial): Manual, Auto or
+/// Allow all as stops, the chosen level's note, then the real actions that level lets Serein do on
 /// its own and those it asks about first, judged by the gate itself (`AutonomyDial`). Hard stops
 /// carry a lock and never move. Under them every standing yes with its Ask again
 /// (`StandingYesList`) and every site rule with its Remove. The same control sits in Settings ›

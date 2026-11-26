@@ -38,26 +38,27 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
   /// Sentence case, for Settings and the popover.
   public var title: String {
     switch self {
-    case .everyStep: return "Every step"
-    case .riskyOnly: return "Only risky steps"
+    case .everyStep: return "Manual"
+    case .riskyOnly: return "Auto"
     case .proactive: return "Allow all"
     }
   }
   /// Title case, for menus.
   public var menuTitle: String {
     switch self {
-    case .everyStep: return "Every Step"
-    case .riskyOnly: return "Only Risky Steps"
+    case .everyStep: return "Manual"
+    case .riskyOnly: return "Auto"
     case .proactive: return "Allow All"
     }
   }
   public var note: String {
     switch self {
-    case .everyStep: return "Serein asks before each action on your Mac and before starting a task."
+    // Each says what the door and the turn's level sentence (`levelSentence`) actually do.
+    case .everyStep: return "Serein asks you before every step that changes something."
     case .riskyOnly:
-      return "Serein asks before it sends, posts, buys, deletes, signs out, or uses Terminal or System Settings. Routine steps go ahead."
+      return "Steps go ahead inside the task's folder. Serein checks with you before something it can't undo that you didn't ask for."
     case .proactive:
-      return "Serein and its tasks go ahead without asking. Paying and passwords go to a secure card you fill."
+      return "Everything goes ahead, even outside the task's folder. Paying and passwords still go to a secure card you fill."
     }
   }
   /// Under the choices. `killLabel` is the Stop everything shortcut (⌃⌥⌘. by default).

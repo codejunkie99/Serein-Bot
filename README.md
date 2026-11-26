@@ -46,7 +46,7 @@ Serein is a personal assistant for your Mac. It runs the AI apps you already use
 - **Use the AI plan you have.** Claude Code, Codex, Cursor Agent, OpenCode, Gemini CLI, Grok, Pi and Oh My Pi, or a local model through Ollama or LM Studio.
 - **Three tasks at once.** Each task runs in its own process with its own permissions.
 - **Undo any turn.** Serein snapshots each turn of a project in a private Git ref, so Undo puts the turn back.
-- **You set what it asks about.** Choose Every step, Only risky steps or Allow all. Paying always stays with you.
+- **You set what it asks about.** Choose Manual, Auto or Allow all. Paying always stays with you.
 - **Stays on your Mac.** History, projects and conversations are stored in your Library folder.
 - **Plugins.** Add a skill or a tool. See the [plugin guide](docs/PLUGINS-GUIDE.md).
 

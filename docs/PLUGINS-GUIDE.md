@@ -56,7 +56,7 @@ Add `serein-plugin.json` and a stdio [MCP](https://modelcontextprotocol.io) serv
   - `send`: anything other people see.
   - `delete`: removes something.
   - `pay`: moves money.
-  - With Settings › Assistants › Asks first set to Only risky steps, `read` and `write` tools run on their own; with Every step they ask. `send`, `delete` and `pay` always ask the user first.
+  - With Settings › Assistants › Asks first set to Auto, `read` and `write` tools run on their own; with Manual they ask. `send`, `delete` and `pay` always ask the user first.
 - **`mcp.command`** is either a file in your folder (`./bin/server`) or a system interpreter with your script in `args`.
 - **`env`** names the secrets your server needs. The user types them in Marketplace › Plugins, they are kept in the Keychain, and your server gets them as environment variables.
 - **`permissions.network`** lists the hosts you call; leave it out for no network.

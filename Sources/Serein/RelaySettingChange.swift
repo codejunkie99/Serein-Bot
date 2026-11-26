@@ -23,7 +23,7 @@ extension RelayOrchestrator {
   /// Writes `value` (in `chatSetting`'s words) through the setting's own store.
   func writeChatSetting(_ name: String, _ value: String) throws {
     if name == ChatSettings.approvalLevel {
-      guard let next = ChatSettings.level(value) else { throw SereinError.invalid("approval_level takes every step, only risky steps or allow all.") }
+      guard let next = ChatSettings.level(value) else { throw SereinError.invalid("approval_level takes manual, auto or allow all.") }
       setLevel(next)
     } else if let toggle = ChatSettings.toggle(name) {
       guard let on = ChatSettings.flag(value) else { throw SereinError.invalid("\(name) takes on or off.") }
@@ -108,7 +108,7 @@ extension RelayToolHost {
     let narrows: Bool
     let title: String
     if name == ChatSettings.approvalLevel {
-      guard let next = ChatSettings.level(value) else { throw SereinError.invalid("approval_level takes every step, only risky steps or allow all.") }
+      guard let next = ChatSettings.level(value) else { throw SereinError.invalid("approval_level takes manual, auto or allow all.") }
       narrows = ChatSettings.asks(next) >= ChatSettings.asks(relay.level)
       title = "How much Serein asks"
     } else if let toggle = ChatSettings.toggle(name) {

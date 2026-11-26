@@ -8,9 +8,9 @@
 
 | Level | What happens |
 | --- | --- |
-| Every step | Serein asks before each action on your Mac and before it starts a task. |
-| Only risky steps | Serein asks before it sends, posts, buys, deletes, signs out, or uses Terminal or System Settings. Routine steps go ahead. A new install starts here. |
-| Allow all | Serein and its tasks go ahead without asking. Paying and passwords go to a secure card you fill. |
+| Manual | Serein asks you before every step that changes something. |
+| Auto | Steps go ahead inside the task's folder. Serein checks with you before something it can't undo that you didn't ask for. |
+| Allow all | Everything goes ahead, even outside the task's folder. Paying and passwords still go to a secure card you fill. A new install starts here. |
 
 Paying always stays with you, at every level.
 

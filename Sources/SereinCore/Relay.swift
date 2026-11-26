@@ -192,7 +192,7 @@ public enum RelayTools {
         ["id": string], ["id"]),
       tool(
         ChatSettings.tool,
-        "Change one of Serein's settings when the user asks for it in this message (“ask me before every step”, “stop reading replies aloud”, “use Sonnet for Planner”, “ask me before you send mail”). name: approval_level (every step, only risky steps or allow all), ask_before (value: what to ask first about, in plain words), model (value: a model the model list shows; assistant: whose, default you), or one of "
+        "Change one of Serein's settings when the user asks for it in this message (“ask me before every step”, “stop reading replies aloud”, “use Sonnet for Planner”, “ask me before you send mail”). name: approval_level (manual, auto or allow all), ask_before (value: what to ask first about, in plain words), model (value: a model the model list shows; assistant: whose, default you), or one of "
           + ChatSettings.toggles.map(\.name).joined(separator: ", ") + ", " + AgentSetting.allCases.map(\.rawValue).joined(separator: ", ")
           + ". value: the new value. quote: the user's own words that ask for it, copied exactly from a message they typed in this chat. It applies at once, with no card, and Serein shows them a receipt with Undo. Paying, passwords, keys and sign-ins are never here.",
         ["name": string, "value": string, "quote": string, "assistant": string], ["name", "value", "quote"]),

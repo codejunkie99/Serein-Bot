@@ -6,7 +6,7 @@ import SereinCore
 /// `setting_change` and no permission asks at Allow all (owner 2026-11-25): a setting changes from
 /// the chat with a receipt whose Undo writes the value before back once, and only while nothing
 /// changed it since; the code floor, paying and secrets are never reachable; the asks that were left
-/// at Allow all run with no card, and still ask at Every step.
+/// at Allow all run with no card, and still ask at Manual.
 extension AssistantCoreChecks {
   static func settingChange(_ check: Check) throws {
     // The ledger: compare and set, once.
@@ -36,9 +36,9 @@ extension AssistantCoreChecks {
         && ChatSettings.admit(name: "hologram", quote: "the hologram off", personMessages: said, readOutside: true, narrows: true) == .apply,
       "setting_change: the person's exact words apply it; after outside text only a change that asks more applies")
     try check(
-      ChatSettings.level("allow all") == .proactive && ChatSettings.level("Every step") == .everyStep && ChatSettings.level("only risky steps") == .riskyOnly
+      ChatSettings.level("allow all") == .proactive && ChatSettings.level("Manual") == .everyStep && ChatSettings.level("auto") == .riskyOnly
         && ChatSettings.level("maybe") == nil,
-      "setting_change: approval_level reads every step, only risky steps and allow all")
+      "setting_change: approval_level reads manual, auto and allow all")
 
     // The switches it writes are the keys their Settings pages read.
     try MainActor.assumeIsolated {
@@ -53,7 +53,7 @@ extension AssistantCoreChecks {
         "setting_change: every switch writes the key its Settings page reads")
     }
     let lines = ChatSettings.toggles.map { ReceiptCopy.settingChanged(title: $0.title, before: "on", after: "off", entry: "e").line }
-      + [ReceiptCopy.settingChanged(title: "How much Serein asks", before: "Allow all", after: "Every step", entry: "e").line,
+      + [ReceiptCopy.settingChanged(title: "How much Serein asks", before: "Allow all", after: "Manual", entry: "e").line,
          ReceiptCopy.archived(name: "Scout", entry: "e").line]
     try check(lines.allSatisfy { ReceiptCopy.lint($0).isEmpty }, "setting_change: its receipts read plain")
     try check(
@@ -68,7 +68,7 @@ extension AssistantCoreChecks {
         && atLevel(.refuse("x"), .person, .proactive) == .refuse("x") && atLevel(.apply, .assistant, .everyStep) == .apply
         && atLevel(Admission.decide(.makeLink, turn: .person, wordsNameIt: false), .person, .proactive) == .apply
         && atLevel(Admission.decide(.deleteAssistant, turn: .person, wordsNameIt: true), .person, .proactive) == .apply,
-      "At Allow all a card becomes apply in the person's own turn and a refusal elsewhere; Every step and Only risky steps still ask")
+      "At Allow all a card becomes apply in the person's own turn and a refusal elsewhere; Manual and Auto still ask")
 
     // A kept sign-in at Allow all: the person_step card in the chat, never a window.
     let route = KeptSignInAsk.route("bank.example").text
@@ -115,7 +115,7 @@ extension AssistantCoreChecks {
       return yes
     }
     let chat = relay.threadID
-    let words = "please turn the hologram off, set approvals to every step, and archive Scout for me"
+    let words = "please turn the hologram off, set approvals to manual, and archive Scout for me"
     var serial = 9000
     func turn(_ admission: Admission.Turn, readOutside: Bool = false) {
       serial += 1
@@ -161,8 +161,8 @@ extension AssistantCoreChecks {
     try check((try? late.get()) == nil && hologram() == true, "setting_change: a late Undo refuses and leaves the person's value")
 
     // The approval level, and its Undo.
-    let manual = call(ChatSettings.tool, ["name": "approval_level", "value": "every step", "quote": "set approvals to every step"])
-    try check(manual.error.isEmpty && relay.level == .everyStep, "setting_change: approval_level moves to Every step" + manual.error)
+    let manual = call(ChatSettings.tool, ["name": "approval_level", "value": "manual", "quote": "set approvals to manual"])
+    try check(manual.error.isEmpty && relay.level == .everyStep, "setting_change: approval_level moves to Manual" + manual.error)
     _ = relay.revert(entry: manual.out["undo"] as? String ?? "", chat: chat)
     try check(relay.level == .proactive, "setting_change: Undo puts the level back to Allow all")
 
@@ -199,7 +199,7 @@ extension AssistantCoreChecks {
     try check(
       asks == 3 && !changeAsked.error.isEmpty && !deleteAsked.error.isEmpty && !linkAsked.error.isEmpty && scout() != nil
         && scout()?.scope?.destinations == [.answer] && relay.desk.links.isEmpty,
-      "At Every step, widening an assistant, deleting one and making a link still ask (asked \(asks))")
+      "At Manual, widening an assistant, deleting one and making a link still ask (asked \(asks))")
 
     level(.proactive)
     asks = 0
@@ -219,7 +219,7 @@ extension AssistantCoreChecks {
     let fromAssistant = call("assistant_delete", ["name": "Scout"])
     try check(!fromAssistant.error.isEmpty && asks == 0 && scout() != nil, "At Allow all another assistant's turn cannot delete one, with no card")
 
-    // Background work in a Mac app: no start card at Allow all; at Every step the card shows.
+    // Background work in a Mac app: no start card at Allow all; at Manual the card shows.
     gates.set(true, forKey: MacBackgroundPolicy.enabledKey)
     let app = NSWorkspace.shared.runningApplications.first {
       $0.activationPolicy == .regular && !MacBackground.isSerein($0)
@@ -238,7 +238,7 @@ extension AssistantCoreChecks {
       defer { MacBackground.shared.end(task) }
       var refused = false
       do { try await_(MacBackground.shared, task: task, app: app, name: name, access: access(false)) } catch { refused = true }
-      try check(refused && cards == 1, "At Every step background work in a Mac app shows its start card")
+      try check(refused && cards == 1, "At Manual background work in a Mac app shows its start card")
       var started = true
       do { try await_(MacBackground.shared, task: task, app: app, name: name, access: access(true)) } catch { started = false }
       try check(started && cards == 1, "At Allow all background work in a Mac app starts with no card")

@@ -79,12 +79,12 @@ public enum ChatSettings {
     return .apply
   }
 
-  /// "every step", "only risky steps" or "allow all", as the level's title reads, any case or separator.
+  /// "manual", "auto" or "allow all", as the level's title reads, any case or separator.
   public static func level(_ raw: String) -> ApprovalLevel? {
     let v = words(raw)
     return ApprovalLevel.allCases.first { words($0.title) == v || words($0.rawValue) == v }
   }
-  /// How much a level asks: Every step most.
+  /// How much a level asks: Manual most.
   public static func asks(_ level: ApprovalLevel) -> Int {
     switch level {
     case .everyStep: return 2

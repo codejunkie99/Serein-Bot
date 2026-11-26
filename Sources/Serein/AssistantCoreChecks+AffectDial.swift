@@ -40,8 +40,8 @@ extension AssistantCoreChecks {
       "The dial's task rows carry the effects agent_start gives an answer-only run and a run that acts")
 
     try check(
-      D.announcement(at: .riskyOnly) == "Only risky steps. On its own: 16. Asks first: 1."
-        && D.announcement(at: .everyStep) == "Every step. On its own: 3. Asks first: 14.",
+      D.announcement(at: .riskyOnly) == "Auto. On its own: 16. Asks first: 1."
+        && D.announcement(at: .everyStep) == "Manual. On its own: 3. Asks first: 14.",
       "A level change is read out with how many actions go ahead on their own and how many ask first")
   }
 }
