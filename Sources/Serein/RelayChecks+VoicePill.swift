@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import Foundation
+import SereinCore
 
 extension SmokeTest {
   /// The voice pill's three holds (RelayPanel). A click before macOS has been asked about the
