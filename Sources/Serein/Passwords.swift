@@ -209,101 +209,56 @@ struct Credential: Identifiable, Codable {
     return (setup.code(at: now), setup.changes(after: now))
   }
 }
+/// Settings › Vault (id `Passwords`; docs/demos/simple-settings.decision.md): everything Serein keeps
+/// for you in the Keychain, in one list. Sign-ins (`PasswordVault`) and the keys and cards saved on a
+/// secure card in the chat (`SecretVault`, which had no list and no way to remove one). A search
+/// field, All · Sign-ins · Keys, and New item; each row has a ••• menu. Copy and the current code
+/// still need device authentication, and no value reaches a prompt, a tool answer or a file. The
+/// saving options and the imports are in the page's Options fold (`PasswordOptions`).
 struct PasswordSettings: View {
+  enum Kind: String, CaseIterable {
+    case all, signIns, keys
+    var title: String {
+      switch self {
+      case .all: return "All"
+      case .signIns: return "Sign-ins"
+      case .keys: return "Keys"
+      }
+    }
+  }
   @StateObject private var vault = PasswordVault.shared
   @State private var query = ""
-  @State private var origin = ""
-  @State private var username = ""
-  @State private var password = ""
+  @State private var kind = Kind.all
   @State private var status = ""
   @State private var deletion: Credential?
+  @State private var forgetting: SecretRecord?
   @State private var codeFor: Credential?
+  @State private var adding = false
   @Environment(\.palette) var p
+  private var relay: RelayOrchestrator? { RelayController.shared?.relay }
+  /// A synthetic key for a preview's picture; nothing is stored.
+  private static let previewKeys: [SecretRecord] = RunMode.previewing
+    ? [SecretRecord(id: "preview-key", name: "Stripe key", hosts: ["api.stripe.invalid"], kind: .key, savedAt: Date(timeIntervalSince1970: 0))]
+    : []
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text(
-        "Passwords are stored in your Keychain. Reveal and fill require device authentication."
-      ).font(UIStyle.font(12)).foregroundStyle(p.secondary)
-      // Shown only in a build that macOS lets sync: a switch that can never go on is noise.
-      if vault.syncAvailability.isAvailable {
-        PasswordSyncSettings(vault: vault, status: $status)
-        Divider().overlay(p.line)
-      }
-      TextField("Find a site or account", text: $query).textFieldStyle(.plain).textInputCursor().padding(8)
-        .background(p.card, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: UIStyle.controlRadius).stroke(p.borderStrong))
-      ForEach(
-        vault.entries.filter {
-          query.isEmpty || $0.origin.localizedCaseInsensitiveContains(query)
-            || $0.username.localizedCaseInsensitiveContains(query)
-        }
-      ) { item in
-        HStack(spacing: 12) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(item.origin).font(UIStyle.mono(12))
-            Text(item.username).font(UIStyle.font(12)).foregroundStyle(p.secondary)
-          }
-          Spacer()
-          Button("Copy password") {
-            Task {
-              do {
-                try await vault.authenticate("Copy a saved Serein password")
-                let value = try vault.secret(item)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(value, forType: .string)
-                let count = NSPasteboard.general.changeCount
-                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-                  if NSPasteboard.general.changeCount == count {
-                    NSPasteboard.general.clearContents()
-                  }
-                }
-                status = "Copied. Clipboard clears in 30 seconds if unchanged."
-              } catch { status = error.localizedDescription }
-            }
-          }
-          Button(vault.codes.contains(item.id) ? "Verification code · On" : "Verification code") { codeFor = item }
-            .help("Save the site's setup key so Sign in as fills the current code too")
-          Button(role: .destructive) {
-            deletion = item
-          } label: {
-            Text("Delete").foregroundStyle(p.danger)
-          }
-        }.padding(.vertical, 8).overlay(alignment: .bottom) {
-          Rectangle().fill(p.line).frame(height: 1)
-        }
-      }
-      Divider().overlay(p.line)
-      PasswordCaptureSettings()
-      Divider().overlay(p.line)
-      PasswordManagerSettings()
-      Divider().overlay(p.line)
-      Text("Add a sign-in").font(UIStyle.font(13))
-      TextField("https://example.com", text: $origin).textFieldStyle(.plain).textInputCursor().padding(8)
-        .background(p.card, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: UIStyle.controlRadius).stroke(p.borderStrong))
-      TextField("Username", text: $username).textFieldStyle(.plain).textInputCursor().padding(8)
-        .background(p.card, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: UIStyle.controlRadius).stroke(p.borderStrong))
-      SecureField("Password", text: $password).textFieldStyle(.plain).textInputCursor().padding(8)
-        .background(p.card, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: UIStyle.controlRadius).stroke(p.borderStrong))
+    VStack(alignment: .leading, spacing: 12) {
       HStack(spacing: 8) {
-        Button("Save to Keychain") {
-          do {
-            try vault.save(origin: origin, username: username, password: password)
-            password = ""
-            status = "Saved to Keychain."
-          } catch { status = error.localizedDescription }
-        }.buttonStyle(PrimaryButton())
-        Spacer()
-        Button("Import CSV…") { importCSV() }
-        Button("Export CSV…") { exportCSV() }.disabled(vault.entries.isEmpty)
+        TextField("Find a site, account or key", text: $query).textFieldStyle(.serein)
+          .accessibilityLabel("Find in the vault")
+        GoalSegments(label: "Show", options: Kind.allCases.map { ($0, $0.title) }, selection: $kind)
+        Button("New item") { adding = true }.buttonStyle(PrimaryButton())
       }
-      Text(status).font(UIStyle.font(12)).foregroundStyle(p.secondary)
+      if let desk = relay?.desk {
+        VaultSecrets(desk: desk) { saved in list(saved + Self.previewKeys) }
+      } else {
+        list(Self.previewKeys)
+      }
+      if !status.isEmpty { Text(status).font(UIStyle.font(12)).foregroundStyle(p.secondary) }
       if let error = vault.error { Text(error).font(UIStyle.font(12)).foregroundStyle(p.danger) }
-    }.font(UIStyle.font(13)).foregroundStyle(p.ink).buttonStyle(QuietButton())
-      .controlSize(.small).confirmationDialog(
-        "Delete this saved password?",
+    }.font(UIStyle.font(13)).foregroundStyle(p.ink).buttonStyle(QuietButton()).controlSize(.small)
+      .confirmationDialog(
+        "Delete this saved sign-in?",
         isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } })
       ) {
         Button("Delete", role: .destructive) {
@@ -313,9 +268,228 @@ struct PasswordSettings: View {
           deletion = nil
         }
       }
+      .confirmationDialog(
+        "Delete \(forgetting?.name ?? "this key")?",
+        isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible
+      ) {
+        Button("Delete", role: .destructive) {
+          if let record = forgetting {
+            if let relay {
+              status = relay.forgetSecret(record) ?? "Deleted from your Keychain."
+            } else {
+              status = "Serein is not running in this window yet."
+            }
+          }
+          forgetting = nil
+        }
+      } message: {
+        Text("Serein removes it from your Keychain. A task that needs it asks you for it again.")
+      }
       .sheet(item: $codeFor) { item in
         VerificationCodeSheet(vault: vault, item: item) { codeFor = nil }.environment(\.palette, p)
       }
+      .sheet(isPresented: $adding) {
+        VaultNewItemSheet(vault: vault, relay: relay) { words in
+          adding = false
+          if let words { status = words }
+        }.environment(\.palette, p)
+      }
+  }
+
+  /// The rows the search and the tab leave, sign-ins first; one line when there are none.
+  private func list(_ secrets: [SecretRecord]) -> some View {
+    let wanted: String = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    func has(_ text: String) -> Bool { wanted.isEmpty || text.localizedCaseInsensitiveContains(wanted) }
+    let signIns: [Credential] = kind == .keys ? [] : vault.entries.filter { has($0.origin) || has($0.username) }
+    let keys: [SecretRecord] = kind == .signIns ? [] : secrets.filter { record in has(record.name) || record.hosts.contains(where: has) }
+    let nothingSaved: Bool = vault.entries.isEmpty && secrets.isEmpty
+    return SettingsRowList {
+      if signIns.isEmpty && keys.isEmpty {
+        SettingsEmptyRow(
+          glyph: "key",
+          text: nothingSaved
+            ? "Nothing saved yet. Serein offers to save a sign-in after you use one, and asks for a key on a secure card when a task needs it."
+            : "Nothing matches.")
+      }
+      ForEach(signIns) { item in signInRow(item) }
+      ForEach(keys) { record in secretRow(record) }
+    }
+  }
+
+  private func signInRow(_ item: Credential) -> some View {
+    let site: String = Self.site(item.origin)
+    return SettingsListRow(name: site, status: item.username.isEmpty ? "No user name" : item.username, expandable: false) {
+      SettingsGlyphTile(systemName: "globe")
+    } trailing: {
+      SereinMenuButton("More for \(site)", width: 220) {
+        SereinMenuItem.action("Copy password", icon: "doc.on.doc") { copy(item) }
+        SereinMenuItem.action(
+          vault.codes.contains(item.id) ? "Verification code · On" : "Verification code…", icon: "clock"
+        ) { codeFor = item }
+        SereinMenuItem.divider
+        SereinMenuItem.action("Delete…", icon: "trash", destructive: true) { deletion = item }
+      } label: {
+        more
+      }.buttonStyle(.pressable)
+    } live: {
+      EmptyView()
+    } details: {
+      EmptyView()
+    }
+  }
+
+  private func secretRow(_ record: SecretRecord) -> some View {
+    let what: String = record.kind == .card ? "Card" : "Key"
+    let sites: String = record.hosts.joined(separator: ", ")
+    return SettingsListRow(
+      name: record.name, status: record.kind == .card ? "\(what) · for \(sites)" : "\(what) · goes only to \(sites)", expandable: false
+    ) {
+      SettingsGlyphTile(systemName: "key")
+    } trailing: {
+      SereinMenuButton("More for \(record.name)", width: 220) {
+        SereinMenuItem.action("Delete…", icon: "trash", destructive: true) { forgetting = record }
+      } label: {
+        more
+      }.buttonStyle(.pressable)
+    } live: {
+      EmptyView()
+    } details: {
+      EmptyView()
+    }
+  }
+
+  private var more: some View {
+    InterfaceIcon(systemName: "ellipsis", size: 14).foregroundStyle(p.secondary)
+      .frame(width: 28, height: 28).contentShape(Rectangle())
+  }
+
+  /// A saved origin as people read it: the host alone.
+  static func site(_ origin: String) -> String { URL(string: origin)?.host ?? origin }
+
+  /// Copies after device authentication; the clipboard clears in 30 seconds if unchanged.
+  private func copy(_ item: Credential) {
+    Task {
+      do {
+        try await vault.authenticate("Copy a saved Serein password")
+        let value = try vault.secret(item)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        let count = NSPasteboard.general.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+          if NSPasteboard.general.changeCount == count {
+            NSPasteboard.general.clearContents()
+          }
+        }
+        status = "Copied. Clipboard clears in 30 seconds if unchanged."
+      } catch { status = error.localizedDescription }
+    }
+  }
+}
+
+/// The saved keys and cards, read from the assistant desk so the list follows a save or a delete.
+/// A record whose card still waits in the chat (`savedAt` nil) is not saved yet, so it is left out.
+private struct VaultSecrets<Content: View>: View {
+  @ObservedObject var desk: AssistantDesk
+  @ViewBuilder var content: ([SecretRecord]) -> Content
+  var body: some View { content(desk.secrets.filter { $0.savedAt != nil }) }
+}
+
+/// Vault › New item: a sign-in (site, user name, password) or a key (its name, the one address it may
+/// go to, the key). Either goes to the Keychain on Save and nowhere else; the person types it here,
+/// in Serein's own window, so no model sees it.
+private struct VaultNewItemSheet: View {
+  enum Kind: String, CaseIterable { case signIn, key }
+  @ObservedObject var vault: PasswordVault
+  let relay: RelayOrchestrator?
+  /// Closes the sheet; the words to show on the page after a save, or nil after Cancel.
+  var close: (String?) -> Void
+  @State private var kind = Kind.signIn
+  @State private var name = ""
+  @State private var detail = ""
+  @State private var secret = ""
+  @State private var problem: String?
+  @Environment(\.palette) var p
+  var body: some View {
+    let key: Bool = kind == .key
+    VStack(alignment: .leading, spacing: 12) {
+      Text("New item").font(UIStyle.section)
+      GoalSegments(label: "Kind", options: [(Kind.signIn, "Sign-in"), (Kind.key, "Key")], selection: $kind)
+      TextField(key ? "Name, such as Stripe key" : "Site, such as example.com", text: $name).textFieldStyle(.serein)
+        .accessibilityLabel(key ? "Name" : "Site")
+      TextField(key ? "Where it may go, such as api.stripe.com" : "User name or email", text: $detail).textFieldStyle(.serein)
+        .accessibilityLabel(key ? "The address it may go to" : "User name")
+      SecureField(key ? "Key" : "Password", text: $secret).textFieldStyle(.serein)
+        .accessibilityLabel(key ? "Key" : "Password")
+      if let problem { Text(problem).font(UIStyle.font(12)).foregroundStyle(p.danger).fixedSize(horizontal: false, vertical: true) }
+      Text(key
+        ? "Kept in your Mac's Keychain. Serein puts it into a request only for that address, and the AI never sees it."
+        : "Kept in your Mac's Keychain. Serein fills it in for you on that site, and the AI never sees it.")
+        .font(UIStyle.font(12)).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 8) {
+        Spacer()
+        Button("Cancel") { close(nil) }.keyboardShortcut(.cancelAction)
+        Button("Save", action: save).buttonStyle(PrimaryButton()).keyboardShortcut(.defaultAction)
+      }
+    }.padding(20).frame(width: UIStyle.wide(420)).background(p.panel).foregroundStyle(p.ink)
+      .font(UIStyle.font(13)).buttonStyle(QuietButton()).controlSize(.small)
+      .onChange(of: kind) { _, _ in problem = nil }
+  }
+  private func save() {
+    let named: String = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch kind {
+    case .signIn:
+      guard !named.isEmpty, !secret.isEmpty else {
+        problem = "Type the site and the password."
+        return
+      }
+      // People type a site as its name; a saved origin is always HTTPS.
+      let origin: String = named.contains("://") ? named : "https://" + named
+      do {
+        try vault.save(origin: origin, username: detail.trimmingCharacters(in: .whitespacesAndNewlines), password: secret)
+        close("Saved to your Keychain.")
+      } catch { problem = error.localizedDescription }
+    case .key:
+      guard !named.isEmpty, !secret.isEmpty else {
+        problem = "Type a name and the key."
+        return
+      }
+      guard let relay else {
+        problem = "Serein is not running in this window yet."
+        return
+      }
+      var entry = SecretEntry(key: secret)
+      entry.service = named
+      entry.address = detail
+      if let words = relay.savePastedSecret(entry) { problem = words } else { close("Saved to your Keychain.") }
+    }
+  }
+}
+
+/// Vault › Options: iCloud Keychain sync (only in a build macOS lets sync), the offer to save a
+/// sign-in, password managers in Sign in as, and CSV import and export.
+struct PasswordOptions: View {
+  @StateObject private var vault = PasswordVault.shared
+  @State private var status = ""
+  @Environment(\.palette) var p
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      // Shown only in a build that macOS lets sync: a switch that can never go on is noise.
+      if vault.syncAvailability.isAvailable {
+        PasswordSyncSettings(vault: vault, status: $status)
+        Divider().overlay(p.line)
+      }
+      PasswordCaptureSettings()
+      Divider().overlay(p.line)
+      PasswordManagerSettings()
+      Divider().overlay(p.line)
+      HStack(spacing: 8) {
+        Text("Sign-ins as a CSV file")
+        Spacer()
+        Button("Import CSV…") { importCSV() }
+        Button("Export CSV…") { exportCSV() }.disabled(vault.entries.isEmpty)
+      }
+      if !status.isEmpty { Text(status).font(UIStyle.font(12)).foregroundStyle(p.secondary) }
+    }.font(UIStyle.font(13)).foregroundStyle(p.ink).buttonStyle(QuietButton()).controlSize(.small)
   }
   func exportCSV() {
     Task {
@@ -388,7 +562,7 @@ struct PasswordSettings: View {
   }
 }
 
-/// Settings › Passwords › Verification code, for one saved login. The setup key or `otpauth://` link
+/// Settings › Vault › Verification code, for one saved sign-in. The setup key or `otpauth://` link
 /// is pasted, or read on this Mac from a QR code in the person's current tab (CoreImage). The key
 /// goes only to the Keychain on this Mac (PasswordVault.saveCode); the current code shows after
 /// device authentication and only until it changes, and is then dropped.

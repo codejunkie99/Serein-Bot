@@ -362,7 +362,7 @@ private struct HandBackButton: View {
 
 /// Sign in as … and Do it myself, on a task tab stopped at a sign-in page. Sign in as shows only for
 /// logins saved for exactly this HTTPS origin (PasswordVault.taskAccounts), as a menu when several
-/// match or when Settings › Passwords also offers 1Password or Bitwarden (PasswordManagers.offered);
+/// match or when Settings › Vault also offers 1Password or Bitwarden (PasswordManagers.offered);
 /// a look-alike host, plain HTTP or a private window shows only Do it myself. No tool reaches
 /// either button: the fill needs this tap and device authentication (or the manager's own unlock),
 /// and nothing is sent until the person presses the page's own button.

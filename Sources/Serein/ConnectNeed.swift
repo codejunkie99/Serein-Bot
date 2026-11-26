@@ -99,9 +99,9 @@ enum ConnectNeed: Hashable {
     case .automation(let connection):
       return "macOS is not letting Serein control \(connection.app). Turn on \(connection.app) under Serein in Privacy & Security › Automation."
     case .native(let connection, true): return "macOS has not given Serein access to \(connection.label)."
-    case .app: return "Connect an account in Settings › Connections."
-    case .server: return "Its tools changed or it was turned off. Review it in Settings › Connections."
-    default: return "Turn it on in Settings › Connections."
+    case .app: return "Connect an account in Marketplace › Your apps."
+    case .server: return "Its tools changed or it was turned off. Review it in Marketplace › Your apps."
+    default: return "Turn it on in Marketplace › On this Mac."
     }
   }
   @MainActor var button: String {

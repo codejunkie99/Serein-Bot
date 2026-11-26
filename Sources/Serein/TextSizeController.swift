@@ -2,7 +2,7 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// The one text size (Settings › Appearance): scales Serein's type through `UIStyle.textScale`
+/// The one text size (Settings › General): scales Serein's type through `UIStyle.textScale`
 /// and every open webpage through its page zoom. Changing it bumps `generation`, which the
 /// shell uses to rebuild its view tree so every font picks up the new size at once.
 @MainActor final class TextSizeController: ObservableObject {
@@ -35,7 +35,7 @@ import SwiftUI
   private var pendingRebuild = false
 }
 
-/// Settings › Appearance › Text size: a slider from 90% to 160%, the live percentage, and a
+/// Settings › General › Text size: a slider from 90% to 160%, the live percentage, and a
 /// reset to 100% when it is anything else.
 struct TextSizeSlider: View {
   @ObservedObject private var controller = TextSizeController.shared

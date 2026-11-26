@@ -38,11 +38,20 @@ public protocol PeerHost: Sendable {
   func keepsGoing(task: String) async -> Bool
   /// Task `task` holds an open secure card or person step: the callee's turn ended waiting on the person.
   func holdsCard(task: String) async -> Bool
+  /// Another connected, non-pay-per-use CLI that may take over from `cli` at a long or unnamed
+  /// limit (same rule as `LimitFailover.allowed`: free or existing plan, never an API key without
+  /// asking, never in `excluding`).
+  func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver?
+  /// Informs the app that `cli` reached a limit until `until` (nil when unnamed), so chat failover
+  /// shares the same limit state.
+  func noteLimit(cli: HarnessDriver, until: Date?) async
 }
 
 extension PeerHost {
   public func keepsGoing(task: String) async -> Bool { false }
   public func holdsCard(task: String) async -> Bool { false }
+  public func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver? { nil }
+  public func noteLimit(cli: HarnessDriver, until: Date?) async {}
 }
 
 public struct PeerReply: Sendable, Equatable {
@@ -54,21 +63,28 @@ public struct PeerReply: Sendable, Equatable {
   }
 }
 
-/// Runs the team tools (`PeerTools`): who may call whom, how many run at once, how long a call
-/// waits, and stopping a whole tree of calls.
+/// Runs the team tools (`PeerTools`): who may call whom, when each callee starts, how long a call
+/// waits, and stopping a whole tree of calls. Memory paces how many run at once: every callee start
+/// waits for room like any CLI start (`Engines.waitForRoom`).
 public actor Peers {
   public struct Limits: Sendable {
-    /// A task is depth 0. Depth 1 may call once more; depth 2 has no team tools.
+    /// A task is depth 0. Depth 1 may call once more, one call at a time; depth 2 has no team tools.
     public var maxDepth = 2
-    /// Callee turns running at once for one top task's own calls...
-    public var perTask = 4
-    /// ...and across Serein. A callee's own calls run one at a time outside both caps, so they
-    /// never wait on slots their caller holds.
-    public var overall = 6
     /// Longest a call waits inline: the caller CLI's tool-call limit less a margin, at most this.
     public var inlineCap: Duration = .seconds(100)
     public var inlineMargin: Duration = .seconds(5)
     public var inlineUnknown: Duration = .seconds(20)
+    /// A CLI's usage limit with no reset named: one of its jobs tries again this long after, the
+    /// wait doubling with each try still refused, up to `probeMost`.
+    public var probeFirst: TimeInterval = 2 * 60
+    /// An unnamed transient 429 rate limit clears sooner than a usage limit, so probe faster first.
+    public var rateProbeFirst: TimeInterval = 20
+    public var probeMost: TimeInterval = 30 * 60
+    /// Consecutive unnamed refusals before a held job fails instead of probing forever.
+    public var maxUnclearProbes = 6
+    /// A named reset longer than this (or an unnamed limit) tries a safe same-plan/free backup CLI
+    /// first instead of waiting. Short waits (like Gemini's 23.5s) stay on the requested CLI.
+    public var failoverThreshold: TimeInterval = 60
     public init() {}
   }
 
@@ -92,11 +108,31 @@ public actor Peers {
     var role: String?
     var prompt: String
     var thread: ThreadKey
+    var accessOverride: Access? = nil
+    /// A writer in a folder other writers share, with no git worktree. One such writer works there at a time.
+    var shares: URL? = nil
     var state: PeerJobState = .queued
     var work: Task<Void, Never>?
+    /// The CLI's own word on when its limit resets, seen during the turn.
+    var limit: UsageLimit? = nil
+    /// Monotonic start instant of its latest turn, and whether that turn started a tool.
+    var started: ContinuousClock.Instant? = nil
+    var toolRan = false
+    /// Original CLI if this job failed over to `agent` because that CLI hit a limit.
+    var reroutedFrom: HarnessDriver? = nil
   }
 
-  private enum Kind { case ask, bridge, burst }
+  /// Why a CLI's jobs wait after its usage or rate limit. All scheduling uses `ContinuousClock` so
+  /// wall-clock adjustments or early wakeups never stall the queue; `display` is for status text.
+  private enum Hold {
+    /// It named its reset: none of its jobs starts before `at`.
+    case until(at: ContinuousClock.Instant, display: Date)
+    /// It named none: started at `began`; after `misses` refusals in a row, one job tries at `next`
+    /// and the rest wait for it. Only a job started at or after `began` that gets through ends it.
+    case unclear(misses: Int, base: TimeInterval, began: ContinuousClock.Instant, next: ContinuousClock.Instant, display: Date)
+  }
+
+  private enum Kind { case ask, bridge, burst, swarm }
 
   private struct Run {
     var id: String
@@ -104,10 +140,13 @@ public actor Peers {
     var owner: Seat
     var ownerTask: String
     var jobs: [Job] = []
-    /// A bridge decides when it is done; an ask or burst is done when every job is.
+    /// A bridge or swarm decides when it is done; an ask or burst is done when every job is.
     var finished = false
     var approved = false
-    var settled: Bool { kind == .bridge ? finished : jobs.allSatisfy(\.state.settled) }
+    var board: SwarmBoard? = nil
+    var plan: SwarmPlan? = nil
+    var coordinatorTask: Task<Void, Never>? = nil
+    var settled: Bool { (kind == .bridge || kind == .swarm) ? finished : jobs.allSatisfy(\.state.settled) }
   }
 
   private var seats: [String: Seat] = [:]
@@ -115,6 +154,10 @@ public actor Peers {
   private var order: [String] = []
   private var made = 0
   private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+  /// Each CLI that reached its usage or rate limit.
+  private var holds: [HarnessDriver: Hold] = [:]
+  /// At most one active wakeup timer per held CLI, keyed by its monotonic deadline.
+  private var wakeTasks: [HarnessDriver: (at: ContinuousClock.Instant, task: Task<Void, Never>)] = [:]
 
   public init(engines: Engines, host: (any PeerHost)? = nil, limits: Limits = Limits()) {
     self.engines = engines
@@ -130,9 +173,18 @@ public actor Peers {
   }
 
   /// The caller's run stopped or finished: every run it started stops, and theirs in turn.
+  /// Settled runs for this caller are evicted so `Peers` does not grow without bound.
   public func callerEnded(_ thread: ThreadKey) {
     seats = seats.filter { $0.value.caller.thread != thread }
     for id in order where runs[id]?.owner.caller.thread == thread { stop(id) }
+    let evicted = Set(order.filter { id in
+      guard let r = runs[id] else { return true }
+      return r.owner.caller.thread == thread && r.settled
+    })
+    if !evicted.isEmpty {
+      for id in evicted { runs.removeValue(forKey: id) }
+      order.removeAll { evicted.contains($0) }
+    }
   }
 
   public func handle(_ call: PeerCall, task: String) async -> PeerReply {
@@ -142,16 +194,25 @@ public actor Peers {
     switch call {
     case .ask(let agents, let question):
       if let blocked = blocked(seat, agents) { return PeerReply(blocked.text) }
-      let id = open(.ask, seat, task, agents.map { ($0, nil, question) })
-      return await answer([id], within: window)
+      let resolved = await resolveHeld(agents.map { ($0, nil as String?, question) }, seat: seat, uniqueCLIs: true)
+      let id = open(.ask, seat, task, resolved)
+      return await answer([id], within: window, earlyReturnWhenHeld: true)
     case .burst(let jobs):
       if let blocked = blocked(seat, jobs.map(\.agent)) { return PeerReply(blocked.text) }
-      let id = open(.burst, seat, task, jobs.map { ($0.agent, nil, $0.prompt) })
-      return await answer([id], within: window)
+      let resolved = await resolveHeld(jobs.map { ($0.agent, nil as String?, $0.prompt) }, seat: seat, uniqueCLIs: false)
+      let id = open(.burst, seat, task, resolved)
+      return await answer([id], within: window, earlyReturnWhenHeld: true)
     case .bridge(let writer, let reviewer, let brief, let rounds):
       if let blocked = blocked(seat, [writer, reviewer]) { return PeerReply(blocked.text) }
       let id = open(.bridge, seat, task, [])
-      Task { await self.bridge(id, writer: writer, reviewer: reviewer, brief: brief, rounds: rounds) }
+      runs[id]?.coordinatorTask = Task { await self.bridge(id, writer: writer, reviewer: reviewer, brief: brief, rounds: rounds) }
+      return await answer([id], within: window)
+    case .swarm(let spec):
+      // Swarms allow same-CLI workers and verifiers so single-subscription users are never locked out;
+      // only recursion depth is bounded.
+      if let blocked = blockedDepth(seat) { return PeerReply(blocked.text) }
+      let id = open(.swarm, seat, task, [])
+      runs[id]?.coordinatorTask = Task { await self.swarm(id, spec: spec) }
       return await answer([id], within: window)
     case .wait(let asked, let seconds):
       let mine = order.filter { runs[$0]?.owner.caller.thread == seat.caller.thread }
@@ -170,13 +231,18 @@ public actor Peers {
 
   // MARK: Rules
 
-  /// A normal result with routes, never `isError` (R17): the call is the one thing that does not run.
-  private func blocked(_ seat: Seat, _ agents: [HarnessDriver]) -> Blocked? {
+  private func blockedDepth(_ seat: Seat) -> Blocked? {
     if seat.depth >= limits.maxDepth {
       return Blocked(
         "team tools stop \(limits.maxDepth) calls deep, and this agent was called that deep",
         routes: .init("do this part yourself", "put what is left in your reply, and the agent that called you hands it on"))
     }
+    return nil
+  }
+
+  /// A normal result with routes, never `isError` (R17): the call is the one thing that does not run.
+  private func blocked(_ seat: Seat, _ agents: [HarnessDriver]) -> Blocked? {
+    if let depthBlocked = blockedDepth(seat) { return depthBlocked }
     let looped = agents.filter(seat.chain.contains)
     if !looped.isEmpty {
       let chain = seat.chain.map(\.rawValue).joined(separator: " > ")
@@ -194,43 +260,150 @@ public actor Peers {
 
   // MARK: Runs
 
-  private func open(_ kind: Kind, _ seat: Seat, _ task: String, _ jobs: [(HarnessDriver, String?, String)]) -> String {
+  /// If a job targets a CLI already held past `failoverThreshold` (or on an unclear limit), try a
+  /// safe same-plan/free backup CLI up front so the user does not wait for a known limit.
+  private func resolveHeld(
+    _ jobs: [(HarnessDriver, String?, String)], seat: Seat, uniqueCLIs: Bool
+  ) async -> [(HarnessDriver, String?, String, HarnessDriver?)] {
+    let clockNow = ContinuousClock.now
+    var assigned = Set(jobs.map(\.0))
+    var out: [(HarnessDriver, String?, String, HarnessDriver?)] = []
+    for (cli, role, prompt) in jobs {
+      if shouldFailoverHeld(cli, now: clockNow) {
+        var excluded = Set(seat.chain).union(activeHeldCLIs(now: clockNow))
+        excluded.insert(cli)
+        if uniqueCLIs { excluded.formUnion(assigned) }
+        if let backup = await host?.fallback(from: cli, excluding: excluded) {
+          assigned.insert(backup)
+          out.append((backup, role, prompt, cli))
+          continue
+        }
+      }
+      out.append((cli, role, prompt, nil))
+    }
+    return out
+  }
+
+  private func open(_ kind: Kind, _ seat: Seat, _ task: String, _ jobs: [(HarnessDriver, String?, String, HarnessDriver?)] = []) -> String {
     made += 1
     let id = "peer-\(made)"
     runs[id] = Run(id: id, kind: kind, owner: seat, ownerTask: task)
     order.append(id)
-    for job in jobs { add(id, agent: job.0, role: job.1, prompt: job.2) }
+    for job in jobs { add(id, agent: job.0, role: job.1, prompt: job.2, reroutedFrom: job.3) }
     pump()
     return id
   }
 
   @discardableResult
-  private func add(_ id: String, agent: HarnessDriver, role: String?, prompt: String) -> Int {
+  private func add(
+    _ id: String, agent: HarnessDriver, role: String?, prompt: String, accessOverride: Access? = nil,
+    shares: URL? = nil, reroutedFrom: HarnessDriver? = nil
+  ) -> Int {
     let index = runs[id]!.jobs.count
-    runs[id]!.jobs.append(Job(agent: agent, role: role, prompt: prompt, thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)")))
+    runs[id]!.jobs.append(Job(
+      agent: agent, role: role, prompt: prompt,
+      thread: ThreadKey("\(runs[id]!.owner.caller.thread.id)>\(id).\(index)"),
+      accessOverride: accessOverride, shares: shares, reroutedFrom: reroutedFrom))
     return index
   }
 
-  /// Starts queued jobs, oldest first, while the caps allow.
+  /// Starts queued jobs, oldest first. A CLI past its limit starts none until it resets, or only
+  /// the one job that tries whether its limit has cleared.
   private func pump() {
+    let clockNow = ContinuousClock.now
     for id in order {
       guard let run = runs[id] else { continue }
-      for index in run.jobs.indices where runs[id]!.jobs[index].state == .queued {
-        if run.owner.depth > 0 {
-          guard working(where: { $0.owner.caller.thread == run.owner.caller.thread }) == 0 else { break }
-        } else {
-          guard working(where: { $0.owner.depth == 0 }) < limits.overall,
-            working(where: { $0.owner.depth == 0 && $0.owner.root == run.owner.root }) < limits.perTask
-          else { break }
+      for index in run.jobs.indices where runs[id]!.jobs[index].state.unstarted {
+        if let held = held(runs[id]!.jobs[index].agent, now: clockNow) {
+          runs[id]!.jobs[index].state = held
+          continue
         }
+        runs[id]!.jobs[index].state = .queued
+        if let folder = runs[id]!.jobs[index].shares, writing(in: folder) { continue }
+        if run.owner.depth > 0, working(where: { $0.owner.caller.thread == run.owner.caller.thread }) > 0 { break }
         runs[id]!.jobs[index].state = .working
+        runs[id]!.jobs[index].started = clockNow
+        runs[id]!.jobs[index].toolRan = false
+        runs[id]!.jobs[index].limit = nil
         runs[id]!.jobs[index].work = Task { await self.run(id, index) }
       }
     }
   }
 
+  /// What `cli`'s next job reads while its limit holds it, or nil when it may start. Always ensures
+  /// a monotonic wakeup timer is active whenever a hold stays in the future.
+  private func held(_ cli: HarnessDriver, now: ContinuousClock.Instant) -> PeerJobState? {
+    switch holds[cli] {
+    case .until(let at, let display)? where at > now:
+      scheduleWake(for: cli, at: at)
+      return .limited(until: display)
+    case .until?:
+      holds[cli] = nil
+      wakeTasks.removeValue(forKey: cli)?.task.cancel()
+    case .unclear(_, _, _, let next, let display)? where next > now:
+      scheduleWake(for: cli, at: next)
+      return .limitUnclear(checksAt: display)
+    case .unclear(_, _, _, let next, _)? where trying(cli, since: next):
+      return .limitUnclear(checksAt: nil)
+    // The wait is over and no job tries yet: this one does.
+    case .unclear?, nil:
+      return nil
+    }
+    return nil
+  }
+
+  private func shouldFailoverHeld(_ cli: HarnessDriver, now: ContinuousClock.Instant) -> Bool {
+    switch holds[cli] {
+    case .until(let at, _)?:
+      return at > now + .seconds(limits.failoverThreshold)
+    case .unclear(_, _, _, let next, _)?:
+      return next > now || trying(cli, since: next)
+    case nil:
+      return false
+    }
+  }
+
+  private func activeHeldCLIs(now: ContinuousClock.Instant) -> Set<HarnessDriver> {
+    var out = Set<HarnessDriver>()
+    for (cli, hold) in holds {
+      switch hold {
+      case .until(let at, _) where at > now: out.insert(cli)
+      case .unclear: out.insert(cli)
+      default: break
+      }
+    }
+    return out
+  }
+
+  private func scheduleWake(for cli: HarnessDriver, at deadline: ContinuousClock.Instant) {
+    if let existing = wakeTasks[cli], existing.at <= deadline { return }
+    wakeTasks[cli]?.task.cancel()
+    let task = Task {
+      while ContinuousClock.now < deadline {
+        try? await Task.sleep(until: deadline, clock: .continuous)
+        if Task.isCancelled { return }
+      }
+      self.wakeHold(for: cli, expected: deadline)
+    }
+    wakeTasks[cli] = (deadline, task)
+  }
+
+  private func wakeHold(for cli: HarnessDriver, expected: ContinuousClock.Instant) {
+    if wakeTasks[cli]?.at == expected { wakeTasks.removeValue(forKey: cli) }
+    changed()
+  }
+
+  /// A job of `cli` that started at or after `since` still runs.
+  private func trying(_ cli: HarnessDriver, since: ContinuousClock.Instant) -> Bool {
+    runs.values.contains { $0.jobs.contains { $0.agent == cli && $0.state.running && ($0.started.map { $0 >= since } ?? false) } }
+  }
+
   private func working(where match: (Run) -> Bool) -> Int {
-    runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter { $0.state == .working }.count }
+    runs.values.filter(match).reduce(0) { $0 + $1.jobs.filter(\.state.running).count }
+  }
+
+  private func writing(in folder: URL) -> Bool {
+    runs.values.contains { $0.jobs.contains { $0.state.running && $0.shares == folder } }
   }
 
   private func run(_ id: String, _ index: Int) async {
@@ -243,7 +416,7 @@ public actor Peers {
     let keepGoing = await host.keepsGoing(task: owner.rootTask)
     if keepGoing { stable += " " + Self.askMark }
     let callee = PeerCallee(
-      thread: job.thread, cli: job.agent, access: owner.caller.access,
+      thread: job.thread, cli: job.agent, access: job.accessOverride ?? owner.caller.access,
       prompt: TurnPrompt(stable: stable, volatile: "", message: job.prompt, recovery: nil),
       callerTask: run.ownerTask, mayCall: mayCall)
     var task: String?
@@ -255,28 +428,149 @@ public actor Peers {
         caller: PeerCaller(thread: job.thread, cli: job.agent, access: request.access), root: owner.root,
         rootTask: owner.rootTask, chain: owner.chain + [job.agent], depth: owner.depth + 1)
       try Task.checkCancellation()
-      var answer = try await engines.ask(request)
+      let seen: @Sendable (EngineEvent) async -> Void = { await self.saw($0, id, index) }
+      var answer = try await engines.ask(request, seen: seen)
       if keepGoing, let question = RelayMarks.after(RelayUnattended.inputMark, in: answer) {
         var next = request
         next.prompt.message = Self.keepGoing(question: question, work: job.prompt)
         try Task.checkCancellation()
-        answer = try await engines.ask(next)
+        answer = try await engines.ask(next, seen: seen)
       }
       state = await host.holdsCard(task: request.taskID) ? .parked : .answered(answer)
     } catch StopReason.stopped {
       state = .stopped
     } catch is CancellationError {
       state = .stopped
+    } catch StopReason.usageLimit(let words) {
+      state = await limited(id, index, "usage limit", isRateLimit: false, words: words)
+    } catch StopReason.failed(let why) where HarnessRetry.classify(.message(why)) == .transient(.rateLimited) {
+      state = await limited(id, index, "rate limit", isRateLimit: true, words: why)
     } catch StopReason.failed(let why) {
       state = .failed(why)
     } catch {
       state = .failed(String(describing: error))
+    }
+    // Only a job started after the unclear hold began proves the limit cleared; an older in-flight
+    // job finishing must not drop the hold and release the queue into the limit.
+    if case .unclear(_, _, let began, _, _)? = holds[job.agent], state.through,
+      let started = job.started, started >= began
+    {
+      holds[job.agent] = nil
+      wakeTasks.removeValue(forKey: job.agent)?.task.cancel()
     }
     callerEnded(job.thread)
     await engines.close(job.thread)
     if let task { await host.release(task: task) }
     if runs[id]?.jobs[index].state.settled == false { runs[id]!.jobs[index].state = state }
     changed()
+  }
+
+  private func saw(_ event: EngineEvent, _ id: String, _ index: Int) {
+    if case .limitReached(let limit) = event { runs[id]?.jobs[index].limit = limit }
+    if case .toolStarted = event { runs[id]?.jobs[index].toolRan = true }
+    guard runs[id]?.jobs[index].state.running == true else { return }
+    if case .waiting = event { runs[id]!.jobs[index].state = .waitingForMemory } else { runs[id]!.jobs[index].state = .working }
+  }
+
+  /// Job `index`'s CLI reached its limit. A reset it named holds its jobs until then. With none,
+  /// one job tries again after a wait that doubles with each refusal (`rateProbeFirst` for a rate
+  /// limit, `probeFirst` for a usage limit, up to `probeMost` and at most `maxUnclearProbes` tries),
+  /// and an answer from a post-hold try releases the rest. When the job ran no tool and the wait is
+  /// long or unnamed, try a safe same-plan/free backup CLI immediately before waiting. Hard billing
+  /// or credit exhaustion with no reset time fails fast instead of looping.
+  private func limited(_ id: String, _ index: Int, _ what: String, isRateLimit: Bool, words: String) async -> PeerJobState {
+    guard let run = runs[id], index < run.jobs.count else { return .stopped }
+    let job = run.jobs[index]
+    let cli = job.agent
+    let now = Date()
+    let clockNow = ContinuousClock.now
+    // A reset the turn outlived counts as none, so the job cannot restart at once and loop.
+    let named = (job.limit?.resetsAt ?? UsageLimit.text(words, harness: cli, now: now)?.resetsAt
+      ?? UsageLimit.retryAfter(words, now: now)).flatMap { $0 > now ? $0 : nil }
+    let billingHardStop = named == nil && !isRateLimit && UsageLimit.needsBilling(words)
+    var exceededProbes = false
+
+    if let named {
+      let delay = max(0, named.timeIntervalSince(now))
+      let deadline = clockNow + .seconds(delay)
+      if case .until(let heldAt, _)? = holds[cli], heldAt > deadline {} else {
+        holds[cli] = .until(at: deadline, display: named)
+      }
+      await host?.noteLimit(cli: cli, until: named)
+    } else if !billingHardStop {
+      let initialBase = isRateLimit ? limits.rateProbeFirst : limits.probeFirst
+      switch holds[cli] {
+      case .until(let resetAt, _)? where resetAt > clockNow:
+        break
+      // A job that started before this wait began brings old news; only the try counts.
+      case .unclear(let misses, let base, let began, let next, _)?:
+        if let started = job.started, started >= next {
+          let nextMisses = misses + 1
+          let effectiveBase = min(base, initialBase)
+          let delay = gap(nextMisses, base: effectiveBase)
+          holds[cli] = .unclear(
+            misses: nextMisses, base: effectiveBase, began: began,
+            next: clockNow + .seconds(delay), display: now.addingTimeInterval(delay))
+          if nextMisses > limits.maxUnclearProbes { exceededProbes = true }
+        }
+      default:
+        let delay = gap(1, base: initialBase)
+        holds[cli] = .unclear(
+          misses: 1, base: initialBase, began: clockNow,
+          next: clockNow + .seconds(delay), display: now.addingTimeInterval(delay))
+      }
+      await host?.noteLimit(cli: cli, until: nil)
+    }
+
+    // Try a safe same-plan/free backup CLI right away when no tool ran and waiting would take long.
+    let worthFailover = named.map { $0.timeIntervalSince(now) > limits.failoverThreshold } ?? true
+    if !job.toolRan, job.reroutedFrom == nil, worthFailover {
+      var excluded = Set(run.owner.chain).union(activeHeldCLIs(now: clockNow))
+      excluded.insert(cli)
+      if run.kind == .ask {
+        for other in run.jobs { excluded.insert(other.agent) }
+      }
+      if let backup = await host?.fallback(from: cli, excluding: excluded),
+        runs[id]?.jobs[index].state.settled == false
+      {
+        runs[id]!.jobs[index].reroutedFrom = cli
+        runs[id]!.jobs[index].agent = backup
+        runs[id]!.jobs[index].limit = nil
+        if case .until(let at, _)? = holds[cli], at > clockNow { scheduleWake(for: cli, at: at) }
+        else if case .unclear(_, _, _, let next, _)? = holds[cli], next > clockNow { scheduleWake(for: cli, at: next) }
+        return .queued
+      }
+    }
+
+    if billingHardStop {
+      return .failed("\(cli.displayName) stopped for a billing or credit limit with no reset time named.")
+    }
+
+    let wait: String
+    let wakeAt: ContinuousClock.Instant
+    switch holds[cli] {
+    case .until(let at, let reset)?:
+      wakeAt = at
+      wait = "Its next jobs start by themselves at \(UsageLimit.when(reset, now: now))."
+    case .unclear(_, _, _, let next, let display)?:
+      wakeAt = next
+      wait = "It named no reset time, so one of its jobs checks again at \(UsageLimit.when(display, now: now)) and the rest start once one gets through."
+    case nil:
+      return .queued
+    }
+    scheduleWake(for: cli, at: wakeAt)
+    guard !job.toolRan else {
+      return .failed("\(cli.displayName) reached its \(what) after this job had run tools, so it is not sent again. \(wait)")
+    }
+    if exceededProbes {
+      return .failed("\(cli.displayName) is still at its \(what) after \(limits.maxUnclearProbes) checks with no reset time named.")
+    }
+    return .queued
+  }
+
+  /// The wait before the try after `misses` refusals in a row: `base`, doubling, at most `probeMost`.
+  private func gap(_ misses: Int, base: TimeInterval) -> TimeInterval {
+    min(base * pow(2, Double(min(misses, 30) - 1)), limits.probeMost)
   }
 
   /// At Allow all the caller does not stop to answer: a callee marks a question so Serein can
@@ -289,11 +583,224 @@ public actor Peers {
   /// Stops a run: its queued jobs never start, its running ones stop with their whole tree.
   private func stop(_ id: String) {
     guard let run = runs[id] else { return }
+    run.coordinatorTask?.cancel()
     for index in run.jobs.indices where !run.jobs[index].state.settled {
       run.jobs[index].work?.cancel()
       runs[id]!.jobs[index].state = .stopped
     }
     runs[id]!.finished = true
+    changed()
+  }
+
+  private static func readOnlyAccess(_ access: Access) -> Access {
+    switch access {
+    case .task(let folder): return .project(folder: folder, level: .review)
+    case .project(let folder, _): return .project(folder: folder, level: .review)
+    case .answer, .web, .library, .ownSetup: return access
+    }
+  }
+
+  /// The folder a writer with `access` would change, if any.
+  private static func writableFolder(_ access: Access) -> URL? {
+    switch access {
+    case .task(let folder), .project(let folder, _): return folder.standardizedFileURL
+    case .answer, .web, .library, .ownSetup: return nil
+    }
+  }
+
+  /// `access` at the same level, moved to `folder`.
+  private static func access(_ access: Access, in folder: URL) -> Access {
+    switch access {
+    case .task: return .task(folder: folder)
+    case .project(_, let level): return .project(folder: folder, level: level)
+    case .answer, .web, .library, .ownSetup: return access
+    }
+  }
+
+  /// Each writer's diff, for the verifier, whose own folder does not hold the changes yet.
+  private static func changes(_ trees: [(name: String, handle: SwarmWorktree.Handle)]) async -> String {
+    var text = ""
+    for (name, handle) in trees {
+      let diff = await Task.detached { SwarmWorktree.diff(handle) }.value ?? "(git could not read the changes)"
+      let shown = diff.isEmpty ? "(no changes)" : String(diff.prefix(20_000)) + (diff.count > 20_000 ? "\n(cut here; the rest is in the worktree)" : "")
+      text += "\n\n\(name) worked in its own worktree, \(handle.folder.path), and its changes are not in your folder yet. Its diff:\n\(shown)"
+    }
+    return text
+  }
+
+  /// Serein's own line in a swarm's result. It rides as a settled job, the one thing
+  /// `PeerTools.render` lists per run.
+  private func report(_ id: String, _ text: String, failed: Bool) {
+    guard let run = runs[id] else { return }
+    runs[id]!.jobs.append(Job(
+      agent: run.owner.caller.cli, role: "merge into your folder", prompt: "",
+      thread: ThreadKey("\(run.owner.caller.thread.id)>\(id).\(run.jobs.count)"), state: failed ? .failed(text) : .answered(text)))
+  }
+
+  /// Runs parallel swarm workers over a shared `SwarmBoard` with an optional read-only verifier
+  /// checking `#seq` outputs and requesting targeted revisions.
+  private func swarm(_ id: String, spec: PeerSwarmRequest) async {
+    guard let ownerAccess = runs[id]?.owner.caller.access else { return }
+    var board = SwarmBoard()
+    board.register(name: "coordinator", role: .coordinator, workspace: .inherit)
+    var workerTasks: [String: String] = [:]
+    for w in spec.workers {
+      let ws: SwarmWorkspaceMode = w.write ? .worktree : .readOnly
+      board.register(name: w.name.lowercased(), role: .worker, workspace: ws)
+      workerTasks[w.name.lowercased()] = w.task
+      let brief = "@\(w.name.lowercased()) Goal: \(spec.goal)\nYour slice: \(w.task)"
+      board.post(author: "coordinator", text: brief, kind: .brief)
+    }
+    if spec.verifier != nil {
+      board.register(name: "verifier", role: .verifier, workspace: .readOnly)
+      workerTasks["verifier"] = "Verify worker outputs"
+    }
+    var threads = [
+      SwarmPlan.Thread(id: "t-workers", title: "Execute slices", goal: spec.goal, tasks: spec.workers.map { $0.name.lowercased() }),
+    ]
+    if spec.verifier != nil {
+      threads.append(SwarmPlan.Thread(id: "t-verify", title: "Verify outputs", goal: "Check accuracy and completion", tasks: ["verifier"]))
+    }
+    runs[id]?.plan = SwarmPlan(goal: .init(title: String(spec.goal.prefix(64)), line: spec.goal), tasks: workerTasks, threads: threads)
+    runs[id]?.board = board
+
+    // In a git repo each writer gets its own worktree; elsewhere writers take turns in the folder.
+    let ownerFolder = Self.writableFolder(ownerAccess)
+    let readOnly = Self.readOnlyAccess(ownerAccess)
+    var trees: [(name: String, handle: SwarmWorktree.Handle)] = []
+    if let ownerFolder, let base = await Task.detached(operation: { SwarmWorktree.base(for: ownerFolder, run: id) }).value {
+      for w in spec.workers where w.write {
+        let name = w.name.lowercased()
+        do {
+          if let handle = try await Task.detached(operation: { try SwarmWorktree.create(repo: ownerFolder, name: name, baseDirectory: base) }).value {
+            trees.append((name, handle))
+            board.post(author: "coordinator", text: "@\(name) Your own worktree: \(handle.folder.path)", kind: .update)
+          }
+        } catch {
+          board.post(author: "coordinator", text: "@\(name) No worktree (\(error.localizedDescription)), so you take turns in \(ownerFolder.path).", kind: .update)
+        }
+      }
+      runs[id]?.board = board
+    }
+    func job(_ w: PeerSwarmWorker, _ role: String, _ prompt: String) -> Int {
+      guard w.write else { return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: readOnly) }
+      if let tree = trees.first(where: { $0.name == w.name.lowercased() }) {
+        return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: Self.access(ownerAccess, in: tree.handle.folder))
+      }
+      return add(id, agent: w.agent, role: role, prompt: prompt, accessOverride: ownerAccess, shares: ownerFolder)
+    }
+    // Each worker's latest job. Only a writer whose latest turn answered is merged.
+    var latest: [String: Int] = [:]
+
+    // Launch all workers in parallel.
+    let workerIndices: [(worker: PeerSwarmWorker, index: Int)] = spec.workers.map { w in
+      let prompt = "Swarm Goal: \(spec.goal)\nYou are '\(w.name)'. Your slice: \(w.task)\nPost a concise completion summary."
+      let idx = job(w, w.name, prompt)
+      latest[w.name.lowercased()] = idx
+      return (w, idx)
+    }
+    pump()
+    for (_, idx) in workerIndices {
+      while let state = runs[id]?.jobs[idx].state, !state.settled {
+        if Task.isCancelled || runs[id]?.finished == true { break }
+        await next(until: .now + .seconds(86_400))
+      }
+    }
+
+    var workerSeqs: [Int] = []
+    for (w, idx) in workerIndices {
+      if let state = runs[id]?.jobs[idx].state, case .answered(let answer) = state {
+        let target = spec.verifier == nil ? "@coordinator" : "@verifier"
+        let posted = board.post(author: w.name.lowercased(), text: "\(target) [done] \(answer)", kind: .done)
+        workerSeqs.append(posted.seq)
+      }
+    }
+
+    if let verifierCLI = spec.verifier, runs[id]?.finished == false && !Task.isCancelled {
+      var latestSeqs = workerSeqs
+      for round in 1...spec.rounds {
+        let refs = latestSeqs.map { "#\($0)" }.joined(separator: ", ")
+        let postsText = board.posts(seqs: latestSeqs).map { "#\($0.seq) (\($0.author)): \($0.text)" }.joined(separator: "\n\n")
+        let changes = await Self.changes(trees)
+        let verifyPrompt = "You are the read-only verifier (round \(round)). Goal: \(spec.goal)\nVerify \(refs):\n\n\(postsText)\(changes)\n\nIf all claims and outputs are verified, start your reply with \(PeerTools.approved). Otherwise state exact fixes needed."
+        guard case .answered(let verdict) = await turn(id, verifierCLI, "verifier, round \(round)", verifyPrompt, accessOverride: readOnly) else {
+          break
+        }
+        let vPost = board.post(author: "verifier", text: "@coordinator \(verdict)")
+        if verdict.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix(PeerTools.approved) {
+          runs[id]?.approved = true
+          break
+        }
+        if round == spec.rounds { break }
+        // Ask workers to revise once on the verifier's notes (#vPost.seq).
+        var revisedIndices: [(PeerSwarmWorker, Int)] = []
+        for w in spec.workers {
+          let revPrompt = "Swarm Goal: \(spec.goal)\nVerifier feedback (#\(vPost.seq)):\n\(verdict)\n\nRevise your slice (\(w.task)) and post the updated result."
+          let idx = job(w, "\(w.name), rev \(round)", revPrompt)
+          latest[w.name.lowercased()] = idx
+          revisedIndices.append((w, idx))
+        }
+        pump()
+        latestSeqs = []
+        for (w, idx) in revisedIndices {
+          while let state = runs[id]?.jobs[idx].state, !state.settled {
+            if Task.isCancelled || runs[id]?.finished == true { break }
+            await next(until: .now + .seconds(86_400))
+          }
+          if let state = runs[id]?.jobs[idx].state, case .answered(let answer) = state {
+            latestSeqs.append(board.post(author: w.name.lowercased(), text: "@verifier [done] \(answer)", kind: .done).seq)
+          }
+        }
+      }
+    }
+
+    // Merge back only what was signed off; anything else stays in its worktree and is named.
+    if let ownerFolder, !trees.isEmpty {
+      // A run already evicted by its caller's end counts as stopped.
+      let stopped = Task.isCancelled || runs[id]?.finished != false
+      let signed = spec.verifier == nil || runs[id]?.approved == true
+      var merged: [String] = []
+      var kept: [String] = []
+      for (name, handle) in trees {
+        guard let diff = await Task.detached(operation: { SwarmWorktree.diff(handle) }).value else {
+          kept.append("\(name)'s changes stay in \(handle.worktreeURL.path) because git could not read them")
+          continue
+        }
+        if diff.isEmpty {
+          await Task.detached { SwarmWorktree.remove(handle) }.value
+          continue
+        }
+        var answered = false
+        if let index = latest[name], case .answered = runs[id]?.jobs[index].state { answered = true }
+        let why: String?
+        if stopped {
+          why = "the swarm was stopped"
+        } else if !signed {
+          why = "the verifier did not approve them"
+        } else if !answered {
+          why = "\(name) did not finish its turn"
+        } else if let refused = await Task.detached(operation: { SwarmWorktree.apply(diff, to: handle) }).value {
+          why = "they do not apply cleanly to \(ownerFolder.path) (\(refused.prefix(200)))"
+        } else {
+          why = nil
+        }
+        if let why {
+          kept.append("\(name)'s changes stay in \(handle.worktreeURL.path) because \(why)")
+        } else {
+          merged.append(name)
+          await Task.detached { SwarmWorktree.remove(handle) }.value
+        }
+      }
+      var lines = merged.isEmpty ? [] : ["Merged the changes of \(merged.joined(separator: ", ")) into \(ownerFolder.path)."]
+      lines += kept.map { $0 + "." }
+      let text = lines.isEmpty ? "No writer changed a file." : lines.joined(separator: " ")
+      board.post(author: "coordinator", text: text, kind: .update)
+      report(id, text, failed: !kept.isEmpty)
+    }
+
+    board.post(author: "coordinator", text: "[done] Swarm finished.", kind: .done)
+    runs[id]?.board = board
+    runs[id]?.finished = true
     changed()
   }
 
@@ -319,10 +826,10 @@ public actor Peers {
     changed()
   }
 
-  /// One bridge turn, queued like any job; `.stopped` once the run was stopped.
-  private func turn(_ id: String, _ agent: HarnessDriver, _ role: String, _ prompt: String) async -> PeerJobState {
+  /// One bridge or verifier turn, queued like any job; `.stopped` once the run was stopped.
+  private func turn(_ id: String, _ agent: HarnessDriver, _ role: String, _ prompt: String, accessOverride: Access? = nil) async -> PeerJobState {
     guard runs[id]?.finished == false else { return .stopped }
-    let index = add(id, agent: agent, role: role, prompt: prompt)
+    let index = add(id, agent: agent, role: role, prompt: prompt, accessOverride: accessOverride)
     pump()
     while let state = runs[id]?.jobs[index].state, !state.settled { await next(until: .now + .seconds(86_400)) }
     return runs[id]?.jobs[index].state ?? .stopped
@@ -330,10 +837,36 @@ public actor Peers {
 
   // MARK: Waiting
 
-  private func answer(_ ids: [String], within window: Duration) async -> PeerReply {
+  private func answer(_ ids: [String], within window: Duration, earlyReturnWhenHeld: Bool = false) async -> PeerReply {
     let deadline = ContinuousClock.now + window
-    while ids.contains(where: { runs[$0]?.settled == false }), ContinuousClock.now < deadline { await next(until: deadline) }
+    while ids.contains(where: { runs[$0]?.settled == false }), ContinuousClock.now < deadline {
+      if earlyReturnWhenHeld, allUnsettledHeldPast(ids, deadline: deadline) { break }
+      await next(until: deadline)
+    }
     return PeerReply(PeerTools.render(reports(ids)))
+  }
+
+  /// True when every unsettled job in `ids` is held on a CLI whose next wakeup is past `deadline`,
+  /// so waiting out `window` cannot start any of them.
+  private func allUnsettledHeldPast(_ ids: [String], deadline: ContinuousClock.Instant) -> Bool {
+    var sawHeld = false
+    for id in ids {
+      guard let run = runs[id], !run.settled else { continue }
+      if run.kind == .bridge || run.kind == .swarm { return false }
+      for job in run.jobs where !job.state.settled {
+        switch job.state {
+        case .limited:
+          guard case .until(let at, _)? = holds[job.agent], at > deadline else { return false }
+          sawHeld = true
+        case .limitUnclear(let checksAt):
+          guard checksAt != nil, case .unclear(_, _, _, let next, _)? = holds[job.agent], next > deadline else { return false }
+          sawHeld = true
+        default:
+          return false
+        }
+      }
+    }
+    return sawHeld
   }
 
   /// Returns at the next change to any run, or at the deadline.
@@ -363,10 +896,31 @@ public actor Peers {
       case .ask: kind = .ask(count: run.jobs.count)
       case .bridge: kind = .bridge(approved: run.approved)
       case .burst: kind = .burst
+      case .swarm: kind = .swarm(verified: run.approved, plan: run.plan)
       }
       return PeerRunReport(
-        id: run.id, kind: kind, jobs: run.jobs.map { PeerJobReport(agent: $0.agent, role: $0.role, state: $0.state) },
+        id: run.id, kind: kind,
+        jobs: run.jobs.map { PeerJobReport(agent: $0.agent, role: $0.role, state: $0.state, reroutedFrom: $0.reroutedFrom) },
         settled: run.settled)
     }
   }
+}
+
+extension PeerJobState {
+  /// Not started yet: queued, or held for its CLI's limit.
+  fileprivate var unstarted: Bool {
+    switch self {
+    case .queued, .limited, .limitUnclear: return true
+    default: return false
+    }
+  }
+  /// The CLI took the turn: its limit, if any, has cleared.
+  fileprivate var through: Bool {
+    switch self {
+    case .answered, .parked: return true
+    default: return false
+    }
+  }
+  /// Started: its turn runs, or its CLI waits for memory to start.
+  fileprivate var running: Bool { self == .working || self == .waitingForMemory }
 }

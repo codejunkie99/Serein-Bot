@@ -96,11 +96,12 @@ struct CodexDriver: Driver {
       profile(plan, folder: plan.folder ?? Self.emptyFolder, request: request, network: network),
       request.browser.map(browserConfig) ?? [:],
     ])
-    environment["SEREIN_CODEX_THREAD"] = SHA256.hash(data: Data(thread.utf8)).map { String(format: "%02x", $0) }.joined()
-    return LaunchContract(
+    var contract = LaunchContract(
       request, arguments: serverArguments(network), environment: environment,
       expectedMode: .reports(["approvalPolicy": plan.approvalPolicy, "activePermissionProfile.id": Self.profile]),
       network: network)
+    contract.warmTags["codexThread"] = SHA256.hash(data: Data(thread.utf8)).map { String(format: "%02x", $0) }.joined()
+    return contract
   }
 
   /// Codex drops root-level -c once the subcommand has its own, so every -c goes after app-server.
@@ -250,7 +251,8 @@ struct CodexDriver: Driver {
     ).filter { !$0.key.hasPrefix("mcp_servers.\(CodexParams.browserServer).") }
     if let browser = request.browser { config.merge(browserConfig(browser)) { _, mine in mine } }
     config["default_permissions"] = Self.profile
-    config["permissions.\(Self.profile)"] = profile(plan, folder: folder, request: request, network: contract.network)
+    let sent = profile(plan, folder: folder, request: request, network: contract.network)
+    config["permissions.\(Self.profile)"] = sent
     // Never `sandbox`: Codex would take it over the profile.
     var params: [String: Any] = [
       "cwd": folder.path, "approvalPolicy": plan.approvalPolicy, "approvalsReviewer": "user",
@@ -288,9 +290,10 @@ struct CodexDriver: Driver {
     case .success(let verified): mode = verified
     case .failure(let reason): throw reason
     }
+    // Read back against the profile this thread was sent: Codex lists every root it writes.
     if let problem = CodexChecks.threadProblem(
       response, writable: plan.writable, approvalPolicy: plan.approvalPolicy, profile: Self.profile,
-      opened: request.opensHome ? [FileManager.default.homeDirectoryForCurrentUser.path] : [])
+      opened: CodexChecks.profileWrites(sent))
     {
       throw StopReason.modeMismatch(name: "sandbox", expected: Self.profile, reported: problem)
     }

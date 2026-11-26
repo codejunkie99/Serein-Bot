@@ -735,6 +735,13 @@ struct BrowserTask {
   private var sectionBeforeMarketplace = ShellSection.serein
   /// The Marketplace's open page, kept while Settings covers it (Manage in Settings, Composio).
   @Published var marketplacePlace: MarketplacePlace = .apps
+  /// The Marketplace on one of its places: where a link that used to open Settings › Connections or
+  /// Marketplace › Plugins goes (`SettingsCategory.moved`). The place is set after it opens, which
+  /// otherwise starts on Apps.
+  func openMarketplace(_ place: MarketplacePlace) {
+    showMarketplace = true
+    marketplacePlace = place
+  }
   @Published var historyEnabled =
     UserDefaults.standard.object(forKey: "serein.history") as? Bool ?? true
   { didSet { UserDefaults.standard.set(historyEnabled, forKey: "serein.history") } }
@@ -1624,13 +1631,13 @@ struct BrowserTask {
       if relay != nil { GuideCenter.shared.record(.macStepStarted) }
       return result
     }
-    // Mail and Messages (Settings › Connections): Serein's run only, refused by place, asked on
+    // Mail and Messages (Marketplace › On this Mac): Serein's run only, refused by place, asked on
     // its card before anything is sent, moved or deleted (BrowserModel.connectionCall).
     if Connections.toolNames.contains(raw) {
       return try await connectionCall(
         raw, request["arguments"] as? [String: Any] ?? [:], taskID: id, task: task, operationID: operationID)
     }
-    // Calendar, Reminders, Contacts and Notes (Settings › Connections): Serein's own run only,
+    // Calendar, Reminders, Contacts and Notes (Marketplace › On this Mac): Serein's own run only,
     // inside the assistant's places, while the task may use Mac apps, each call through
     // ApprovalDoor.answer.
     if let connection = NativeConnection.of(tool: raw) {
@@ -1647,7 +1654,7 @@ struct BrowserTask {
       guard task.allowRelay, let relay = RelayOrchestrator.shared else {
         throw SereinError.invalid("Plugin tools are only available to Serein.")
       }
-      // A server connected by address (Settings › Connections): only for an assistant that may
+      // A server connected by address (Marketplace › Your apps): only for an assistant that may
       // use connected apps (AssistantScope), refused before any card.
       let connection = PluginHost.shared.isConnection(plugin.package)
       if connection, let refusal = assistantRefusal(.connectedApps, taskID: id) {

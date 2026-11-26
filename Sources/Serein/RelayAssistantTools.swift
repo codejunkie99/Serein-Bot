@@ -576,6 +576,13 @@ extension RelayOrchestrator {
     // A memory change goes back off the main thread (`revertMemory`).
     if id.hasPrefix(Self.memoryUndoPrefix) { return .failure("That note changes back on its own path.") }
     // "Stop suggesting routines" goes back: suggestions are on again.
+    // The Allow all upgrade goes back: the level before it, as the person's own choice, so the
+    // upgrade never runs again.
+    if let previous = AssistantMigration.allowAllUndo(entry: id) {
+      desk.undo.remove(id)
+      setLevel(previous)
+      return .success(ReceiptCopy.undone())
+    }
     if id == Self.offersUndoEntry {
       desk.undo.remove(id)
       suggestsRoutines = true

@@ -85,13 +85,14 @@ extension AssistantCoreChecks {
       try files.createDirectory(
         at: browser.library.root.appendingPathComponent("relay", isDirectory: true), withIntermediateDirectories: true)
       let gates = GateSettings.shared
-      let saved = [key, ApprovalLevel.defaultedKey, ApprovalLevel.userSetKey, AllowAllMigration.markerKey].map { ($0, gates.object(forKey: $0)) }
+      let saved = [key, ApprovalLevel.defaultedKey, ApprovalLevel.userSetKey, ApprovalLevel.allowAllMigratedKey, AllowAllMigration.markerKey].map { ($0, gates.object(forKey: $0)) }
       defer { for (key, value) in saved { gates.set(value, forKey: key) } }
       let agent = AgentModel(browser: browser, discoverProviders: false)
       let relay = RelayOrchestrator.start(agent: agent, browser: browser)
       defer { RelayOrchestrator.releaseForChecks(relay) }
 
       gates.set(nil, forKey: AllowAllMigration.markerKey)
+      gates.set(nil, forKey: ApprovalLevel.allowAllMigratedKey)
       gates.set(ApprovalLevel.riskyOnly.storedValue, forKey: key)
       try check(AllowAllMigration.run(gates) == .riskyOnly && relay.level == .proactive, "allow all: the move lifts a running Relay to Allow all")
       let undone = relay.revert(entry: AllowAllMigration.undoEntry, chat: relay.threadID)

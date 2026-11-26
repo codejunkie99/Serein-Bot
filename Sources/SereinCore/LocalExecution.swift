@@ -1,7 +1,7 @@
 import Foundation
 
 /// Execution on this computer: `mac_run` runs a shell command on the person's own Mac, as them, in
-/// their home folder. Their choice in Settings › Connections decides: Never, Ask every time (each
+/// their home folder. Their choice in Marketplace › On this Mac decides: Never, Ask every time (each
 /// command shows on a card, exactly as it will run) or Always allow (the default: a personal
 /// assistant uses the Mac's tools without asking, decided 2026-11-14). Commands that
 /// can do lasting harm ask even under Always (`alwaysAsks`), and nothing runs while nobody is there
@@ -141,7 +141,7 @@ public enum LocalExecution {
   }
 
   public static let offRefusal =
-    "Running commands on the user's Mac is off (Settings › Connections › Run commands on this Mac: Never). Do not ask again; say they can turn it on there if the task needs it."
+    "Running commands on the user's Mac is off (Marketplace › On this Mac › Run commands on this Mac: Never). Do not ask again; say they can turn it on there if the task needs it."
   public static let declined = "The user declined that command. Nothing ran on their Mac."
 
   /// The card for one command: what runs, where and for how long; the command shows whole in the
@@ -158,7 +158,7 @@ public enum LocalExecution {
   /// `mac_run` is the way, while the person has not chosen Never.
   public static func promptLine(_ mode: Mode) -> String {
     if mode == .never {
-      return "Never run shell commands on the user's Mac: they turned that off (Settings › Connections › Run commands on this Mac)."
+      return "Never run shell commands on the user's Mac: they turned that off (Marketplace › On this Mac › Run commands on this Mac)."
     }
     let approval = mode == .ask ? " Serein shows them a card for every command." : ""
     return "Never use your own shell. When a task needs a command on the user's own Mac (their git, files or tools), use mac_run: it is allowed and runs as them in their home folder; keychains, cookies, browser data, Mail, Messages and keys are closed to it." + approval

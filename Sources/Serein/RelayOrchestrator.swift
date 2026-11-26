@@ -1751,6 +1751,13 @@ import SereinCore
     limitedApps[provider.rawValue] = until ?? now.addingTimeInterval(Self.unnamedLimitWait)
     namedLimitResets[provider.rawValue] = until
   }
+  /// Shared with `AppPeerHost` so team-tool limits and chat failover read one limit table.
+  func notePeerLimit(_ provider: Provider, until: Date?, now: Date = Date()) {
+    noteLimited(provider, until: until, now: now)
+  }
+  func limitedProviders(now: Date = Date()) -> Set<String> {
+    Set(limitedApps.filter { $0.value > now }.keys).union(failedApps.filter { $0.value > now }.keys)
+  }
   /// The AI app a usage-limit hold would move to now (`ModelFallback.elsewhere`): the person's
   /// backups from another AI app first, then any other installed, signed-in AI app that can
   /// answer as the assistant, never one whose own limit is still on.
@@ -5719,20 +5726,23 @@ extension RelayOrchestrator {
       ideas = RelayProactive.ideas(in: reply)
     }
     if CommandLine.arguments.contains("--ui-serein-automatic") {
-      // `--ui-serein-automatic`: turns Serein started itself, each as its “why” line: a scheduled
-      // request, one with nothing new (hidden), an alert's change, a webhook and a check-in.
+      // `--ui-serein-automatic`: turns Serein started itself. A webhook, an alert's change and a
+      // scheduled request have their “why” line (one with nothing new is hidden); a check-in and
+      // the brief, last, are plain messages.
       let stamp = RelayToolHost.stamp(now)
       thread.messages += [
         AgentMessage(role: "you", text: RelayHook.prompt(source: "GitHub", body: #"{"action":"opened","pull_request":"Fix checkout"}"#, key: nil)),
         AgentMessage(role: "assistant", text: "GitHub: a pull request “Fix checkout” was opened."),
-        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
-        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
         AgentMessage(role: "you", text: RelayWatch.changePrompt(name: "Flight price to Tokyo", before: "$420", now: "$380")),
         AgentMessage(role: "assistant", text: "The flight to Tokyo dropped from $420 to $380, its lowest this month."),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Back up the shop-web database", repeats: .daily, now: stamp)),
         AgentMessage(role: "assistant", text: "NOTHING NEW"),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Check my inbox and tell me what needs me", repeats: .weekdays, now: stamp)),
         AgentMessage(role: "assistant", text: "Two emails need you: Maya asked about the 4 pm review, and Northwind's invoice is due Friday."),
+        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
+        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
+        AgentMessage(role: "you", text: RelayUnattended.prompt(text: RelayBriefing.text, repeats: .daily, now: stamp)),
+        AgentMessage(role: "assistant", text: "Good morning. Two meetings today, the design review at 4 and dinner with Maya at 7. Nothing ran overnight."),
       ]
     }
     if Self.previewDoHere {

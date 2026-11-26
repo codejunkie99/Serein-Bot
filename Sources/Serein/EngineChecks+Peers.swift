@@ -59,12 +59,15 @@ extension AssistantCoreChecks {
       let self_ = await peers.handle(.ask(agents: [.codex], question: "q"), task: "top")
       notes.check(!self_.isError && self_.text.hasPrefix("Blocked: ") && self_.text.contains("already in this chain"), "An agent cannot call its own CLI")
 
+      // Room for two CLIs on an 8 GB Mac: floor 819 MB, two 700 MB shares, 100 MB over.
+      world.memory.value = RoomSnapshot(totalBytes: 8 << 30, availableBytes: 2_320 * EngineRoom.mb)
       let held = await peers.handle(.burst((1...6).map { PeerJob(agent: .grok, prompt: "HOLD \($0)") }), task: "top")
       notes.check(
-        held.text.components(separatedBy: "grok: working").count - 1 == 4
-          && held.text.components(separatedBy: "queued, not started yet").count - 1 == 2 && held.text.contains("still working")
+        held.text.components(separatedBy: "grok: working").count - 1 == 2
+          && held.text.components(separatedBy: "grok: waiting for memory").count - 1 == 4 && held.text.contains("still working")
           && held.text.contains("Call peer_wait"),
-        "A burst runs four at once for one task and queues the rest, and a call that outlasts its wait says how to keep waiting")
+        "A burst runs as many at once as memory has room for and the rest say they wait for memory, and a call that outlasts its wait says how to keep waiting")
+      world.memory.value = PeerWorld.plenty
       let stopped = await peers.handle(.stop(run: nil), task: "top")
       notes.check(stopped.text.components(separatedBy: "grok: stopped").count - 1 == 6, "Stopping ends the running jobs and the queued ones")
       notes.check(await eventually { world.processes.spawned.allSatisfy { !$0.groupAlive } }, "Every stopped callee's process group is gone")
@@ -93,7 +96,7 @@ extension AssistantCoreChecks {
       let nested = await peers.handle(.burst([PeerJob(agent: .claude, prompt: "HOLD a"), PeerJob(agent: .opencode, prompt: "HOLD b")]), task: grok)
       notes.check(
         nested.text.contains("claude: working") && nested.text.contains("opencode: queued"),
-        "A callee's own calls run one at a time, outside its caller's slots")
+        "A callee's own calls run one at a time")
       notes.check(world.host.callees.first { $0.cli == .claude }?.mayCall == false, "The second level down is not given the team tools")
       guard let claude = world.host.task(of: .claude) else { return notes.check(false, "The nested callee got a browser task") }
       let deep = await peers.handle(.ask(agents: [.opencode], question: "q"), task: claude)
@@ -108,22 +111,234 @@ extension AssistantCoreChecks {
     }
   }
 
+  /// A CLI that reaches its usage or rate limit holds its queued jobs until the reset, then they start by themselves.
+  static func peerQuota(_ check: Check) throws {
+    let top = PeerCaller(thread: ThreadKey("top"), cli: .grok, access: .task(folder: URL(fileURLWithPath: "/tmp/peer-checks")))
+    var limits = Peers.Limits()
+    limits.probeFirst = 0.5
+    limits.probeMost = 1
+    try peerWorld(check, limits: limits) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+      func settles(_ task: String, _ texts: [String]) async -> Bool {
+        for _ in 0..<12 {
+          let said = await peers.handle(.wait(runs: [], seconds: 1), task: task).text
+          if texts.allSatisfy(said.contains) { return true }
+        }
+        return false
+      }
+
+      // Claude Code names its reset in its own event.
+      _ = await peers.handle(.ask(agents: [.codex], question: "HOLD and ask others"), task: "top")
+      guard let codex = world.host.task(of: .codex) else { return notes.check(false, "Quota: the callee got a browser task") }
+      world.gate[.claude] = .init(text: "You've hit your session limit", reset: Date().addingTimeInterval(1.5))
+      let burst = await peers.handle(.burst([PeerJob(agent: .claude, prompt: "TOOL one"), PeerJob(agent: .claude, prompt: "two")]), task: codex)
+      notes.check(started(.claude) == 1 && burst.text.contains("claude: waiting for its limit to reset, starts by itself at"),
+        "Quota: the queued job for that CLI stays unstarted and tells its caller it waits for the reset")
+      notes.check(burst.text.contains("claude: failed: Claude Code reached its usage limit after this job had run tools, so it is not sent again. Its next jobs start by themselves at"),
+        "Quota: a callee that ran tools before its usage limit fails, with when its CLI's jobs start again")
+      let other = await peers.handle(.ask(agents: [.opencode], question: "hi"), task: "top")
+      notes.check(other.text.contains("opencode: answered"), "Quota: other CLIs keep running while one is held")
+      let earlyStart = ContinuousClock.now
+      let early = await peers.handle(.ask(agents: [.claude], question: "three"), task: "top")
+      let earlyElapsed = ContinuousClock.now - earlyStart
+      notes.check(started(.claude) == 1 && early.text.contains("claude: waiting for its limit to reset") && earlyElapsed < .milliseconds(250),
+        "Quota: a new call to the held CLI waits for the reset and returns right away instead of blocking for inlineCap")
+      world.gate[.claude] = nil
+      let resumed = await settles(codex, ["claude says: two"])
+      let third = await settles("top", ["claude says: three"])
+      notes.check(resumed && third && started(.claude) == 3,
+        "Quota: at the reset time the CLI named, the held jobs start by themselves and answer")
+
+      // The provider names its delay in words (OpenAI's, passed on by OpenCode).
+      world.gate[.opencode] = .init(text: "Internal error: Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 1s.")
+      let named = await peers.handle(.ask(agents: [.opencode], question: "named"), task: "top")
+      notes.check(named.text.contains("opencode: waiting for its limit to reset, starts by itself at"),
+        "Quota: a rate limit's delay in the provider's words holds the CLI until then")
+      world.gate[.opencode] = nil
+      let namedDone = await settles("top", ["opencode says: named"])
+      notes.check(namedDone && started(.opencode) == 3, "Quota: the job that met the limit before any tool starts again by itself and answers")
+
+      // No reset named: one job tries on a doubling wait, and an answer releases the rest.
+      world.gate[.opencode] = .init(text: "Internal error: Workspace usage limit reached. Model use is paused until the limit resets.")
+      let before = started(.opencode)
+      let sent = Date()
+      func at(_ seconds: Double) async { try? await Task.sleep(for: .seconds(max(0, seconds - Date().timeIntervalSince(sent)))) }
+      let held = await peers.handle(.burst(["a", "b", "c"].map { PeerJob(agent: .opencode, prompt: $0) }), task: "top")
+      notes.check(held.text.contains("opencode: waiting for its limit to clear, which it named no time for") && !held.text.contains("opencode: failed"),
+        "Quota: with no reset named, the CLI's jobs wait to learn when its limit clears, and none fails")
+      await at(1.1)
+      notes.check(started(.opencode) == before + 4,
+        "Quota: one job tries again after the first wait, not every held job, and jobs refused together count as one refusal")
+      await at(2.1)
+      notes.check(started(.opencode) == before + 5, "Quota: a try still refused doubles the wait before the next one")
+      world.gate[.opencode] = nil
+      let cleared = await settles("top", ["opencode says: a", "opencode says: b", "opencode says: c"])
+      notes.check(cleared && started(.opencode) == before + 8, "Quota: the first try that gets through releases every held job at once")
+
+      // Hard billing / 402 failure with no reset time fails immediately instead of probing forever.
+      world.gate[.claude] = .init(text: "HTTP 402 Payment Required: insufficient credits.")
+      let billing = await peers.handle(.ask(agents: [.claude], question: "bill"), task: "top")
+      notes.check(billing.text.contains("claude: failed:") && billing.text.contains("billing or credit limit"),
+        "Quota: a hard billing or credit error with no reset fails immediately instead of looping")
+      world.gate[.claude] = nil
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+
+    // Second fast world: stale completion guard, maxUnclearProbes cap, faster 429 probes, and safe failover.
+    var fast = Peers.Limits()
+    fast.probeFirst = 0.6
+    fast.rateProbeFirst = 0.12
+    fast.probeMost = 0.6
+    fast.maxUnclearProbes = 1
+    fast.failoverThreshold = 1.5
+    try peerWorld(check, limits: fast) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+
+      // An older in-flight job finishing after an unnamed limit hits must NOT drop the hold.
+      world.gate[.opencode] = .init(text: "Internal error: Workspace usage limit reached. Model use is paused until the limit resets.")
+      let burst = await peers.handle(.burst([
+        PeerJob(agent: .opencode, prompt: "SLOW-INFLIGHT"),
+        PeerJob(agent: .opencode, prompt: "limited-one"),
+      ]), task: "top")
+      notes.check(burst.text.contains("opencode says: SLOW-INFLIGHT")
+        && burst.text.contains("opencode: waiting for its limit to clear"),
+        "Quota: an older in-flight job finishing after a limit hits does not drop the unclear hold")
+      _ = await peers.handle(.stop(run: nil), task: "top")
+
+      // maxUnclearProbes stops infinite retries on an unnamed rate limit (and rateProbeFirst probes fast).
+      world.gate[.claude] = .init(text: "Rate limit exceeded. Try again later.")
+      let capped = await peers.handle(.ask(agents: [.claude], question: "cap"), task: "top")
+      let capSettled = capped.text.contains("claude: failed:") && capped.text.contains("after 1 checks")
+      var sawCap = capSettled
+      if !sawCap {
+        for _ in 0..<10 {
+          let w = await peers.handle(.wait(runs: [], seconds: 1), task: "top").text
+          if w.contains("claude: failed:") && w.contains("after 1 checks") { sawCap = true; break }
+        }
+      }
+      notes.check(sawCap && started(.claude) == 2,
+        "Quota: unnamed rate limit probes on rateProbeFirst and fails cleanly after maxUnclearProbes")
+      world.gate[.claude] = nil
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+
+    // Third fast world: clean holds for safe failover vs short named waits.
+    try peerWorld(check, limits: fast) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+
+      // Safe failover: a long limit (> failoverThreshold) reroutes immediately to a backup CLI.
+      world.host.setFallback { cli, excluded in
+        cli == .claude && !excluded.contains(.codex) ? .codex : nil
+      }
+      world.gate[.claude] = .init(text: "You've hit your session limit", reset: Date().addingTimeInterval(10))
+      let failedOver = await peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top")
+      notes.check(failedOver.text.contains("codex (for claude, at limit): answered")
+        && failedOver.text.contains("codex says: urgent"),
+        "Quota: a long limit fails over immediately to a safe backup CLI and notes the handoff")
+
+      // A second ask while claude is already held fails over up front without calling claude again.
+      let beforeUpfront = started(.claude)
+      let upfront = await peers.handle(.ask(agents: [.claude], question: "second"), task: "top")
+      notes.check(started(.claude) == beforeUpfront
+        && upfront.text.contains("codex (for claude, at limit): answered")
+        && upfront.text.contains("codex says: second"),
+        "Quota: a new call to an already-limited CLI fails over immediately without waiting")
+
+      // A short named wait (<= failoverThreshold) stays on the requested CLI instead of switching.
+      world.host.setFallback { cli, excluded in
+        cli == .opencode && !excluded.contains(.codex) ? .codex : nil
+      }
+      world.gate[.opencode] = .init(text: "Please retry in 0.6s. Rate limit exceeded.")
+      let short = await peers.handle(.ask(agents: [.opencode], question: "brief"), task: "top")
+      world.gate[.opencode] = nil
+      var shortAnswered = short.text.contains("opencode says: brief")
+      if !shortAnswered {
+        for _ in 0..<10 {
+          let w = await peers.handle(.wait(runs: [], seconds: 1), task: "top").text
+          if w.contains("opencode says: brief") { shortAnswered = true; break }
+        }
+      }
+      notes.check(shortAnswered && !short.text.contains("for opencode, at limit"),
+        "Quota: a short named wait stays on the requested CLI instead of failing over")
+      _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+  }
+
+  /// Each CLI's real words at its limit (see the drivers), read for a reset at the shared boundary.
+  static func limitWords(_ check: Check) throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func reset(_ text: String, _ cli: HarnessDriver) -> TimeInterval?? {
+      UsageLimit.text(text, harness: cli, now: now).map { $0.resetsAt.map { $0.timeIntervalSince(now) } }
+    }
+    func delay(_ text: String) -> TimeInterval? { UsageLimit.retryAfter(text, now: now)?.timeIntervalSince(now) }
+    try check(reset("You exceeded your current quota, please check your plan and billing details.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10\nPlease retry in 23.5s.\nSuggested retry after 23s.", .gemini) == .some(23.5),
+      "Gemini: a quota error resets after the delay Google named")
+    try check(reset("You have exhausted your capacity on this model. Your quota will reset after 10m.", .gemini) == .some(600),
+      "Gemini: its capacity limit resets after the time it names")
+    try check(reset("You have exhausted your daily quota on this model.", .gemini) == .some(nil),
+      "Gemini: a daily quota is a usage limit that names no reset")
+    try check(reset("Rate limit exceeded. Try again later.", .gemini) == nil && delay("Rate limit exceeded. Try again later.") == nil,
+      "Gemini: its plain rate limit is no usage limit and names no delay")
+    try check(delay("Internal error: Rate limit reached for gpt-4o in organization org-1 on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 6m0s. Visit https://platform.openai.com/account/rate-limits to learn more.") == 360,
+      "OpenCode: OpenAI's rate limit names its delay")
+    try check(reset("Internal error: Workspace usage limit reached. Model use is paused until the limit resets.", .opencode) == .some(nil),
+      "OpenCode: its own usage limit names no reset")
+    try check(reset("You have hit your ChatGPT usage limit (plus plan). Try again in ~143 min.", .pi) == .some(143 * 60),
+      "Pi: a ChatGPT usage limit resets after the minutes it names")
+    try check(reset("Provider requested 8580000ms wait, exceeds retry.maxDelayMs (300000ms). Original error: You have hit your ChatGPT usage limit (plus plan). Try again in ~143 min.", .ohMyPi) == .some(8_580),
+      "Oh My Pi: its wait in milliseconds names the reset")
+    try check(reset("You\u{2019}ve reached your free Grok Build usage limit for now. Get SuperGrok for much higher limits, or try again later: https://grok.com/supergrok?referrer=grok-build", .grok) == .some(nil),
+      "Grok: its usage limit names no reset")
+    let grokRate = "You\u{2019}ve hit the rate limit for your plan. Upgrade your account or try again later."
+    try check(reset(grokRate, .grok) == nil && delay(grokRate) == nil
+      && HarnessRetry.classify(.message(grokRate)) == .transient(.rateLimited),
+      "Grok: its rate limit names no delay")
+    try check(delay("retry in 0s") == nil && delay("try again in 9999h") == nil, "A delay of nothing or past a week is not believed")
+    try check(delay("Please retry in 30 seconds.") == 30
+      && delay("Please retry in 5 minutes.") == 300
+      && delay("Your quota will reset after 10 minutes.") == 600,
+      "Spelled-out seconds and minutes work with retry in and reset after")
+    try check(delay("Please try again in 2m 30s.") == 150, "Spaced compound delays keep both parts")
+    try check(delay("Please retry in 23.5s. Or try again in 9999h.") == 23.5,
+      "An out-of-horizon delay in the same text does not discard a valid delay")
+    try check(UsageLimit.needsBilling("HTTP 402 Payment Required: insufficient credits")
+      && UsageLimit.needsBilling("errorCode: credits_required")
+      && !UsageLimit.needsBilling("You have exhausted your daily quota on this model.")
+      && !UsageLimit.needsBilling("Workspace usage limit reached."),
+      "Hard billing and credit errors are distinguished from resettable quotas")
+  }
+
   private struct PeerWorld: Sendable {
+    static let plenty = RoomSnapshot(totalBytes: 64 << 30, availableBytes: 48 << 30)
     let peers: Peers
     let host: FakePeerHost
     let processes: PeerProcesses
+    /// The memory reading every callee start sees.
+    let memory: RoomReading
+    let gate: PeerGate
   }
 
-  private static func peerWorld(_ check: Check, _ body: @escaping @Sendable (PeerWorld, PeerNotes) async throws -> Void) throws {
+  private static func peerWorld(_ check: Check, limits: Peers.Limits = Peers.Limits(),
+                                _ body: @escaping @Sendable (PeerWorld, PeerNotes) async throws -> Void) throws {
     let records = RunRecords(root: FileManager.default.temporaryDirectory.appendingPathComponent("peer-checks-\(UUID().uuidString)"))
     defer { try? FileManager.default.removeItem(at: records.root) }
     let processes = PeerProcesses()
-    let drivers: [any Driver] = [HarnessDriver.claude, .codex, .grok, .opencode].map(PeerScript.init)
-    let engines = Engines(drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600))
-    var limits = Peers.Limits()
+    let gate = PeerGate()
+    let drivers: [any Driver] = [HarnessDriver.claude, .codex, .grok, .opencode].map { PeerScript($0, gate: gate) }
+    let memory = RoomReading(PeerWorld.plenty)
+    let engines = Engines(
+      drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600),
+      room: EngineRoom(sample: { memory.value }, footprint: { _ in nil }, tick: .milliseconds(5)))
+    var limits = limits
     limits.inlineCap = .milliseconds(400)
     let host = FakePeerHost()
-    let world = PeerWorld(peers: Peers(engines: engines, host: host, limits: limits), host: host, processes: processes)
+    let world = PeerWorld(peers: Peers(engines: engines, host: host, limits: limits), host: host, processes: processes, memory: memory, gate: gate)
     let done = DispatchSemaphore(value: 0)
     let box = PeerResult()
     let notes = PeerNotes()
@@ -162,9 +377,13 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   private let lock = NSLock()
   private var seen: [PeerCallee] = []
   private var closed: [String] = []
+  private var fallbackPicker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?
   var callees: [PeerCallee] { lock.withLock { seen } }
   var released: [String] { lock.withLock { closed } }
   func task(of cli: HarnessDriver) -> String? { callees.first { $0.cli == cli }.map { "task:" + $0.thread.id } }
+  func setFallback(_ picker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?) {
+    lock.withLock { fallbackPicker = picker }
+  }
 
   func request(for callee: PeerCallee) async throws -> TurnRequest {
     lock.withLock { seen.append(callee) }
@@ -174,15 +393,36 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   }
 
   func release(task: String) async { lock.withLock { closed.append(task) } }
+
+  func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver? {
+    let picker = lock.withLock { fallbackPicker }
+    return picker?(cli, excluding)
+  }
+}
+
+/// A CLI's limit, switched on by a check: each turn fails with `text`, after a tool step when
+/// the prompt says TOOL, and with Claude Code's own event when `reset` is set.
+private final class PeerGate: @unchecked Sendable {
+  struct Refusal { var text: String; var reset: Date? = nil }
+  private let lock = NSLock()
+  private var refusals: [HarnessDriver: Refusal] = [:]
+  subscript(cli: HarnessDriver) -> Refusal? {
+    get { lock.withLock { refusals[cli] } }
+    set { lock.withLock { refusals[cli] = newValue } }
+  }
 }
 
 /// A fake CLI that answers by what it is asked: HOLD works until stopped, FAIL fails OpenCode,
 /// and a bridge's writer and reviewer agree on the second draft.
 private struct PeerScript: Driver {
   let cli: HarnessDriver
+  let gate: PeerGate
   let cardWait = Duration.seconds(118)
 
-  init(_ cli: HarnessDriver) { self.cli = cli }
+  init(_ cli: HarnessDriver, gate: PeerGate) {
+    self.cli = cli
+    self.gate = gate
+  }
 
   func contract(for request: TurnRequest, network: ShellNetwork.Plan) throws -> LaunchContract {
     LaunchContract(request, arguments: [], environment: [:], expectedMode: .reports(["approvalPolicy": "never"]), network: network)
@@ -190,7 +430,7 @@ private struct PeerScript: Driver {
 
   func open(_ process: EngineProcess, contract: LaunchContract, request: TurnRequest) async throws -> any EngineSession {
     let mode = try ModeCheck.verify(contract.expectedMode, reported: ["approvalPolicy": "never"], argv: contract.argv).get()
-    return PeerSession(cli: cli, mode: mode)
+    return PeerSession(cli: cli, mode: mode, gate: gate)
   }
 
   func probe(executable: URL) async -> Readiness { .ready(version: "1") }
@@ -201,10 +441,12 @@ private final class PeerSession: EngineSession, @unchecked Sendable {
   let wire: AsyncStream<WireEvent>
   private let continuation: AsyncStream<WireEvent>.Continuation
   private let cli: HarnessDriver
+  private let gate: PeerGate
 
-  init(cli: HarnessDriver, mode: VerifiedMode) {
+  init(cli: HarnessDriver, mode: VerifiedMode, gate: PeerGate) {
     self.cli = cli
     self.mode = mode
+    self.gate = gate
     (wire, continuation) = AsyncStream<WireEvent>.makeStream()
   }
 
@@ -212,7 +454,19 @@ private final class PeerSession: EngineSession, @unchecked Sendable {
     let asked = prompt.message
     continuation.yield(.accepted)
     if asked.contains("HOLD") { continuation.yield(.text("working on it")); return }
+    if asked.contains("SLOW-INFLIGHT") {
+      try? await Task.sleep(for: .milliseconds(120))
+      continuation.yield(.text("\(cli.rawValue) says: \(asked)"))
+      continuation.yield(.turnDone(.endTurn))
+      return
+    }
     if asked.contains("FAIL"), cli == .opencode { continuation.yield(.turnDone(.failed("boom"))); return }
+    if let refusal = gate[cli] {
+      if asked.contains("TOOL") { continuation.yield(.toolStarted(id: "t1", name: "bash", arguments: "{}", shellCommand: "ls")) }
+      if let reset = refusal.reset { continuation.yield(.limitReached(UsageLimit(resetsAt: reset))) }
+      continuation.yield(.failed(refusal.text))
+      return
+    }
     let reply: String
     if asked.hasPrefix("Review this draft") {
       reply = asked.contains("draft v2") ? "APPROVED, ship it." : "Add the rollback step."

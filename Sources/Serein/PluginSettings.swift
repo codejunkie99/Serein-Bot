@@ -2,7 +2,7 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// Settings › Plugins: Add Plugin (a folder, a GitHub link or the plugin index), the import from
+/// Marketplace › Plugins: Add Plugin (a folder, a GitHub link or the plugin index), the import from
 /// the person's other AI apps, and one card per plugin: its mark, version or origin, its switch,
 /// and under the chevron what it may reach, its tools, keys, skills, update and Remove….
 struct PluginSettings: View {
@@ -18,7 +18,7 @@ struct PluginSettings: View {
   @State private var importing = false
 
   var body: some View {
-    // Servers connected by address live in Settings › Connections.
+    // Servers connected by address live in Marketplace › Your apps.
     let plugins = host.packages.filter { !host.isConnection($0) }
     VStack(alignment: .leading, spacing: 24) {
       HStack(alignment: .top, spacing: 16) {

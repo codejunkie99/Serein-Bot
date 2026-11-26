@@ -1,4 +1,4 @@
-/// The status line under each app in Settings › Connections: one or two words. What the app may
+/// The status line under each app in the Marketplace (Your apps, On this Mac): one or two words. What the app may
 /// do lives behind the row's chevron and the list's info button, not in the row.
 public enum ConnectionStatusWords {
   public static let on = "On"

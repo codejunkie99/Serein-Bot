@@ -3,7 +3,7 @@ import SereinCore
 import SwiftUI
 
 /// Suggested things to ask Serein with the apps the person connected (IntegrationIdeas): buttons
-/// under each connected app in Settings › Connections, and the examples of a new chat. A click is
+/// under each connected app in the Marketplace (Your apps, On this Mac), and the examples of a new chat. A click is
 /// the person's own message: Settings closes, Serein's chat shows and the words are sent. Every
 /// step that sends, changes or deletes still asks on its card.
 @MainActor enum SereinIdeas {

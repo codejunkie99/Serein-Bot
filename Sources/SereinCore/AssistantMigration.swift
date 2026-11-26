@@ -140,7 +140,10 @@ public enum AssistantMigration {
       learnsNotes: defaults.object(forKey: learnsKey) as? Bool,
       computer: gates.object(forKey: ComputerPolicy.enabledKey) as? Bool, canRunBuiltIn: canRunBuiltIn)
     func store(_ key: String) -> any SettingsStore {
-      [autopilotKey, proactiveKey, ApprovalLevel.defaultedKey, ComputerPolicy.enabledKey, ComputerPolicy.autoSetUpKey].contains(key)
+      [
+        autopilotKey, proactiveKey, ApprovalLevel.defaultedKey, ApprovalLevel.allowAllMigratedKey,
+        ComputerPolicy.enabledKey, ComputerPolicy.autoSetUpKey,
+      ].contains(key)
         ? gates : defaults as any SettingsStore
     }
     for write in writes {
@@ -154,5 +157,52 @@ public enum AssistantMigration {
     }
     defaults.set(1, forKey: flagKey)
     return writes
+  }
+
+  /// One-time upgrade to Allow all (`ApprovalLevel.proactive`), returning the writes and the
+  /// previous level so the app can show a receipt with Undo. Passwords and payments stay behind
+  /// the secure card. Returns nil if already migrated or if the user explicitly set a level.
+  public static func allowAllUpgrade(
+    stored: Any?, userSet: Bool, migrated: Bool
+  ) -> (writes: [Write], previous: ApprovalLevel)? {
+    guard !migrated, !userSet else { return nil }
+    let previous = ApprovalLevel.resolve(stored: stored)
+    let writes: [Write] = [
+      .string(autopilotKey, ApprovalLevel.proactive.rawValue),
+      .bool(ApprovalLevel.allowAllMigratedKey, true),
+      .bool(ApprovalLevel.defaultedKey, true),
+    ]
+    return (writes, previous)
+  }
+
+  /// The Undo entry on the Allow all receipt; the level it replaced follows the prefix.
+  public static let allowAllUndoPrefix = "setting:allow-all-from:"
+
+  /// The Allow all upgrade at launch, after `run`: the person's own choice is read from
+  /// `defaults` (`ApprovalLevel.userSetKey`), the level and its flag from `gates`. Applies the
+  /// writes and returns the receipt for the chat, with Undo back to the level it replaced. nil
+  /// when there is nothing to show: done before, a level the person chose, or a level that was
+  /// Allow all already (a fresh install, which `run` gave Allow all).
+  @discardableResult public static func allowAllLaunch(_ defaults: UserDefaults, gates: any SettingsStore) -> Receipt? {
+    guard let upgrade = allowAllUpgrade(
+      stored: gates.object(forKey: autopilotKey), userSet: defaults.bool(forKey: ApprovalLevel.userSetKey),
+      migrated: gates.bool(forKey: ApprovalLevel.allowAllMigratedKey))
+    else { return nil }
+    for case .bool(let key, let value) in upgrade.writes { gates.set(value, forKey: key) }
+    for case .string(let key, let value) in upgrade.writes { gates.set(value, forKey: key) }
+    guard upgrade.previous != .proactive else { return nil }
+    return Receipt(
+      kind: .assistantChanged, line: "Done. Serein now goes ahead without asking.",
+      card: .banner(
+        title: ApprovalLevel.proactive.title,
+        detail: "Before it was \(upgrade.previous.title). Paying and passwords still go to a secure card you fill.",
+        action: "Undo"),
+      undo: UndoToken(entry: allowAllUndoPrefix + upgrade.previous.rawValue, kind: .assistantChanged))
+  }
+
+  /// The level an Allow all receipt's Undo puts back; nil for any other entry.
+  public static func allowAllUndo(entry: String) -> ApprovalLevel? {
+    guard entry.hasPrefix(allowAllUndoPrefix) else { return nil }
+    return ApprovalLevel(rawValue: String(entry.dropFirst(allowAllUndoPrefix.count)))
   }
 }

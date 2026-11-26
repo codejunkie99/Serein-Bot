@@ -150,8 +150,8 @@ import SwiftUI
   }
 
   /// Connect on an app that is not connected: with a Composio key kept, the same sign-in as
-  /// Settings › Connections' chips and the connect card (Composio's page in the person's own
-  /// browser, never an agent tab); without one, Settings › Connections, where the key is asked.
+  /// the Marketplace's chips and the connect card (Composio's page in the person's own
+  /// browser, never an agent tab); without one, the Marketplace (Your apps, On this Mac), where the key is asked.
   /// The list never holds a key field.
   private static func connect(_ slug: String, name: String, addApp: (() -> Void)?) {
     let apps = ComposioApps.shared
@@ -339,7 +339,7 @@ struct ComposerAddButton: View {
   let docked: Bool
   /// Teach a skill: the skill sheet with an empty draft.
   let teach: () -> Void
-  /// Add an app…: Settings › Connections.
+  /// Add an app…: the Marketplace (Your apps, On this Mac).
   let addApp: () -> Void
   @ObservedObject private var surface = SereinSurface.main
   @ObservedObject private var dropdown = ComposerDropdown.shared
@@ -564,7 +564,7 @@ private struct AddListMark: View {
       .background(p.wash(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
       .accessibilityHidden(true)
   }
-  /// As Settings › Plugins draws it: the AI app's mark for an imported one, GitHub's for one from
+  /// As Marketplace › Plugins draws it: the AI app's mark for an imported one, GitHub's for one from
   /// GitHub, else a plain glyph.
   @ViewBuilder private func plugin(_ id: String) -> some View {
     let host = PluginHost.shared

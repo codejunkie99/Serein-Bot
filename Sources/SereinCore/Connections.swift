@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mail and Messages through the Apple apps on this Mac (Settings › Connections). Every account in
+/// Mail and Messages through the Apple apps on this Mac (Marketplace › On this Mac). Every account in
 /// macOS Internet Accounts (iCloud, Gmail, Outlook and the rest) reaches Serein through Mail, so
 /// no password or token is ever held. Pure: the switches, the tools and their gate, the caps, the
 /// fixed AppleScript and the Messages database rules, so SereinChecks can check them. The app runs
@@ -162,10 +162,10 @@ public enum Connections {
   private static let lineCode = try! NSRegularExpression(
     pattern: #"(?m)^[ \t\x{00A0}]*((?:[0-9]{4,8}|[0-9]{3,4}[ -][0-9]{3,4}))[ \t\x{00A0}]*$"#)
   public static func offRefusal(_ connection: Connection) -> String {
-    "\(connection.label) is turned off in Settings › Connections. Tell the person they can turn it on there."
+    "\(connection.label) is turned off in Marketplace › On this Mac. Tell the person they can turn it on there."
   }
   public static let readingOffRefusal =
-    "Reading Messages is off. Tell the person they can turn on Let Serein read Messages in Settings › Connections and choose conversations."
+    "Reading Messages is off. Tell the person they can turn on Let Serein read Messages in Marketplace › On this Mac and choose conversations."
   public static let fullDiskRefusal =
     "Serein cannot open the Messages database: Full Disk Access for Serein is off. Tell the person to turn on Serein in System Settings › Privacy & Security › Full Disk Access, or to leave reading off."
   public static func automationRefusal(_ connection: Connection) -> String {

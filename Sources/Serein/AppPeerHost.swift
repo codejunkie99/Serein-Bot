@@ -94,4 +94,36 @@ struct AppPeerHost: PeerHost {
   func release(task: String) async {
     await MainActor.run { browser.endTask(task) }
   }
+
+  /// Picks another installed, signed-in, non-pay-per-use CLI (same rule as `LimitFailover.allowed`)
+  /// in the user's backup order first, then free or existing-plan apps, skipping any CLI in `excluding`
+  /// or currently limited in chat.
+  func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver? {
+    await MainActor.run {
+      guard let relay = RelayController.shared?.relay else { return nil }
+      let fromProvider = Provider(cli)
+      guard let current = relay.agent.routes(fromProvider, models: [""], project: true).first else { return nil }
+      let now = Date()
+      let limited = Set(excluding.map { Provider($0).rawValue }).union(relay.limitedProviders(now: now))
+      let canUse = { (provider: Provider) -> Bool in
+        guard let driver = provider.driver, !excluding.contains(driver) else { return false }
+        return HarnessRegistry.shared.executable(provider) != nil
+          && HarnessRegistry.shared.snapshot(provider)?.signedIn != false
+      }
+      let backups = ModelBackups.shared.entries.filter { canUse($0.provider) }
+        .compactMap { relay.agent.routes($0.provider, models: [$0.model], project: true).first }
+        .filter { LimitFailover.allowed(from: current, to: $0) }
+      let others = Provider.allCases.filter(canUse)
+        .compactMap { relay.agent.routes($0, models: [""], project: true).first }
+        .filter { LimitFailover.allowed(from: current, to: $0) }
+      guard let step = ModelFallback.elsewhere(current: current, backups: backups, others: others, limited: limited) else {
+        return nil
+      }
+      return Provider(rawValue: step.route.provider).driver
+    }
+  }
+
+  func noteLimit(cli: HarnessDriver, until: Date?) async {
+    await MainActor.run { RelayController.shared?.relay.notePeerLimit(Provider(cli), until: until) }
+  }
 }

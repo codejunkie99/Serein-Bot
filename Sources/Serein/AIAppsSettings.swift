@@ -1,24 +1,22 @@
 import SereinCore
 import SwiftUI
 
-/// Settings › AI apps (id "Agents"): one row per AI app (`HarnessSettingsSection`), each opening
-/// its own page (`HarnessAppSettings`); New chats (what new chats start with, in Serein's own
-/// picker with the app logos; the effort; Task permissions, which still asks before Full access);
-/// On this Mac (Mac access, Background helpers, Other agents that use Serein), each
-/// its own sub-page; and one More fold for the rest (Fast steps · Beta, Delete threads, the
-/// projects always allowed to edit, Agent history, the Codex note).
+/// Settings › AI apps (id "Agents"; docs/demos/simple-settings.decision.md): the app Serein thinks
+/// with, then one row per AI app (`HarnessSettingsSection`), each opening its own page
+/// (`HarnessAppSettings`). Everything else folds under Advanced: New chats (what new chats start
+/// with, the effort, Asks before, all three also in the message box), Model providers, Background
+/// helpers, Other agents that use Serein, Delete threads, Fast steps · Beta, the projects always
+/// allowed to edit and Agent history. Mac permissions are on Privacy.
 struct AIAppsSettings: View {
   @ObservedObject var browser: BrowserModel
   @ObservedObject var agent: AgentModel
-  /// The More fold; `--ui-settings-advanced` opens it in a preview.
-  @Binding var more: Bool
   @Environment(\.settingsNavigation) private var nav
   var body: some View {
     // One page (`SettingsInline`): only an AI app's own page opens in its place.
     if let key = nav.key(0), AIAppsKey.titles[key] == nil {
       HarnessAppSettings(agent: agent, key: key)
     } else {
-      AIAppsPage(browser: browser, agent: agent, more: $more) { key in section(key) }
+      AIAppsPage(browser: browser, agent: agent) { key in section(key) }
     }
   }
   private func section(_ key: String) -> AnyView {
@@ -26,7 +24,6 @@ struct AIAppsSettings: View {
   }
   @ViewBuilder private func sub(_ key: String) -> some View {
     switch key {
-    case AIAppsKey.mac: AIAppsMacAccess()
     case AIAppsKey.helpers:
       SettingsPageHeader("Background helpers", sentence: "Small jobs your AI app does on its own. Each switch says what it sends.")
       FeatureSettings()
@@ -42,46 +39,50 @@ struct AIAppsSettings: View {
   }
 }
 
-/// The sub-pages of AI apps that are not an AI app's own page (those are its driver's name).
+/// The parts of AI apps that are not an AI app's own page (those are its driver's name).
 enum AIAppsKey {
+  /// Mac access moved to Privacy (`PrivacyKey.mac`); a request for it opens there (`ReferenceSettings`).
   static let mac = "mac"
+  static let defaultApp = "default-app"
+  static let newChats = "new-chats"
   static let helpers = "helpers"
   static let outside = "outside"
-  /// The sections under New chats, in page order.
-  static let order = [mac, helpers, outside]
+  /// The headed sections inside Advanced, in page order.
+  static let order = [helpers, outside]
+  /// Every part a request scrolls to, by key.
   static let titles: [String: String] = [
-    mac: "Mac access", helpers: "Background helpers", outside: "Other agents that use Serein",
+    defaultApp: "Serein thinks with", newChats: "New chats", helpers: "Background helpers",
+    outside: "Other agents that use Serein",
   ]
 }
 
 private struct AIAppsPage: View {
   @ObservedObject var browser: BrowserModel
   @ObservedObject var agent: AgentModel
-  @Binding var more: Bool
   /// Draws one former sub-page as its section.
   let section: (String) -> AnyView
   @ObservedObject private var registry = HarnessRegistry.shared
   @ObservedObject private var codexCatalog = CodexCatalog.shared
   var body: some View {
-    VStack(alignment: .leading, spacing: 32) {
-      HarnessSettingsSection(agent: agent)
-      DirectProviderSettings()
-      SettingsRowList("New chats") {
-        startsWith
-        if !effortLevels.isEmpty { effortRow }
-        permissionsRow
+    VStack(alignment: .leading, spacing: 24) {
+      if let controller = RelayController.shared {
+        RelayDefaultAppSettings(relay: controller.relay, agent: agent).id(AIAppsKey.defaultApp)
       }
-      ForEach(AIAppsKey.order, id: \.self) { key in section(key) }
-      DisclosureGroup(isExpanded: $more) {
-        VStack(alignment: .leading, spacing: 24) {
-          ThreadDeletionSettings(agent: agent)
-          FastStepsSettings()
-          EditApprovalSettings(browser: browser)
-          AgentHistorySettings(browser: browser)
-        }.padding(.top, 16)
-      } label: {
-        Text("More").font(AssistantType.name)
-      }.id("Advanced")
+      HarnessSettingsSection(agent: agent)
+      SettingsAdvanced(page: "Agents", count: 9) {
+        SettingsRowList("New chats", note: "The message box picks these for each chat too.") {
+          startsWith
+          if !effortLevels.isEmpty { effortRow }
+          permissionsRow
+        }.id(AIAppsKey.newChats)
+        DirectProviderSettings()
+        ForEach(AIAppsKey.order, id: \.self) { key in section(key) }
+        ThreadDeletionSettings(agent: agent)
+        FastStepsSettings()
+        EditApprovalSettings(browser: browser)
+        AgentHistorySettings(browser: browser)
+      }
+      SettingsMovedNote("Mac permissions are in Settings › Privacy.")
     }
   }
 
@@ -156,14 +157,14 @@ private struct AIAppsPage: View {
   }
 }
 
-/// AI apps › Mac access: Full Disk Access, the Mac permissions, and Let assistants work in the
-/// background (MacBackground; off by default).
-private struct AIAppsMacAccess: View {
+/// Privacy › Mac permissions (it was Privacy › Mac permissions): Full Disk Access, the Mac permissions,
+/// and Let assistants work in the background (MacBackground; off by default).
+struct MacPermissionsSettings: View {
   @GateStorage(MacBackgroundPolicy.enabledKey) var macBackground = false
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
-      SettingsPageHeader("Mac access", sentence: "For tasks sent to Anywhere: AI apps see and operate Mac apps, one approved step at a time.")
-      SettingsBlock("Mac access") {
+      SettingsPageHeader("Mac permissions", sentence: "For tasks sent to Anywhere: AI apps see and operate Mac apps, one approved step at a time.")
+      SettingsBlock("Mac permissions") {
         FullDiskAccessWarning()
         MacAccessRows()
         Toggle("Let assistants work in the background", isOn: $macBackground)

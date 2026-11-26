@@ -46,7 +46,7 @@ import SwiftUI
   }
 
   static func composioOffMessage(_ name: String) -> String {
-    "\(name) connects through Composio. Turn on Connected apps (Composio) in Settings › Connections first."
+    "\(name) connects through Composio. Turn on Connected apps (Composio) in Marketplace › Your apps first."
   }
 
   func connect(_ connector: ConnectorCatalog.Connector) {
@@ -209,48 +209,6 @@ struct OneClickConnectPill: View {
   }
   private func start() {
     if connector.signIn.key != nil { keyFor = connector } else { model.connect(connector) }
-  }
-}
-
-/// Settings › Connections › Apps: every one-click app, connected first, each with its Connect.
-struct OneClickConnectorRows: View {
-  @ObservedObject private var model = OneClickConnect.shared
-  @ObservedObject private var host = PluginHost.shared
-  @ObservedObject private var composio = ComposioApps.shared
-  @ObservedObject private var watch = ConnectionWatch.shared
-  @Environment(\.palette) private var p
-  @State private var keyFor: ConnectorCatalog.Connector?
-  var body: some View {
-    let apps = ConnectorCatalog.all.sorted { (model.isConnected($0) ? 0 : 1, $0.name) < (model.isConnected($1) ? 0 : 1, $1.name) }
-    VStack(alignment: .leading, spacing: 8) {
-      SettingsCaption("Apps", info: "Connect signs in to the app in your browser; Serein keeps the sign-in in your Keychain. What Serein reads from an app is sent to the AI app you chose so it can answer, and it asks you before anything that changes something.")
-      VStack(spacing: 0) {
-        ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
-          row(app).overlay(alignment: .top) { if index > 0 { Rectangle().fill(p.line).frame(height: 1) } }
-        }
-      }.card(p)
-    }
-    .sheet(item: $keyFor) { app in KeyConnectSheet(connector: app) }
-  }
-  private func start(_ app: ConnectorCatalog.Connector) {
-    if app.signIn.key != nil { keyFor = app } else { model.connect(app) }
-  }
-  private func row(_ app: ConnectorCatalog.Connector) -> some View {
-    HStack(spacing: 12) {
-      AppLogoTile(id: app.id, name: app.name, size: 30)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(app.name).role(.body)
-        Text(app.does + MarketplaceApps.signInNote(app)).role(.meta)
-      }
-      Spacer(minLength: 8)
-      switch (model.isConnected(app), model.steps[app.id]) {
-      case (true, _): Text("Connected").role(.meta)
-      case (false, .working?): ProgressView().controlSize(.small)
-      case (false, .failed(let why)?):
-        Button("Try again") { start(app) }.help(why)
-      default: Button("Connect") { start(app) }
-      }
-    }.padding(.horizontal, 16).padding(.vertical, 10)
   }
 }
 

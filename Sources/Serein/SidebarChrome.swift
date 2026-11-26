@@ -144,7 +144,7 @@ struct SidebarSectionHeading: View {
     if let hide {
       Button("Hide", action: hide).buttonStyle(QuietButton()).font(UIStyle.micro)
         .opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
-        .help("Hide \(title). Settings › Appearance shows it again.").accessibilityLabel("Hide \(title)")
+        .help("Hide \(title). Settings › General shows it again.").accessibilityLabel("Hide \(title)")
     } else {
       Button { setFolded(!folded) } label: {
         InterfaceIcon(systemName: folded ? "arrow.up.left.and.arrow.down.right" : "minus", size: 11)

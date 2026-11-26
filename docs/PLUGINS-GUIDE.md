@@ -58,7 +58,7 @@ Add `serein-plugin.json` and a stdio [MCP](https://modelcontextprotocol.io) serv
   - `pay`: moves money.
   - With Settings › Assistants › Asks first set to Only risky steps, `read` and `write` tools run on their own; with Every step they ask. `send`, `delete` and `pay` always ask the user first.
 - **`mcp.command`** is either a file in your folder (`./bin/server`) or a system interpreter with your script in `args`.
-- **`env`** names the secrets your server needs. The user types them in Settings › Plugins, they are kept in the Keychain, and your server gets them as environment variables.
+- **`env`** names the secrets your server needs. The user types them in Marketplace › Plugins, they are kept in the Keychain, and your server gets them as environment variables.
 - **`permissions.network`** lists the hosts you call; leave it out for no network.
 - **`permissions.files: "plugin-data"`** gives you a folder of your own, at `$SEREIN_PLUGIN_DATA`.
 
@@ -73,7 +73,7 @@ Every call passes Serein’s policy, and agent history records it. If your tool'
 
 ## Try it
 
-1. In Serein, open Settings › Plugins › Add plugin…, choose your folder and read the review.
+1. In Serein, open Marketplace › Plugins › Add Plugin › From a Folder…, choose your folder and read the review.
 2. Turn the plugin on. Serein starts your server once and checks that it offers every tool you listed.
 3. Press ⌥Space and ask Serein to use it.
 
@@ -81,7 +81,7 @@ The checks in this repository use the same path: `.build/debug/Serein --verify-p
 
 ## Share it
 
-Push the folder to a public GitHub repository. Anyone can then add it in Settings › Plugins › Add from GitHub… by pasting a link such as `github.com/you/serein-weather` or `github.com/you/plugins/tree/main/weather`.
+Push the folder to a public GitHub repository. Anyone can then add it in Marketplace › Plugins › Add Plugin › From GitHub… by pasting a link such as `github.com/you/serein-weather` or `github.com/you/plugins/tree/main/weather`.
 
 Serein installs exactly one commit:
 - every file must match that commit's Git blob id;

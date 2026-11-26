@@ -14,7 +14,7 @@ public enum AllowAllMigration {
   /// already Allow all (a fresh install), or the store keeps nothing (an unreadable gates file
   /// reads as Every step and takes no write, so it is tried again at the next launch).
   @discardableResult public static func run(_ gates: any SettingsStore) -> ApprovalLevel? {
-    guard gates.object(forKey: markerKey) == nil else { return nil }
+    guard gates.object(forKey: markerKey) == nil, !gates.bool(forKey: ApprovalLevel.allowAllMigratedKey) else { return nil }
     let key = AssistantMigration.autopilotKey
     let before = ApprovalLevel.resolve(stored: gates.object(forKey: key))
     gates.set(before.rawValue, forKey: markerKey)

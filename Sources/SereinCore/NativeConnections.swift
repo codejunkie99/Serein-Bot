@@ -1,6 +1,6 @@
 import Foundation
 
-/// Calendar, Reminders, Contacts and Notes on this Mac (Settings › Connections): the tools an agent
+/// Calendar, Reminders, Contacts and Notes on this Mac (Marketplace › On this Mac): the tools an agent
 /// gets for each, what each tool does to the person's data (`effect`, judged by
 /// `ApprovalDoor.answer`), and the words the prompt and the settings rows use. Off
 /// until the person turns one on; the host checks the switch on every call
@@ -102,13 +102,13 @@ public enum NativeConnection: String, CaseIterable, Sendable {
   public static let changedSinceCard =
     "It changed after the card was shown, so nothing was changed. Read it again and ask again."
   public var scheduledOff: String {
-    "Scheduled tasks and alerts may use \(label) only while its “Scheduled tasks may use this” is on in Settings › Connections, and webhooks never may. Nothing was read or changed. Tell the person."
+    "Scheduled tasks and alerts may use \(label) only while its “Scheduled tasks may use this” is on in Marketplace › On this Mac, and webhooks never may. Nothing was read or changed. Tell the person."
   }
   public var turnedOff: String {
-    "\(label) is turned off in Settings › Connections. Nothing was read or changed. Tell the person they can turn it on there."
+    "\(label) is turned off in Marketplace › On this Mac. Nothing was read or changed. Tell the person they can turn it on there."
   }
   public var noAccess: String {
-    "macOS has not given Serein access to \(label). Nothing was read or changed. Tell the person to allow it in Settings › Connections."
+    "macOS has not given Serein access to \(label). Nothing was read or changed. Tell the person to allow it in Marketplace › On this Mac."
   }
 
   // MARK: prompt words

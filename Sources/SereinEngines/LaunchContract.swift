@@ -28,6 +28,9 @@ struct LaunchContract: Sendable {
   /// environment policy), so its own process keeps its environment. Any other driver gets the
   /// proxy environment from `guarded()`.
   var routesOwnShells = false
+  /// Extra opaque inputs that alter process reuse (`warmKey`) without leaking synthetic env vars
+  /// into child processes.
+  var warmTags: [String: String] = [:]
 
   init(
     _ request: TurnRequest, arguments: [String], resumeArguments: [String] = [], environment: [String: String],
@@ -88,7 +91,7 @@ struct LaunchContract: Sendable {
   /// Everything a running process never re-reads. A level change always gets a new process, so a
   /// warm one can never keep a looser mode.
   var warmKey: WarmKey {
-    WarmKey([
+    var values: [String: String] = [
       "executable": executable.path,
       "arguments": arguments.joined(separator: "\0"),
       "stablePrompt": stablePrompt,
@@ -99,7 +102,9 @@ struct LaunchContract: Sendable {
       "opensHome": opensHome ? "1" : "0",
       "sandbox": sandboxProfile ?? "",
       "browser": browser.map { ([$0.command.path] + $0.arguments).joined(separator: "\0") } ?? "",
-    ])
+    ]
+    for (k, v) in warmTags { values["tag:\(k)"] = v }
+    return WarmKey(values)
   }
 }
 

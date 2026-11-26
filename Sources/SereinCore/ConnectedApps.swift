@@ -1,6 +1,6 @@
 import Foundation
 
-/// Connected apps through Composio (Settings › Connections): the pure half. Composio keeps the
+/// Connected apps through Composio (Marketplace › Your apps): the pure half. Composio keeps the
 /// person's sign-ins to their apps; Serein keeps only the Composio key and calls Composio itself,
 /// so an agent sees two bridge tools and never the key. Every tool is read or write by its own
 /// words (`kind`): a read runs like a page read, a write always asks with the exact arguments,
@@ -308,7 +308,7 @@ public enum ConnectedApps {
     return [
       "apps_untrusted": UntrustedText.wrap("connected_app", jsonString(rows)),
       "note": accounts.isEmpty
-        ? "The user has connected no apps. They connect one in Settings › Connections."
+        ? "The user has connected no apps. They connect one in Marketplace › Your apps."
         : "Apps the user connected. Give app to connected_app_tools to see its tools. Only status Working works.",
     ]
   }
@@ -383,23 +383,23 @@ public enum ConnectedApps {
 
   public static let webhookMessage = "Connected apps are never used in a run a webhook started. Nothing was sent."
   public static let unattendedOffMessage =
-    "Connected apps are off for scheduled tasks. The user can turn on Scheduled tasks may use this in Settings › Connections. Nothing was sent."
+    "Connected apps are off for scheduled tasks. The user can turn on Scheduled tasks may use this in Marketplace › Your apps. Nothing was sent."
   public static let readOnlyMessage =
-    "The user lets Serein only read through connected apps. They can allow changes in Settings › Connections. Nothing was sent."
+    "The user lets Serein only read through connected apps. They can allow changes in Marketplace › Your apps. Nothing was sent."
   public static func assistantReadOnly(_ name: String) -> String {
     "\(name) may only read through connected apps. Nothing was sent; ask the user to do this one."
   }
   public static func blockedMessage(_ slug: String) -> String {
-    "The user blocked \(slug) in Settings › Connections. Do not use it."
+    "The user blocked \(slug) in Marketplace › Your apps. Do not use it."
   }
   public static let unversionedMessage =
     "Composio gave no version for this tool, so Serein cannot be sure it runs what the card showed. Nothing was sent."
   public static let offMessage =
-    "Connected apps are off. The user turns them on in Settings › Connections › Connected apps (Composio)."
+    "Connected apps are off. The user turns them on in Marketplace › Your apps › Connected apps (Composio)."
   /// No ready account for the app a call names (ComposioApps.account); the chat's connect card
   /// reads it by these words (ConnectNeed).
   public static func noAccountMessage(_ app: String) -> String {
-    "The user has no connected \(name(app)) account. They connect one in Settings › Connections."
+    "The user has no connected \(name(app)) account. They connect one in Marketplace › Your apps."
   }
   public static let scheduledMessage =
     "Connected apps never change anything in a scheduled task: every write needs the user there to approve it. Reads still work."
@@ -407,7 +407,7 @@ public enum ConnectedApps {
     "The arguments hold a link with query details, a key, a token or a password. Serein does not send those to a connected app, so nothing was sent. Leave that part out or ask the user."
   public static let limitMessage = "The user did not allow more changes through connected apps in this task. Nothing was sent."
 
-  /// Settings › Connections, said before the key is saved (the person's words for it).
+  /// Marketplace › Your apps, said before the key is saved (the person's words for it).
   public static let setupText =
     "Composio keeps the sign-ins for the apps you connect and your data passes through its servers. Serein keeps only your Composio key, in Keychain. Composio may charge for use."
   public static let privacyText =

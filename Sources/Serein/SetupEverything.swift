@@ -414,8 +414,8 @@ import SwiftUI
       // Other browsers do not let another app read their passwords; a file is the way.
       let byFile =
         source == "Safari" || source == nil
-        ? "Safari keeps passwords in iCloud Keychain, which no other browser can read. In the Passwords app choose File › Export All Passwords, then Settings › Passwords › Import CSV here."
-        : "Export the passwords to a CSV file in \(source ?? "your browser"), then use Settings › Passwords › Import CSV here."
+        ? "Safari keeps passwords in iCloud Keychain, which no other browser can read. In the Passwords app choose File › Export All Passwords, then Settings › Vault › Options › Import CSV here."
+        : "Export the passwords to a CSV file in \(source ?? "your browser"), then use Settings › Vault › Options › Import CSV here."
       if let key = browserKey, let profile = signIn,
         let database = ChromiumLogins.database(in: profile.directory)
       {

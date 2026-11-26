@@ -115,7 +115,7 @@ struct AssistantAppsSettings: View {
       SettingsRowList("Can use", note: problem) {
         ForEach(AssistantPlace.allCases, id: \.self) { place in placeRow(place, scope: scope) }
       }
-      // Serein itself follows Settings › Connections; only another assistant gets its own list.
+      // Serein itself follows the Marketplace's switches (On this Mac, Your apps); only another assistant gets its own list.
       if profile.id != relay.team.mainProfileID, scope.destinations.contains(.connectedApps) { appsBlock(scope) }
       SettingsBlock("Sites it never opens") { sites(scope) }
       SettingsRowList("Its computer") {
@@ -256,7 +256,7 @@ struct AssistantAppsSettings: View {
     .disabled(ComposioApps.available && !appsLoaded)
     SettingsNote(
       choices.isEmpty
-        ? "No apps are connected yet. Connect them in Settings › Connections."
+        ? "No apps are connected yet. Connect them in the Marketplace."
         : "\(profile.name) can't list, read or change an app switched off here. Your own settings for each app still apply.")
   }
   /// Off keeps the apps it has now, so the switches below start where it was; on is every app again.
