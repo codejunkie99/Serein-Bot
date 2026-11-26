@@ -2,7 +2,8 @@ import Foundation
 import SereinCore
 
 /// A saved secret's value: one Keychain item per record id, device-only. Never in a file, a prompt
-/// or a tool answer. Only keys are read: `SecretVault.plan` refuses a card, and filling a card is not built.
+/// or a tool answer. `service_request` reads keys (`SecretVault.plan` refuses a card); a page fill reads
+/// a key or a card only for its own site (`SavedFills.swift`).
 /// Settings › Vault lists the records and deletes one (`forgetSecret`); it never reads a value.
 enum SecretKeys {
   static let service = "local.serein.secrets"

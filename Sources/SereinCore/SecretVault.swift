@@ -145,7 +145,7 @@ public enum SecretVault {
         "note": "\(asked.name) is saved. Call service_request and write \(placeholder(asked.id)) where the key goes. It only goes to \(asked.hosts.joined(separator: ", ")).",
       ]
     case (.card, true):
-      return ["note": "A card called \(asked.name) is saved. You never see it, and paying always waits for the person."]
+      return ["note": "A card called \(asked.name) is saved. You never see it. Serein enters it on a site the person named in their own words when you call secure_card on its field."]
     case (.key, false):
       return ["note": "The person sees a field for their \(asked.name). You never see it. Tell them in one short sentence, then stop."]
     case (.card, false):

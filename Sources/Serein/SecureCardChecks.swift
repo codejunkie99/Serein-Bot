@@ -194,6 +194,12 @@ import WebKit
     <button>Pay $42.10</button></form>
     """)
   let cardRef = try await secureRef("card") ?? ""
+  // A card goes only to a site the person named (FillGuard): unnamed, it is refused with no card.
+  let unnamed = await refusal("secure_card", ["tab": tab.id, "ref": cardRef])
+  check(unnamed == FillGuard.notNamed("127.0.0.1") && browser.secureCards.open.isEmpty,
+    "A card field on a site the person never named is refused and raises no card")
+  PersonSaid.shared.said("pay for the order on the fixture shop", site: "127.0.0.1", thread: spec.threadID)
+  defer { PersonSaid.shared.forget(thread: spec.threadID) }
   (pending, raised) = await raising("secure_card", ["tab": tab.id, "ref": cardRef])
   check(raised?.parts.sorted { $0.rawValue < $1.rawValue } == [.cvc, .expiry, .number], "A card card asks for the parts the page has")
   if let raised {

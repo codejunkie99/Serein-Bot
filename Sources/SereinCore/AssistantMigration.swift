@@ -195,7 +195,7 @@ public enum AssistantMigration {
       kind: .assistantChanged, line: "Done. Serein now goes ahead without asking.",
       card: .banner(
         title: ApprovalLevel.proactive.title,
-        detail: "Before it was \(upgrade.previous.title). Paying and passwords still go to a secure card you fill.",
+        detail: "Before it was \(upgrade.previous.title). It fills what you saved on its own site and pays only sites you named.",
         action: "Undo"),
       undo: UndoToken(entry: allowAllUndoPrefix + upgrade.previous.rawValue, kind: .assistantChanged))
   }

@@ -902,6 +902,8 @@
   const fillSecure = (ref,doc,origin,kind,values) => { const e=refs.get(ref);
     if(doc!==documentID||origin!==location.origin||!e||!e.isConnected||!sensitive(e)||secureKind(e)!==kind||sendsTo(e.form)!==null&&sendsTo(e.form)!==location.origin)return 'changed';
     filled.set(ref,e);
+    // Undo on a fill's receipt: Serein empties the fields it filled.
+    if(values.clear==='1'){ for(const f of kind==='card'?cardFields(e):[e]) if(f.tagName!=='SELECT')setField(f,''); return 'ok'; }
     if(kind!=='card')return setField(e,String(values.value))?'ok':'changed';
     const [mm,yy]=String(values.expiry||'').split('/');
     for(const f of cardFields(e)){ const part=cardPart(f); let v=values[part];

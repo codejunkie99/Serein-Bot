@@ -393,6 +393,11 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
   private(set) var pinnedPageTab: String?
   /// The dispatched delegated task's `DispatchTarget.byPerson`, read by its launch; false otherwise.
   private var delegatedByPerson = false
+  /// The composer's own words, which only the person types: `FillGuard`'s named sites and payees.
+  func personTyped(_ words: String, chips: ComposerContext.Chips? = nil) {
+    let page = (chips ?? ComposerContext.shared.current).page.flatMap { URL(string: $0.url)?.host }
+    PersonSaid.shared.said(words, site: page, thread: conversationID)
+  }
   /// The person's messages of the turn being dispatched (`DispatchTarget.written`), during its
   /// `send` only.
   private var writtenMessages: [AgentMessage]?
@@ -629,6 +634,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
       return
     }
     guard !running, !prompt.isEmpty, let browser else { return }
+    if override == nil, !relay, initiator == nil, nativeCommand == nil { personTyped(prompt, chips: chips) }
     let commandSession = nativeCommand == nil ? nil : remoteID
     // Another app's chat (not Codex or Claude Code) goes on in that app's own CLI.
     if repliesInApp, let link, let executable = available[provider] {
@@ -2244,6 +2250,7 @@ extension AgentModel {
     let started = startedRun != nil
     let refusal = error
     let id = conversationID
+    if started, target.byPerson, let parent = RelayOrchestrator.shared?.threadID { PersonSaid.shared.inherit(id, from: parent) }
     // The started thread is saved like any other, so it shows in the sidebar's threads.
     if started { saveConversation() }
     apply(user)

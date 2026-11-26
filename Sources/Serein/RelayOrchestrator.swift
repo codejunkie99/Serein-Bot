@@ -2058,7 +2058,10 @@ import SereinCore
     turnTry = nil
     personTurn = byPerson
     personWords = byPerson ? (request?.message.text ?? prompt) : nil
-    if byPerson, let personWords { lastRequest[threadID] = personWords }
+    if byPerson, let personWords {
+      lastRequest[threadID] = personWords
+      PersonSaid.shared.said(personWords, site: page.flatMap { URL(string: $0.url)?.host }, thread: threadID)
+    }
     // Receipts, lines and the plan card are this turn's from here on (RelayAssistantTools.swift).
     desk.facts[threadID] = nil
     desk.plans[threadID] = nil

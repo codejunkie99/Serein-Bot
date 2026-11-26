@@ -571,8 +571,9 @@ extension RelayOrchestrator {
     }
     // A setting changed from the chat goes back while it still reads what the change wrote.
     if id.hasPrefix(ChatSettings.undoPrefix) { return undoSetting(id) }
-    // A memory change goes back off the main thread (`revertMemory`).
+    // A memory change goes back off the main thread (`revertMemory`), and so does a fill.
     if id.hasPrefix(Self.memoryUndoPrefix) { return .failure("That note changes back on its own path.") }
+    if id.hasPrefix(FillGuard.undoPrefix) { return .failure("That fill clears from Undo on its receipt.") }
     // "Stop suggesting routines" goes back: suggestions are on again.
     // The Allow all upgrade goes back: the level before it, as the person's own choice, so the
     // upgrade never runs again.
@@ -648,6 +649,19 @@ extension RelayOrchestrator {
   /// Undo, pressed on a receipt or on its toast: the change goes back and the chat says so. A
   /// memory change goes back off the main thread; the chat says so when it has.
   @discardableResult func undoReceipt(_ token: UndoToken) -> Bool {
+    if token.entry.hasPrefix(FillGuard.undoPrefix) {
+      let chat = threadID
+      desk.undo.remove(token.entry)
+      Task { [weak self] in
+        guard let self else { return }
+        if await self.browser.undoFill(token.entry) {
+          self.deliver(receipt: ReceiptCopy.undone(), into: chat)
+        } else {
+          self.lastError = "The page changed since, so the field stays as it is."
+        }
+      }
+      return true
+    }
     if token.entry.hasPrefix(Self.memoryUndoPrefix) {
       let chat = threadID
       Task { [weak self] in

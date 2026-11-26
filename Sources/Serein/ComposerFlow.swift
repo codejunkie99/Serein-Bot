@@ -202,6 +202,7 @@ import SwiftUI
     guard let agent, stepPath == .intoTurn, let run = agent.hub.run(for: agent.conversationID) else { return queueDraft() }
     let text = agent.draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
+    agent.personTyped(text)
     agent.draft = ""
     agent.error = nil
     steer(run, text)
@@ -211,6 +212,7 @@ import SwiftUI
     if let item = queue.enqueue(
       agent.draft, thread: agent.conversationID, plan: ComposerContext.shared.planMode)
     {
+      agent.personTyped(item.text)
       agent.draft = ""
       agent.error = nil
       // The chips attached now go with this message, not with whatever is sent next.

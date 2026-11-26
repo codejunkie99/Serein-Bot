@@ -63,7 +63,7 @@ public enum SecureCard {
     "This field sets a new password, which changes the user's account, so Serein does not fill it." + personTypes
   /// A pay press with no secure card or person_step yes before it (R1).
   public static let payOnCard =
-    "This press pays. Routes: call person_step with kind pay on this button, and Serein shows the person the amount and presses it when they say yes; or carry on with the parts that need no payment."
+    "This press pays. Route: call person_step with kind pay on this button. Serein presses it when the person named this site in their own words (or asks them first), and says why when it cannot; or carry on with the parts that need no payment."
   public static let notSecure =
     "This page is not on a trusted secure connection, so Serein asked nothing and filled nothing." + personTypes
   public static let otherSite = "This form sends to another site, so Serein asked nothing and filled nothing." + personTypes

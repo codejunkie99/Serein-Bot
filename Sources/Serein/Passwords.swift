@@ -194,8 +194,9 @@ struct Credential: Identifiable, Codable {
     reloadCodes()
     guard removed else { throw SereinError.invalid("Could not delete the verification code from Keychain") }
   }
-  /// The saved setup, read from Keychain. Callers have authenticated the person first.
-  private func oneTimeCode(for item: Credential) throws -> OneTimeCode? {
+  /// The saved setup, read from Keychain. Settings authenticates the person first; a task's fill
+  /// reads it only for the origin it was saved for (`FillGuard`).
+  func oneTimeCode(for item: Credential) throws -> OneTimeCode? {
     try requireKeychainAccess()
     return try codeItem(item.id).read().map { try JSONDecoder().decode(OneTimeCode.self, from: Data($0.utf8)) }
   }

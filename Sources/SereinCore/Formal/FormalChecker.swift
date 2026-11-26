@@ -119,6 +119,7 @@ public enum FormalCheck {
     ("seats", { SeatMachine.machine.check() }),
     ("swarm", { SwarmMachine.machine.check() }),
     ("settings-undo", { SettingsMachine.machine.check() }),
+    ("fills", { FillWorld.machine.check() }),
   ]
 
   /// Runs every machine, or only those named in `arguments`, printing one result each; false when any is broken.

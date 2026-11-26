@@ -22,7 +22,7 @@ extension ApprovalLevel {
   /// The confirmation that guards switching to Allow all, as Only risky steps has its own.
   static let allowAllConfirmTitle = "Let Serein go ahead with every step?"
   static func allowAllConfirmBody(killLabel: String) -> String {
-    "Serein and the tasks it starts go ahead without asking. Payments and passwords go to a secure card you fill, and it never touches password managers or Serein itself. \(killLabel) stops everything."
+    "Serein and the tasks it starts go ahead without asking. It fills what you saved on its own site, pays only sites you named, and never touches password managers or Serein itself. \(killLabel) stops everything."
   }
 }
 

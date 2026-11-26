@@ -13,6 +13,7 @@ enum AssistantCoreChecks {
     ("receipts", AssistantCoreChecks.receipts),
     ("allowAllLaunch", AssistantCoreChecks.allowAllLaunch),
     ("secureCard", AssistantCoreChecks.secureCard),
+    ("fills", AssistantCoreChecks.fills),
     ("admission", AssistantCoreChecks.admission),
     ("schedules", AssistantCoreChecks.schedules),
     ("lifecycle", AssistantCoreChecks.lifecycle),

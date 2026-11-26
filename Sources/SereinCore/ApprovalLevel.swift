@@ -8,7 +8,7 @@ import Foundation
 public enum ApprovalLevel: String, CaseIterable, Sendable {
   case everyStep, riskyOnly
   /// Allow all, and every task Serein was asked to run: steps go ahead
-  /// (`ApprovalDoor.answer`); paying and passwords go to the secure card the person fills.
+  /// (`ApprovalDoor.answer`); saved sign-ins and cards fill on their own site, and pays go only to sites the person named (`FillGuard`).
   case proactive
   /// The levels the person can choose for Serein's own chat.
   public static let chatChoices: [ApprovalLevel] = [.everyStep, .riskyOnly, .proactive]
@@ -57,19 +57,19 @@ public enum ApprovalLevel: String, CaseIterable, Sendable {
     case .riskyOnly:
       return "Serein asks before it sends, posts, buys, deletes, signs out, or uses Terminal or System Settings. Routine steps go ahead."
     case .proactive:
-      return "Serein and its tasks go ahead without asking. Paying and passwords go to a secure card you fill."
+      return "Serein and its tasks go ahead without asking. It fills what you saved on its own site and pays sites you named."
     }
   }
   /// Under the choices. `killLabel` is the Stop everything shortcut (⌃⌥⌘. by default).
   public static func footnote(killLabel: String) -> String {
-    "Passwords go to a secure card you fill; the AI never sees them, and Serein never opens password managers. Say “stop everything” or press \(killLabel) to stop everything."
+    "Serein fills what you saved only on the site it was saved for and asks once for anything else; the AI never sees it, and Serein never opens password managers. Say “stop everything” or press \(killLabel) to stop everything."
   }
 
   /// The confirmation that guards switching to Only risky steps (switching back is immediate).
   public static let confirmTitle = "Let Serein do routine steps without asking?"
   public static let confirmButton = "Ask only before risky steps"
   public static func confirmBody(killLabel: String) -> String {
-    "Serein and the tasks it starts will click, type, and run Calendar, Reminders, Notes, and Finder steps without asking each time, and start tasks without asking. It still asks every time before it sends, posts, buys, deletes, signs out, or uses Terminal, System Settings, or Full access. Passwords go to a secure card you fill, and it never touches password managers or Serein itself. Every step is listed under “What I did”, the list button at the top of Serein’s column. \(killLabel) stops everything."
+    "Serein and the tasks it starts will click, type, and run Calendar, Reminders, Notes, and Finder steps without asking each time, and start tasks without asking. It still asks every time before it sends, posts, buys, deletes, signs out, or uses Terminal, System Settings, or Full access. Saved passwords fill only on their own site and others are asked once, and it never touches password managers or Serein itself. Every step is listed under “What I did”, the list button at the top of Serein’s column. \(killLabel) stops everything."
   }
 
   /// The one-time card for a fresh install that was given Only risky steps without confirming
