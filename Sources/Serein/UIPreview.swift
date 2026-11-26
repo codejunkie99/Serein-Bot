@@ -1273,6 +1273,11 @@ struct UIPreview {
     // `--ui-serein-peek`: Serein hidden, then asked from this tab: beside it for now, with Keep
     // beside in its header.
     if CommandLine.arguments.contains("--ui-serein-peek") { SereinSurface.main.peek = true }
+    // `--ui-voice-pill idle|listening|sent`: the voice pill as Talk to Serein shows it, on a synthetic voice.
+    let voicePill = CommandLine.arguments.firstIndex(of: "--ui-voice-pill").map { CommandLine.arguments.index(after: $0) }
+    if let at = voicePill, at < CommandLine.arguments.count {
+      await RelayController.shared?.previewVoicePill(CommandLine.arguments[at])
+    }
     Self.seedAffectLane3()
     Self.seedTakeoverCard(browser: browser)
     // Explicit guidance fixtures only; both centers disable persistence in preview launches.

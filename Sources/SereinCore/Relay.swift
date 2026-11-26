@@ -776,6 +776,14 @@ public struct RelayHotKey: Equatable, Sendable {
     guard modifiers & ~0x200 != 0 || isFunctionKey(key) else { return nil }
     return RelayHotKey(keyCode: code, modifiers: modifiers)
   }
+  /// The text `parse` reads for a key pressed in Settings, from its Carbon key code and
+  /// modifiers. Nil when that press is not a shortcut `parse` takes.
+  public static func text(keyCode: UInt32, modifiers: UInt32) -> String? {
+    guard let key = keys.first(where: { $0.value == keyCode })?.key else { return nil }
+    let names: [(UInt32, String)] = [(0x1000, "ctrl"), (0x800, "opt"), (0x200, "shift"), (0x100, "cmd")]
+    let text = (names.filter { modifiers & $0.0 != 0 }.map(\.1) + [key]).joined(separator: "+")
+    return parse(text) == nil ? nil : text
+  }
   /// "⌃⌥⌘." for menus and settings.
   public static func symbols(_ text: String) -> String {
     guard let k = parse(text) else { return text }

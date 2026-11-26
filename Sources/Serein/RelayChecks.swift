@@ -274,6 +274,8 @@ extension SmokeTest {
     // The shortcut: a tap opens the panel, another tap hides it (holding listens, which needs a microphone).
     if let controller = RelayController.shared {
       controller.summonPressed()
+      // A press alone shows nothing: a hold shows the voice pill, a tap opens the bar at the release.
+      try check(!relay.panelVisible(), "Pressing the shortcut does not open the bar before it is let go")
       controller.summonReleased()
       try await waitFor(2) { relay.panelVisible() }
       try check(relay.panelVisible(), "Tapping the shortcut opens Relay's panel")
@@ -628,6 +630,28 @@ extension SmokeTest {
         for run in relay.childRuns where run.isActive { relay.agent.hub.stop(run) }
         let stayed = opened == 0 && browser.section == sectionBefore && browser.selected == selectedBefore
           && window?.frame == frameBefore && window?.isVisible == visibleBefore
+        // Spoken while Serein works: the pill's words still go at once, the task runs on, and the
+        // chat comes forward with them.
+        controller.hide()
+        let slowAgain = records().filter { $0["slow_child"] != nil }.count
+        relay.ask("SLOW keep this one going")
+        try await waitFor(5) { relay.run != nil }
+        try await waitFor(10) { records().filter { $0["slow_child"] != nil }.count > slowAgain }
+        let voiceRun = relay.run
+        let spoken = "WARM PING spoken while Serein works"
+        func spokenAsked() -> Int { records().filter { ($0["prompt"] as? String)?.contains(spoken) == true }.count }
+        controller.voicePill.beginPreview()
+        controller.voicePill.micOpened()
+        controller.voicePill.release()
+        controller.handOff(spoken, shown: nil)
+        let voiceTaken = relay.run === voiceRun && (relay.pending.isEmpty || relay.pending == [spoken])
+        let chatCame = opened == 1
+        try await waitFor(15) { spokenAsked() > 0 }
+        try await waitFor(30) { relay.run == nil && !relay.working }
+        let voiceBusy = voiceTaken && chatCame && voiceRun?.record.outcome != .stopped && !controller.voicePill.pill.shown
+        for run in relay.childRuns where run.isActive { relay.agent.hub.stop(run) }
+        try check(voiceBusy,
+                  "Words spoken while Serein works go to it at once, the task runs on, and the chat comes forward [taken: \(voiceTaken), chat: \(chatCame), outcome: \(String(describing: voiceRun?.record.outcome)), pill: \(controller.voicePill.pill.shown)]")
         controller.hide()
         controller.barExchange = nil
         controller.openWindow = realOpen

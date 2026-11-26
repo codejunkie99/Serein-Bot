@@ -45,6 +45,8 @@ import UniformTypeIdentifiers
   private let cloudVoice = CloudVoicePlayer()
   /// Hold-to-talk: one recognizer for the panel's microphone and for holding the shortcut.
   let dictation = Dictation()
+  /// The pill a hold shows when no bar is up (VoicePillPanel.swift).
+  let voicePill = VoicePillController()
   /// What the recognizer heard so far while the shortcut is held.
   @Published private(set) var heard = ""
   /// Call mode: a hands-free loop where replies are read aloud and the mic is a big button.
@@ -360,6 +362,9 @@ import UniformTypeIdentifiers
     kill = nil
     fnWatch = nil
     let global = RelayOrchestrator.enabled
+    voicePill.onClick = { [weak self] in self?.talkFromMenu() }
+    voicePill.onMicFailed = { [weak self] in self?.micFailed() }
+    voicePill.rest(global && !RunMode.automated && Self.pillOn)
     guard global || RelayOrchestrator.menuBar else {
       if let status { NSStatusBar.system.removeStatusItem(status) }
       status = nil
@@ -474,6 +479,9 @@ import UniformTypeIdentifiers
       }
       if RelayOrchestrator.enabled {
         menu.addItem(withTitle: "Ask Serein  \(summonLabel)", action: #selector(showFromMenu), keyEquivalent: "").target = self
+        menu.addItem(
+          withTitle: voicePill.pill.latched ? "Stop and Send" : "Talk to Serein", action: #selector(talkFromMenu), keyEquivalent: ""
+        ).target = self
       }
       menu.addItem(withTitle: "Show Serein Window", action: #selector(windowFromMenu), keyEquivalent: "").target = self
       menu.addItem(.separator())
@@ -493,6 +501,28 @@ import UniformTypeIdentifiers
     }
   }
   @objc private func showFromMenu() { show() }
+  /// Talk to Serein: the pill listens with no key held, and a click on it sends what was said.
+  @objc func talkFromMenu() {
+    guard !holding else {
+      if voicePill.pill.latched { summonReleased() }
+      return
+    }
+    if panel?.isVisible == true { hide() }
+    ScreenContextCapture.shared.begin()
+    wasOpen = false
+    wasKey = false
+    micNotice = false
+    beginListen(latched: true)
+  }
+  /// The microphone or speech recognition could not start under the pill: the pill goes back to
+  /// rest and the bar says why (it draws `dictation.error`). A talk from the button has no key to
+  /// let go, so it ends here.
+  private func micFailed() {
+    let latched = voicePill.pill.latched
+    voicePill.cancel()
+    if panel?.isVisible != true { show() }
+    if latched { summonReleased() }
+  }
   @objc private func windowFromMenu() { openWindow() }
   @objc private func killFromMenu() { killSwitch() }
   @objc private func settingsFromMenu() { openSettings("Relay") }
@@ -546,6 +576,9 @@ import UniformTypeIdentifiers
   /// How long the shortcut is held before it listens.
   static let holdToTalk: UInt64 = 350_000_000
   /// Fn calls Serein as ⌥Space does, once “Ask from any app” is on. On unless turned off.
+  /// The voice pill resting above the Dock between talks (Settings › Ask from any app, or by chat).
+  static let pillKey = "serein.relay.talkPill"
+  static var pillOn: Bool { UserDefaults.standard.object(forKey: pillKey) as? Bool ?? true }
   static let fnCallKey = "serein.relay.fnCall"
   static var fnCallOn: Bool { UserDefaults.standard.object(forKey: fnCallKey) as? Bool ?? true }
   /// A hold of Fn has already waited `FnCallMachine.holdDelay`, so it listens as soon as ⌥Space would.
@@ -572,11 +605,12 @@ import UniformTypeIdentifiers
     micNotice = false
     // The real event, for anything learning the shortcut (onboarding advances on this).
     NotificationCenter.default.post(name: Notification.Name("SereinSummoned"), object: nil)
-    if !wasOpen { show() }
+    // No bar yet: a tap opens it at the release, and a hold shows the pill instead (`beginListen`).
     holdTimer?.cancel()
     holdTimer = Task { [weak self] in
       try? await Task.sleep(nanoseconds: listenAfter)
-      guard !Task.isCancelled, let self, self.pressedAt != nil else { return }
+      // A listen the menu bar button started is already on: this press only ends it.
+      guard !Task.isCancelled, let self, self.pressedAt != nil, !self.holding else { return }
       self.beginListen()
     }
   }
@@ -592,6 +626,7 @@ import UniformTypeIdentifiers
       if dictation.recording || dictation.starting { dictation.stop() }
       heard = ""
     }
+    voicePill.cancel()
     micNotice = false
     if !wasOpen { hide() }
   }
@@ -723,7 +758,7 @@ import UniformTypeIdentifiers
     lastProgressAt = now
     speak(line)
   }
-  private func beginListen() {
+  private func beginListen(latched: Bool = false) {
     GuideCenter.shared.record(.barHeld)
     HintCenter.shared.recordBarUsed()
     HintCenter.shared.recordInteraction()
@@ -736,6 +771,8 @@ import UniformTypeIdentifiers
     {
       askingMic = true
       micNotice = true
+      // The notice is the bar's: the pill has no room for words.
+      if !wasOpen { show() }
       SFSpeechRecognizer.requestAuthorization { _ in
         Task { @MainActor in _ = await AVCaptureDevice.requestAccess(for: .audio) }
       }
@@ -743,6 +780,7 @@ import UniformTypeIdentifiers
     }
     // A dictation from the panel's mic hands over to the hold; start alone would end it instead.
     if dictation.recording || dictation.starting { dictation.stop() }
+    if !wasOpen { voicePill.begin(dictation, latched: latched) }
     dictation.start { [weak self] text in self?.heard = text }
   }
   func summonReleased() {
@@ -752,7 +790,7 @@ import UniformTypeIdentifiers
       ScreenContextCapture.shared.cancel()
       // A tap opens it for writing; a tap on a bar with the keyboard puts it away; a tap on one
       // that opened on its own (an approval) gives it the keyboard. Holding it talks.
-      if wasKey { hide() } else if wasOpen { giveKeyboard() } else { startWriting() }
+      if wasKey { hide() } else if wasOpen { giveKeyboard() } else { show(); startWriting() }
       return
     }
     holding = false
@@ -761,6 +799,7 @@ import UniformTypeIdentifiers
       askingMic = false
       return
     }
+    voicePill.release()
     // Spoken words go as typed ones do: the reply grows under the bar (or in Serein's chat when
     // it is in front). They first find their assistant (`VoiceRoute`), since nobody says "@".
     Task { @MainActor in
@@ -771,7 +810,49 @@ import UniformTypeIdentifiers
       async let shown = ScreenContextCapture.shared.end()
       let text = await dictation.finish()
       heard = ""
-      sendFromBar(text, spoken: true, shown: await shown)
+      handOff(text, shown: await shown)
+    }
+  }
+  /// `--ui-voice-pill`: the pill on a voice that rises and falls instead of a microphone. `idle`
+  /// is the pill at rest, `listening` grows it and keeps its mark moving, `sent` lets go and its
+  /// words take the real hand-off into Serein's chat.
+  func previewVoicePill(_ stage: String) async {
+    voicePill.rest(true)
+    guard stage != "idle" else { return }
+    try? await Task.sleep(nanoseconds: 600_000_000)
+    voicePill.beginPreview()
+    voicePill.micOpened()
+    var tick = 0.0
+    func speak(_ count: Int) async {
+      for _ in 0..<count {
+        tick += 1
+        voicePill.hear(Float(abs(sin(tick * 0.45)) * (0.3 + 0.65 * abs(sin(tick * 0.09)))))
+        try? await Task.sleep(nanoseconds: 33_000_000)
+      }
+    }
+    guard stage == "sent" else {
+      Task { while voicePill.pill.phase == .listening { await speak(30) } }
+      return
+    }
+    // As if the person were in another app: the hand-off must bring Serein's chat forward.
+    // The preview starts no RelayController wiring (main.swift), so the window is opened as the app does.
+    openWindow = { (NSApp.delegate as? AppDelegate)?.showWindow() }
+    (NSApp.delegate as? AppDelegate)?.window?.miniaturize(nil)
+    await speak(45)
+    voicePill.release()
+    try? await Task.sleep(nanoseconds: 400_000_000)
+    handOff("What is on my calendar this afternoon?", shown: nil)
+  }
+  /// What a hold or the button heard goes to Serein. With the pill up it decides (`VoicePill.end`),
+  /// and Serein's chat comes forward with the message in it.
+  func handOff(_ text: String, shown: ScreenContextCapture.Captured?) {
+    guard voicePill.pill.shown else { return sendFromBar(text, spoken: true, shown: shown) }
+    switch voicePill.end(heard: text) {
+    case .send(let words):
+      sendFromBar(words, spoken: true, shown: shown, opensChat: true)
+    case .drop:
+      // Nothing was said: what the hold took goes nowhere.
+      sendFromBar("", spoken: true, shown: shown)
     }
   }
 
@@ -923,6 +1004,11 @@ import UniformTypeIdentifiers
     hide(deferring: false, review: false)
     // The chat is coming forward with the reply in it.
     barTurnNotifies = false
+    openWindow()
+    SereinRouter.openFromBar()
+  }
+  /// Serein's window comes forward with its chat showing, as Open in Serein does.
+  private func chatForward() {
     openWindow()
     SereinRouter.openFromBar()
   }
@@ -1088,9 +1174,11 @@ import UniformTypeIdentifiers
 
   /// `spoken`: the words came from holding the shortcut, so they are routed by what they say.
   /// `shown`: what the person selected or pointed at during that hold (`ScreenContextCapture`),
-  /// which rides with the words as attachments.
+  /// which rides with the words as attachments. `opensChat`: the words came from the voice pill, so
+  /// Serein's chat comes forward showing them, wherever the person was; a stop never brings it.
   func sendFromBar(
-    _ words: String, page: SereinPage? = nil, spoken: Bool = false, shown: ScreenContextCapture.Captured? = nil
+    _ words: String, page: SereinPage? = nil, spoken: Bool = false, shown: ScreenContextCapture.Captured? = nil,
+    opensChat: Bool = false
   ) {
     var text = words.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
@@ -1137,6 +1225,7 @@ import UniformTypeIdentifiers
         // composer, as for a typed mention. Nothing is sent to the wrong assistant.
         guard stop else {
           relay.ask(route.message, attachments: attachments, page: page, inWindow: inWindow)
+          if opensChat { chatForward() }
           return
         }
         // A stop never waits: it goes on without the name, as a plain stop from the chat in front.
@@ -1168,10 +1257,11 @@ import UniformTypeIdentifiers
     barStepAside?.cancel()
     barTurnThread = nil
     barTurnNotifies = false
-    if !inWindow, chatInFront() {
+    if !inWindow, opensChat || chatInFront() {
       barExchange = nil
       // The chat in front shows what waits, so nothing counts as put off.
       hide(deferring: false)
+      if opensChat { chatForward() }
       return
     }
     barExchange = BarExchange(prompt: text, at: Date(), to: sentTo, before: before)

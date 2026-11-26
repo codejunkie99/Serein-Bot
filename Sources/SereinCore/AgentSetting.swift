@@ -13,6 +13,8 @@ public enum AgentSetting: String, CaseIterable, Sendable {
   case tabSleep = "tab_sleep"
   case updateChecks = "update_checks"
   case updateInstalls = "update_installs"
+  case talkShortcut = "talk_shortcut"
+  case talkPill = "talk_pill"
 
   public var choices: String {
     switch self {
@@ -24,6 +26,8 @@ public enum AgentSetting: String, CaseIterable, Sendable {
     case .tabSleep: return "never, 15, 30 or 60: minutes before a tab you left sleeps"
     case .updateChecks: return "on or off: check the configured feed for updates automatically"
     case .updateInstalls: return "on or off: download and install updates by itself"
+    case .talkShortcut: return "a shortcut such as opt+space, ctrl+shift+k or f5: hold it in any app to talk to Serein, tap it to write"
+    case .talkPill: return "on or off: the small pill above the Dock that you click or hold the shortcut to talk"
     }
   }
   /// The Settings page that shows it (a `SettingsCategory` id).
@@ -32,6 +36,7 @@ public enum AgentSetting: String, CaseIterable, Sendable {
     // Appearance is part of General now; every setting here shows on that page.
     case .appearance, .darkenPages, .textSize, .compact, .searchEngine, .tabSleep, .updateChecks, .updateInstalls:
       return "General"
+    case .talkShortcut, .talkPill: return "Relay"
     }
   }
   /// The stored form of a requested value, or nil when it is not one of the choices.
@@ -40,7 +45,9 @@ public enum AgentSetting: String, CaseIterable, Sendable {
     let flag: Bool? = ["on", "true", "yes"].contains(v) ? true : ["off", "false", "no"].contains(v) ? false : nil
     switch self {
     case .appearance: return AppearancePreference(rawValue: v)?.rawValue
-    case .darkenPages, .compact, .updateChecks, .updateInstalls: return flag
+    case .darkenPages, .compact, .updateChecks, .updateInstalls, .talkPill: return flag
+    case .talkShortcut:
+      return RelayHotKey.parse(v).flatMap { RelayHotKey.text(keyCode: $0.keyCode, modifiers: $0.modifiers) }
     case .textSize:
       guard let n = Double(v.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces))
       else { return nil }

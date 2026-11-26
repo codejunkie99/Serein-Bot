@@ -811,6 +811,9 @@ extension Palette {
 /// Its colors are fixed, because it sits on its own dark ground in both appearances.
 struct SereinGlowMark: View {
   var size: CGFloat = 96
+  /// Degrees the voice pill has turned it (`VoicePill.turn`): each orbit turns at its own pace
+  /// and carries a bright point round it, so the mark spins like an atom. Nil: the still mark.
+  var turn: Double? = nil
   private let glow = Color(hex: 0x7C86FF)
   private let light = Color(hex: 0xC9CEFF)
   var body: some View {
@@ -825,12 +828,21 @@ struct SereinGlowMark: View {
         Ellipse().stroke(
           LinearGradient(colors: [light, glow], startPoint: .top, endPoint: .bottom),
           lineWidth: max(1.4, size * 0.022)
-        ).frame(width: size * 0.4, height: size * 0.86).rotationEffect(.degrees(Double(i) * 36))
+        ).frame(width: size * 0.4, height: size * 0.86)
+          .overlay { if let turn { electron(i, turn) } }
+          .rotationEffect(.degrees(Double(i) * 36 + (turn ?? 0) * (i.isMultiple(of: 2) ? 0.5 : -0.35)))
       }.shadow(color: glow.opacity(0.9), radius: size * 0.06)
       Circle().fill(RadialGradient(
         colors: [.white, light, glow.opacity(0)], center: .center, startRadius: 0, endRadius: size * 0.07)
       ).frame(width: size * 0.14, height: size * 0.14)
     }.frame(width: size * 1.6, height: size * 1.6).accessibilityHidden(true)
+  }
+  /// The bright point going round orbit `i`, each at its own speed and starting place.
+  private func electron(_ i: Int, _ turn: Double) -> some View {
+    let angle = (turn * (1.6 + 0.25 * Double(i)) + Double(i) * 72) * .pi / 180
+    return Circle().fill(Color.white).frame(width: max(2, size * 0.1), height: max(2, size * 0.1))
+      .shadow(color: light, radius: size * 0.05)
+      .offset(x: size * 0.2 * cos(angle), y: size * 0.43 * sin(angle))
   }
 }
 

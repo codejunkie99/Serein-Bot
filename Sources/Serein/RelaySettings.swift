@@ -206,6 +206,7 @@ struct RelayAnyAppSettings: View {
   @AppStorage(RelayOrchestrator.summonKey) private var summon = RelayHotKey.summon
   @AppStorage(RelayOrchestrator.killKey) private var kill = RelayHotKey.killSwitch
   @AppStorage(RelayController.fnCallKey) private var fnCall = true
+  @AppStorage(RelayController.pillKey) private var pill = true
   @AppStorage(VoiceRoute.settingKey) private var voiceRouting = true
   @AppStorage(AssistantDock.enabledKey) private var dock = false
   @GateStorage(ScreenContext.enabledKey) private var screenContext = false
@@ -218,6 +219,9 @@ struct RelayAnyAppSettings: View {
   @State private var summonDraft = ""
   @State private var killDraft = ""
   @State private var shortcutError: String?
+  /// The shortcut row waiting for a key press (its title), and what listens for it.
+  @State private var recording: String?
+  @State private var recorder: Any?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
@@ -231,6 +235,13 @@ struct RelayAnyAppSettings: View {
         }))
         SettingsNote("Serein stays in the menu bar, so \(RelayHotKey.symbols(summon)) works with this window closed.")
         if enabled { fnRow }
+        if enabled {
+          Toggle("Show the talk pill above the Dock", isOn: Binding(get: { pill }, set: { on in
+            pill = on
+            RelayController.shared?.install()
+          }))
+          SettingsNote("Click it to talk, or hold \(RelayHotKey.symbols(summon)).")
+        }
         if enabled { voiceRow }
         if !enabled {
           Toggle("Keep Serein in the menu bar when you close this window", isOn: Binding(get: { menuBar }, set: { on in
@@ -257,7 +268,7 @@ struct RelayAnyAppSettings: View {
       killDraft = kill
       accessibilityOn = MacControl.accessibilityGranted(prompt: false)
       screenRecordingOn = CGPreflightScreenCaptureAccess()
-    }
+    }.onDisappear { stopRecording() }
   }
 
   @ViewBuilder private var fnRow: some View {
@@ -388,6 +399,8 @@ struct RelayAnyAppSettings: View {
       Text(title)
       Spacer()
       Text(RelayHotKey.symbols(value.wrappedValue)).font(UIStyle.monoMeta).foregroundStyle(p.secondary)
+      Button(recording == title ? "Press keys…" : "Record") { record(title, draft: draft, value: value) }
+        .accessibilityLabel(recording == title ? "Press the new \(title) shortcut, or Escape to cancel" : "Record a new \(title) shortcut")
       TextField("", text: draft).textFieldStyle(.serein).frame(width: 160)
         .accessibilityLabel("\(title) shortcut")
         .onSubmit {
@@ -400,6 +413,32 @@ struct RelayAnyAppSettings: View {
           RelayController.shared?.install()
         }
     }
+  }
+  /// Record: the next key pressed with its modifiers becomes the shortcut; Escape cancels.
+  private func record(_ title: String, draft: Binding<String>, value: Binding<String>) {
+    stopRecording()
+    recording = title
+    shortcutError = nil
+    recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      defer { stopRecording() }
+      if event.keyCode == 53, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty { return nil }
+      let flags = event.modifierFlags
+      let carbon: UInt32 = (flags.contains(.command) ? 0x100 : 0) | (flags.contains(.shift) ? 0x200 : 0)
+        | (flags.contains(.option) ? 0x800 : 0) | (flags.contains(.control) ? 0x1000 : 0)
+      guard let text = RelayHotKey.text(keyCode: UInt32(event.keyCode), modifiers: carbon) else {
+        shortcutError = "Hold ⌘, ⌥ or ⌃ with a key, or press a function key alone."
+        return nil
+      }
+      value.wrappedValue = text
+      draft.wrappedValue = text
+      RelayController.shared?.install()
+      return nil
+    }
+  }
+  private func stopRecording() {
+    if let recorder { NSEvent.removeMonitor(recorder) }
+    recorder = nil
+    recording = nil
   }
 }
 
