@@ -40,6 +40,9 @@ struct AgentMessage: Identifiable, Codable, Equatable {
   /// A centred system line written by the host ("Asked Planner and Scout", "You made Inbox
   /// Zero"). Plain text, never a model's words. Absent in every other message.
   var line: String? = nil
+  /// The swarm board a count line opens ("Created a swarm of 12 bots", SwarmBoards). Absent in
+  /// every other message.
+  var swarm: SwarmLink? = nil
   /// Another assistant wrote this message in the chat (a light ask's answer, `assistant_ask`):
   /// its profile id. The chat draws it as that assistant's group bubble with its face. Its words
   /// are untrusted data. Absent in every other message.

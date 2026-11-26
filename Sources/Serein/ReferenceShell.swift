@@ -527,6 +527,7 @@ struct ThreadWorkspace: View {
   /// The chat's older messages, built above its newest ones as the person scrolls up.
   @StateObject private var pages = EarlierPages()
   @ObservedObject private var focus = SubThreadFocus.shared
+  @ObservedObject private var swarms = SwarmBoards.shared
   @Environment(\.palette) var p
   var body: some View {
     if !panel, let open = focus.open {
@@ -639,6 +640,17 @@ struct ThreadWorkspace: View {
         ).padding(.horizontal, panel ? 12 : 16).padding(.bottom, panel ? 12 : 16)
       }
     }.overlay(alignment: .bottom) { TurnUndoToast(agent: agent) }
+    .overlay {
+      // A swarm's board over this chat, opened from its count line.
+      if let link = swarms.open, link.room == agent.conversationID {
+        ZStack {
+          p.scrim.contentShape(Rectangle()).onTapGesture { swarms.open = nil }.accessibilityHidden(true)
+          SwarmBoardPage(link: link, agent: agent, library: browser.library)
+            .clipShape(RoundedRectangle(cornerRadius: AssistantMetrics.cardRadius, style: .continuous))
+            .padding(panel ? 12 : 24)
+        }
+      }
+    }
   }
   /// One message of the chat: its turn gap and time line, then the message, or its condensed
   /// divider. `live` rows are in the chat's own layout and carry the newest run and edit reviews;
@@ -646,7 +658,9 @@ struct ThreadWorkspace: View {
   @ViewBuilder private func threadRow(_ message: AgentMessage, after previous: AgentMessage?, breaks: Set<String>,
                                       latestCopyID: String?, userWidth: CGFloat, live: Bool) -> some View {
     TurnLead(message: message, after: previous, breaks: breaks)
-    if let range = message.condensed {
+    if let swarm = message.swarm {
+      SwarmCountLine(message: message, link: swarm, library: browser.library)
+    } else if let range = message.condensed {
       CondensedDivider(
         summary: message, range: range, userWidth: userWidth,
         undo: agent.running ? nil : { agent.undoCondense(message.id, in: agent.conversationID) }

@@ -377,9 +377,12 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   private let lock = NSLock()
   private var seen: [PeerCallee] = []
   private var closed: [String] = []
+  private var sent: [SwarmBoard] = []
   private var fallbackPicker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?
   var callees: [PeerCallee] { lock.withLock { seen } }
   var released: [String] { lock.withLock { closed } }
+  /// Every board Peers sent, in order.
+  var boards: [SwarmBoard] { lock.withLock { sent } }
   func task(of cli: HarnessDriver) -> String? { callees.first { $0.cli == cli }.map { "task:" + $0.thread.id } }
   func setFallback(_ picker: (@Sendable (HarnessDriver, Set<HarnessDriver>) -> HarnessDriver?)?) {
     lock.withLock { fallbackPicker = picker }
@@ -393,6 +396,8 @@ final class FakePeerHost: PeerHost, @unchecked Sendable {
   }
 
   func release(task: String) async { lock.withLock { closed.append(task) } }
+
+  func swarmChanged(_ board: SwarmBoard, task: String) async { lock.withLock { sent.append(board) } }
 
   func fallback(from cli: HarnessDriver, excluding: Set<HarnessDriver>) async -> HarnessDriver? {
     let picker = lock.withLock { fallbackPicker }

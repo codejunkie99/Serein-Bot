@@ -61,6 +61,10 @@ struct AppPeerHost: PeerHost {
     }
   }
 
+  func swarmChanged(_ board: SwarmBoard, task: String) async {
+    await MainActor.run { SwarmBoards.shared.take(board, task: task, browser: browser) }
+  }
+
   func holdsCard(task: String) async -> Bool {
     await MainActor.run { browser.secureCards.holdsCard(task: task) || browser.secureCards.openHost(task: task) != nil }
   }

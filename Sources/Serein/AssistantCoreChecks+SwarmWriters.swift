@@ -44,7 +44,7 @@ extension AssistantCoreChecks {
         a1 != nil && a2 != nil && a1?.folder != repo.path && a2?.folder != repo.path && a1?.folder != a2?.folder,
         "Each git writer works in its own folder, never the owner's (w1 \(a1?.folder ?? "-"), w2 \(a2?.folder ?? "-"))")
       notes.check(a1?.linkedWorktree == true && a2?.linkedWorktree == true, "Each writer's folder is a linked git worktree")
-      let verifierPrompt = host.callees.first { $0.prompt.message.contains("You are the read-only verifier") }?.prompt.message ?? ""
+      let verifierPrompt = host.callees.first { $0.prompt.message.contains("the read-only verifier") }?.prompt.message ?? ""
       notes.check(verifierPrompt.contains("+alpha") && verifierPrompt.contains("+beta"), "Verifier is shown each writer's real diff")
       notes.check(
         read(repo, "a.txt") == "alpha" && read(repo, "b.txt") == "beta"
@@ -238,7 +238,7 @@ private final class WriterSession: EngineSession, @unchecked Sendable {
   func send(_ prompt: TurnPrompt, request: TurnRequest) async throws {
     let asked = prompt.message
     continuation.yield(.accepted)
-    if asked.contains("You are the read-only verifier") {
+    if asked.contains("the read-only verifier") {
       continuation.yield(.text(asked.contains("NO-SIGNOFF") ? "NEEDS FIX: not yet." : "\(PeerTools.approved) checked the diffs."))
       continuation.yield(.turnDone(.endTurn))
       return

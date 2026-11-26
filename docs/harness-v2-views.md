@@ -47,3 +47,38 @@ library and keep GateSettings in memory.
 | 11 | No `settingChanges` history | `SereinCore/ChatSettings.swift:126` (`SettingsLedger`), `RelaySettingChange.swift:41` | Each change from the chat lands in `relay.settingsLedger.open` (at most 50) with its Undo. The ledger is in memory only, so after a relaunch Undo reads as gone. No view lists the changes. | `receipts` |
 | 12 | AskBefore comment names `team_propose` | `AskBefore.swift:586`; the card at `:401` to `:403`, `:589`; `DecisionDock.swift:27` | The comment and `TeamProposalCard` describe the `team_propose` card, which no tool raises now. Only Import file and Change… still use the card. | No seed: comment only. |
 | 13 | Level names are this repo's own | `SereinCore/ApprovalLevel.swift:41` to `:43`; the dial at `AskBefore.swift:4`, `:19` | This repo names the levels Every step, Only risky steps and Allow all, not the paid repo's Manual and Auto. `approval_level`, its errors and the `setting_change` receipt use these words, so the `receipts` seed reads "How much Serein asks" from Allow all to Only risky steps. Keep these words when porting any paid view text. | `receipts` |
+
+## Swarm board (peer_swarm)
+
+This section covers the swarm count line and the board, on branch `feat/swarm-board`. The views
+are built (`Sources/Serein/SwarmBoardView.swift`), but they are yours to restyle. The data
+layer under them is:
+
+- ACP stays the wire between Serein and each CLI. The board is the record the person sees. It
+  never carries a CLI's turn. It only records the messages and states that `Peers` already
+  handles.
+- `Peers` (`SereinEngines/Peers.swift`) owns each live `SwarmBoard` and sends the whole board
+  after every change through `PeerHost.swarmChanged`. `version` grows with each send.
+- `SwarmBoards.shared` (`Sources/Serein/SwarmBoards.swift`) is the only app copy. It keeps the
+  newest version, saves it to `swarms/<chat>/<id>.json`, and updates the chat's count line.
+- The count line is an `AgentMessage` with `notice` true, `line` set and `swarm` (a
+  `SwarmLink`) set. `ThreadWorkspace.threadRow` draws it as `SwarmCountLine`. Pressing it sets
+  `SwarmBoards.shared.open`, and the board opens over the chat with × at top right.
+- A member's `state` comes from its job: working, waiting, stalled, done or stopped. `parent`
+  builds the start tree: the lead has none, workers have the lead, and helpers have the bot that
+  called them. After a relaunch, `closedAfterRelaunch()` shows every unsettled bot as stopped.
+- `SwarmBoards.tell` and `stop` send the person's words to a bot. A running bot is steered at once
+  (`Engines.steer`). A bot that has not started gets the words in its brief. A finished bot gets a
+  new turn. Words to the lead go into the chat's own run (`ComposerFlow.steer`), and Stop on the
+  lead stops that run.
+- Every prompt and the count line text are in `SereinCore/SwarmPrompts.swift`.
+  `scripts/check_swarm_prompts.py` fails if that text shows up anywhere else.
+
+Seeds, on the thread screen:
+
+- `--ui-preview thread --ui-swarm-line`: a chat with the count line "Created a swarm of 13 bots,
+  6 done" (a stopped bot counts as finished).
+- `--ui-preview thread --ui-swarm-board`: the same chat with the board open. It has 13 bots, two
+  levels of nested helpers, every state, and 15 messages with `#seq` links.
+
+The layout choice is in `docs/demos/swarm-board.decision.md` (layout A).

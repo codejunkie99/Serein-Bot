@@ -60,8 +60,7 @@ public enum PeerTools {
         ], required: ["jobs"]),
       Spec(
         name: "peer_swarm", label: "Started a swarm",
-        description:
-          "Run any number of parallel workers over a shared SwarmBoard (with optional read-only verifier) and return one combined report. Workers may use the same or different CLIs. Parallel write workers isolate in git worktrees when applicable.",
+        description: SwarmPrompts.swarmTool,
         properties: [
           "goal": ["type": "string", "minLength": 1, "maxLength": 2_000],
           "workers": [

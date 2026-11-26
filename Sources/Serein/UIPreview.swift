@@ -1097,6 +1097,19 @@ struct UIPreview {
            AgentMessage(role: "assistant", text: "Synthetic answer \(turn), with **some** markdown and `code` in it.")]
         }
       }
+      #if DEBUG
+        // `--ui-swarm-line`: a chat whose lead started a swarm of 13 bots. `--ui-swarm-board`: its
+        // board open over the chat.
+        let swarmBoard = CommandLine.arguments.contains("--ui-swarm-board")
+        if swarmBoard || CommandLine.arguments.contains("--ui-swarm-line") {
+          agent.conversationID = "preview-swarm"
+          agent.messages = [
+            AgentMessage(role: "you", text: "Move the swarm prompts into one file and add a live board for each swarm."),
+            SwarmBoards.shared.seedPreview(room: agent.conversationID, open: swarmBoard),
+            AgentMessage(role: "assistant", text: "I split this into eight parts and started a worker on each, with a verifier. Six have finished so far."),
+          ]
+        }
+      #endif
       // Three threads open as tabs, the shown one last.
       for thread in agent.conversations.prefix(3) where thread.id != agent.conversationID {
         agent.showThreadTab(thread.id)

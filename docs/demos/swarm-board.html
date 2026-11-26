@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Swarm board layouts</title>
+<style>
+  :root { --ink:#1d1d1f; --secondary:#6e6e73; --faint:#a1a1a6; --panel:#f5f5f7; --track:#ececf0; --card:#fff;
+    --line:#e3e3e8; --accent:#2f6bff; --working:#2f6bff; --waiting:#a1a1a6; --done:#2e9b5f; --stalled:#d98a00; --stopped:#c23b3b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; color: var(--ink); background: #e9e9ee; }
+  .switch { display: flex; gap: 8px; padding: 12px 16px; }
+  .switch button { border: 0; border-radius: 999px; padding: 6px 12px; background: var(--track); font: inherit; cursor: pointer; }
+  .switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .window { width: 900px; height: 600px; margin: 0 16px 16px; background: var(--card); border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.12); position: relative; overflow: hidden; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .meta { color: var(--secondary); }
+  header .close { margin-left: auto; width: 28px; height: 28px; border-radius: 999px; border: 0; background: var(--track); cursor: pointer; font-size: 14px; }
+  .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; flex: none; }
+  .working { background: var(--working); } .waiting { background: var(--waiting); } .done { background: var(--done); }
+  .stalled { background: var(--stalled); } .stopped { background: var(--stopped); }
+  .chip { font-size: 11px; color: var(--secondary); background: var(--track); border-radius: 999px; padding: 1px 8px; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .tree { width: 260px; border-right: 1px solid var(--line); padding: 16px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+  .node { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .node:hover, .node.sel { background: var(--panel); }
+  .node .name { font-weight: 500; } .node .cli { color: var(--faint); margin-left: auto; font-size: 11px; }
+  .feed { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .post { background: var(--panel); border-radius: 12px; padding: 12px 16px; }
+  .post .head { display: flex; gap: 6px; align-items: baseline; color: var(--secondary); font-size: 12px; }
+  .post .head b { color: var(--ink); font-weight: 600; }
+  .post .seq { margin-left: auto; color: var(--faint); }
+  .post.you { background: #eaf0ff; }
+  a.ref { color: var(--accent); text-decoration: none; }
+  .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: center; }
+  .composer .to { font-weight: 500; }
+  .composer input { flex: 1; border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; font: inherit; }
+  .composer button { border: 0; border-radius: 999px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  .send { background: var(--ink); color: #fff; } .stop { background: var(--track); }
+  .cols { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px; overflow: auto; }
+  .col h2 { font-size: 12px; color: var(--secondary); margin: 0 0 8px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .card { background: var(--panel); border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+  .card .sub { color: var(--secondary); font-size: 12px; }
+  .strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .strip .pill { display: flex; align-items: center; gap: 6px; background: var(--panel); border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .indent1 { padding-left: 24px; } .indent2 { padding-left: 40px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="switch" role="group" aria-label="Layout">
+  <button data-v="a" aria-pressed="true">A. Tree and feed</button>
+  <button data-v="b" aria-pressed="false">B. One column</button>
+  <button data-v="c" aria-pressed="false">C. State columns</button>
+</div>
+
+<div class="window">
+  <header>
+    <h1>Created a swarm of 12 bots</h1>
+    <span class="meta">5 done · Goal: split the parser rewrite</span>
+    <button class="close" aria-label="Close">×</button>
+  </header>
+
+  <!-- A: tree left, ordered messages right, composer aimed at the selected bot -->
+  <section id="a" class="body">
+    <nav class="tree" id="tree"></nav>
+    <div class="feed" id="feedA"></div>
+  </section>
+
+  <!-- B: one column, bots as a strip of pills over the feed -->
+  <section id="b" class="body" style="flex-direction:column" hidden>
+    <div class="strip" id="strip"></div>
+    <div class="feed" id="feedB"></div>
+  </section>
+
+  <!-- C: bots grouped by state, no message order -->
+  <section id="c" class="cols" hidden></section>
+
+  <div class="composer">
+    <span class="chip">To</span><span class="to" id="to">@w3</span>
+    <input placeholder="Tell this bot what to do now" aria-label="Message">
+    <button class="send">Send</button><button class="stop">Stop</button>
+  </div>
+</div>
+
+<script>
+const bots = [
+  ["lead","coordinator",null,"Codex","working"],
+  ["w1","worker","lead","Claude","done"],["w2","worker","lead","Codex","working"],["w3","worker","lead","Codex","working"],
+  ["w3-claude","helper","w3","Claude","working"],["w3-grok","helper","w3","Grok","done"],
+  ["w4","worker","lead","Grok","stalled"],["w5","worker","lead","OpenCode","done"],["w6","worker","lead","Claude","waiting"],
+  ["w7","worker","lead","Codex","done"],["w8","worker","lead","Claude","stopped"],["w9","worker","lead","Codex","working"],
+  ["verifier","verifier","lead","Claude","waiting"],
+];
+const posts = [
+  [1,"lead","@w1 Goal: split the parser rewrite. Your slice: tokenizer"],
+  [2,"lead","@w3 Goal: split the parser rewrite. Your slice: error recovery"],
+  [3,"w3","@w3-claude Find every call to recover() under Sources/Parse"],
+  [4,"w3-grok","@w3 [done] Two callers left, see the diff in my worktree"],
+  [5,"w1","@lead [done] Tokenizer split, tests pass. Notes in #1"],
+  [6,"you","@w3 Skip the tests folder for now"],
+  [7,"w5","@lead [done] Grammar table moved, answers #2"],
+];
+const name = n => bots.find(b => b[0] === n);
+const depth = b => b[2] === null ? 0 : (name(b[2])[2] === null ? 1 : 2);
+const text = t => t.replace(/#(\d+)/g, '<a class="ref" href="#p$1">#$1</a>').replace(/@([\w-]+)/g, "<b>@$1</b>");
+function post(p) {
+  const to = (p[2].match(/@([\w-]+)/) || [,""])[1];
+  return `<div class="post ${p[1]==="you"?"you":""}" id="p${p[0]}"><div class="head"><b>${p[1]==="you"?"You":p[1]}</b> to <span>@${to}</span><span class="seq">#${p[0]}</span></div>${text(p[2])}</div>`;
+}
+function select(n) { document.getElementById("to").textContent = "@" + n; document.querySelectorAll(".node").forEach(e => e.classList.toggle("sel", e.dataset.n === n)); }
+tree.innerHTML = bots.map(b => `<div class="node indent${depth(b)}" data-n="${b[0]}"><span class="dot ${b[4]}"></span><span class="name">${b[0]}</span><span class="cli">${b[3]} · ${b[4]}</span></div>`).join("");
+tree.onclick = e => { const n = e.target.closest(".node"); if (n) select(n.dataset.n); };
+feedA.innerHTML = feedB.innerHTML = posts.map(post).join("");
+strip.innerHTML = bots.map(b => `<span class="pill" data-n="${b[0]}"><span class="dot ${b[4]}"></span>${b[0]}</span>`).join("");
+strip.onclick = e => { const n = e.target.closest(".pill"); if (n) select(n.dataset.n); };
+c.innerHTML = ["working","waiting","stalled","done"].map(s => `<div class="col"><h2><span class="dot ${s}"></span>${s}</h2>${bots.filter(b => b[4]===s || (s==="stalled" && b[4]==="stopped")).map(b => `<div class="card"><b>${b[0]}</b><div class="sub">${b[3]}${b[2]?" · from "+b[2]:""}</div></div>`).join("")}</div>`).join("");
+document.querySelector(".switch").onclick = e => {
+  const v = e.target.dataset.v; if (!v) return;
+  document.querySelectorAll(".switch button").forEach(x => x.setAttribute("aria-pressed", x.dataset.v === v));
+  ["a","b","c"].forEach(id => document.getElementById(id).hidden = id !== v);
+};
+const v = new URLSearchParams(location.search).get("v"); if (v) document.querySelector(`[data-v=${v}]`).click();
+select("w3");
+</script>
+</body>
+</html>

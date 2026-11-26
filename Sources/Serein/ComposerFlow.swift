@@ -192,7 +192,7 @@ import SwiftUI
     return stepPath(agent.conversationID, carriesContext: !ComposerContext.shared.current.isEmpty)
   }
   /// Words a run took and never read wait ahead of the thread's others, for its next turn.
-  private func steer(_ run: AgentRun, _ text: String) {
+  func steer(_ run: AgentRun, _ text: String) {
     let thread = run.spec.threadID
     agent?.hub.steer(run, text) { [weak self] unread in self?.queue.requeue(unread, thread: thread) }
   }
