@@ -1,0 +1,120 @@
+<!doctype html>
+<!-- Throwaway prototype for the finish notice. Three layouts behind one switcher (keys 1, 2, 3).
+     Colours, type and radii come from Serein's dark palette (SereinCore/Theme.swift) and
+     AssistantType / AssistantMetrics (Sources/Serein/Design.swift). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Finish notice layouts</title>
+<style>
+  :root {
+    --bg: #121212; --overlay: #1F1F1F; --ink: #F5F5F5; --secondary: #A8A8A8; --faint: #8D8D8D;
+    --line: rgba(245,245,245,.102); --track: rgba(245,245,245,.059); --hover: rgba(245,245,245,.059);
+    --solid: #F5F5F5; --on-solid: #121212; --danger: #FF6463; --focus: #1884FC;
+    --violet: #B48CFF; --teal: #3CC7C0; --tangerine: #FF9A5C;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #2a2d33; color: var(--ink); font: 13px/1.38 "Geist", -apple-system, system-ui, sans-serif; }
+  header { display: flex; gap: 8px; align-items: center; padding: 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  header button { font: inherit; color: var(--ink); background: var(--track); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  header button[aria-pressed="true"] { background: var(--solid); color: var(--on-solid); }
+  header .note { color: var(--secondary); margin-left: 12px; }
+  main { display: grid; grid-template-columns: repeat(2, 380px); gap: 40px; padding: 32px; align-items: start; }
+  h2 { font-size: 12px; font-weight: 500; color: var(--secondary); margin: 0 0 12px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; width: 340px; }
+  .card { position: relative; width: 340px; background: var(--overlay); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+          display: flex; flex-direction: column; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .card.fading { animation: fade 10s linear forwards; }
+  .card.fading:hover, .card.fading:focus-within { animation-play-state: paused; opacity: 1; }
+  @keyframes fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
+  .face { width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center; }
+  .face.big { width: 28px; height: 28px; }
+  .face::after { content: ""; width: 40%; height: 14%; border-top: 2px dotted #121212; }
+  .face.task { background: var(--track); border: 1px solid var(--line); }
+  .face.task::after { content: "\203A_"; border: 0; width: auto; height: auto; font: 11px/1 ui-monospace, monospace; color: var(--secondary); }
+  .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .name { font-weight: 500; }
+  .fail { color: var(--danger); }
+  .time { font: 12px ui-monospace, "Geist Mono", monospace; color: var(--faint); }
+  .spacer { flex: 1; }
+  .x { width: 22px; height: 22px; border-radius: 6px; border: 0; background: transparent; color: var(--secondary); cursor: pointer; font-size: 14px; line-height: 1; }
+  .x:hover { background: var(--hover); color: var(--ink); }
+  .title { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .title.strong { font-weight: 500; }
+  .summary { font-size: 12px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+  .reply { display: flex; gap: 8px; align-items: center; }
+  .reply input { flex: 1; min-width: 0; height: 32px; border-radius: 16px; border: 1px solid var(--line); background: var(--track);
+                 color: var(--ink); font: inherit; padding: 0 12px; outline: none; }
+  .reply input::placeholder { color: var(--faint); }
+  .reply input:focus { border-color: var(--focus); }
+  .open { height: 32px; padding: 0 14px; border-radius: 16px; border: 0; background: var(--solid); color: var(--on-solid); font: inherit; font-weight: 500; cursor: pointer; }
+  .open.quiet { background: var(--track); color: var(--ink); border: 1px solid var(--line); }
+  button:focus-visible, .x:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .more { width: 340px; height: 32px; border-radius: 16px; border: 1px solid var(--line); background: var(--overlay); color: var(--secondary); font: inherit; cursor: pointer; }
+  .sent { font-size: 12px; color: var(--secondary); }
+  /* C hides the reply row until hover or focus. */
+  .c .reply { display: none; }
+  .c:hover .reply, .c:focus-within .reply { display: flex; }
+  .c .title { -webkit-line-clamp: 1; }
+  .ref { width: 380px; }
+</style>
+</head>
+<body>
+<header>
+  <button data-v="a" aria-pressed="true">1 · Header line</button>
+  <button data-v="b" aria-pressed="false">2 · Face column</button>
+  <button data-v="c" aria-pressed="false">3 · Compact, reply on hover</button>
+  <span class="note">Return in a reply field sends to that card's bot. Esc or × closes. Cards fade after 10 s unless hovered or typed into.</span>
+</header>
+<main id="out"></main>
+<template id="data">
+[
+  {"face":"violet","who":"Writer","title":"Draft the launch email for the beta list and send me the draft before you send it to anyone","summary":"Wrote a 140-word draft with three subject lines to pick from.","place":"Main chat","took":"6 min","time":"2:37 PM"},
+  {"face":"teal","who":"Scout","title":"Find fares to Lisbon","summary":"Found three fares under $600; the cheapest leaves Friday at 7:05.","place":"Seat on GPT-5","took":"2 min","time":"2:39 PM","swarm":true},
+  {"face":"task","who":"Claude Code","title":"Fix the flaky relay test on main","summary":"Could not finish: the test needs a network the task may not use.","place":"serein-bot","took":"11 min","time":"2:41 PM","failed":true}
+]
+</template>
+<script>
+  const items = JSON.parse(document.getElementById('data').innerHTML);
+  const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const face = (it, big) => `<span class="face ${big ? 'big' : ''} ${it.face === 'task' ? 'task' : ''}" style="${it.face === 'task' ? '' : 'background:var(--' + it.face + ')'}" aria-hidden="true"></span>`;
+  const head = it => it.failed ? `<span class="name fail">${esc(it.who)} couldn't finish</span>` : `<span class="name">${esc(it.who)} finished</span>`;
+  const reply = (it, quiet) => `<div class="reply"><input aria-label="Reply to ${esc(it.who)}" placeholder="Reply to ${esc(it.who)}"><button class="open ${quiet ? 'quiet' : ''}">Open</button></div>`;
+  const x = it => `<button class="x" aria-label="Close ${esc(it.who)}'s notice">×</button>`;
+  const layouts = {
+    a: it => `<div class="card fading" tabindex="-1">
+      <div class="row">${face(it)}${head(it)}<span class="spacer"></span><span class="time">${it.time}</span>${x(it)}</div>
+      <div class="text"><div class="title">${esc(it.title)}</div><div class="summary">${esc(it.summary)}</div>
+        <div class="meta">${esc(it.place)} · ${it.took}</div></div>
+      ${reply(it, true)}</div>`,
+    b: it => `<div class="card fading">
+      <div class="row" style="align-items:flex-start;gap:12px">${face(it, true)}
+        <div class="text"><div class="title strong">${esc(it.title)}</div><div class="summary">${esc(it.summary)}</div>
+          <div class="meta">${esc(it.who)} · ${esc(it.place)} · ${it.took} · ${it.time}</div></div>${x(it)}</div>
+      ${reply(it, false)}</div>`,
+    c: it => `<div class="card c fading">
+      <div class="row">${face(it)}<div class="text"><div class="title">${esc(it.title)}</div></div><button class="open quiet">Open</button>${x(it)}</div>
+      ${reply(it, true)}</div>`,
+  };
+  function render(v) {
+    document.querySelectorAll('header button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+    const one = layouts[v](items[0]);
+    const stack = items.map(layouts[v]).join('') + '<button class="more">2 more finished</button>';
+    document.getElementById('out').innerHTML =
+      `<section><h2>One card (long title)</h2><div class="stack">${one}</div>
+         <h2 style="margin-top:24px">Short title</h2><div class="stack">${layouts[v]({...items[0], title: 'Summarise my inbox'})}</div></section>
+       <section><h2>Stacked: three cards and a fold</h2><div class="stack">${stack}</div></section>`;
+    document.querySelectorAll('.reply input').forEach(input => input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || !input.value.trim()) return;
+      input.closest('.reply').outerHTML = `<div class="sent">Sent to ${esc(input.getAttribute('aria-label').slice(9))}.</div>`;
+    }));
+    document.querySelectorAll('.x').forEach(b => b.addEventListener('click', () => b.closest('.card').remove()));
+  }
+  document.querySelectorAll('header button').forEach(b => b.addEventListener('click', () => render(b.dataset.v)));
+  addEventListener('keydown', e => { if (['1','2','3'].includes(e.key) && e.target.tagName !== 'INPUT') render('abc'[+e.key - 1]); });
+  render(new URLSearchParams(location.search).get('v') || 'a');
+</script>
+</body>
+</html>

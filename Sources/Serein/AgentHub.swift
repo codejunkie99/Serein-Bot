@@ -1219,9 +1219,12 @@ extension TaskMode {
       body = run.error.map { String($0.prefix(200)) } ?? "Open it to see what happened."
     case .running, .stopped: return
     }
+    let notice = FinishNotice.task(
+      thread: run.spec.threadID, title: name, outcome: run.record.outcome, summary: body, who: run.spec.provider.name,
+      place: run.spec.projectName, took: run.record.endedAt.map { $0.timeIntervalSince(run.record.startedAt) }, at: Date())
     TaskNotifications.shared.post(
       threadID: run.spec.threadID, title: title, body: body, asks: asks,
-      kind: run.record.outcome == .waiting ? .ask : .update)
+      kind: run.record.outcome == .waiting ? .ask : .update, notice: notice)
   }
   /// The first sentence of a reply, for a notification's body.
   static func firstSentence(_ text: String?) -> String? {

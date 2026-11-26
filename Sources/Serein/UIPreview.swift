@@ -1291,6 +1291,11 @@ struct UIPreview {
     if let at = voicePill, at < CommandLine.arguments.count {
       await RelayController.shared?.previewVoicePill(CommandLine.arguments[at])
     }
+    // `--ui-finish-notice short|long|swarm|stack [typed]`: the finish notice, which the capture takes.
+    let finishNotice = CommandLine.arguments.firstIndex(of: "--ui-finish-notice").map { CommandLine.arguments.index(after: $0) }
+    if let at = finishNotice, at < CommandLine.arguments.count {
+      FinishNoticeCenter.shared.preview(CommandLine.arguments[at], typed: CommandLine.arguments.contains("typed"))
+    }
     Self.seedAffectLane3()
     Self.seedTakeoverCard(browser: browser)
     // Explicit guidance fixtures only; both centers disable persistence in preview launches.
@@ -1365,7 +1370,8 @@ struct UIPreview {
     // `--ui-hologram`: the light has drawn before the window is captured.
     if CommandLine.arguments.contains("--ui-hologram") { await RelayAvatarEngine.settle(in: window) }
     do {
-      let target = window.attachedSheet ?? window
+      let notice = finishNotice != nil ? FinishNoticeCenter.shared.panel : nil
+      let target: NSWindow = notice ?? window.attachedSheet ?? window
       target.contentView?.layoutSubtreeIfNeeded()
       guard target.isVisible, !target.isMiniaturized, target.screen != nil else {
         throw SereinError.invalid("Capture requires the visible native preview window")
@@ -1387,7 +1393,7 @@ struct UIPreview {
         throw SereinError.invalid("Native window capture did not produce a readable PNG")
       }
       Self.emit(["event": "serein-ui-capture", "screen": screen, "path": capture.path,
-        "method": "native-window", "targetKind": target === window ? "main-window" : "attached-sheet",
+        "method": "native-window", "targetKind": target === window ? "main-window" : notice != nil ? "finish-notice" : "attached-sheet",
         "targetContentWidth": Int(target.contentView?.bounds.width ?? 0),
         "targetContentHeight": Int(target.contentView?.bounds.height ?? 0),
         "reducedEffects": reducedEffects, "appearance": appearance.rawValue,

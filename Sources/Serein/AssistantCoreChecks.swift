@@ -38,6 +38,7 @@ enum AssistantCoreChecks {
     ("screenSignal", AssistantCoreChecks.screenSignal),
     ("fnCall", AssistantCoreChecks.fnCall),
     ("voicePill", AssistantCoreChecks.voicePill),
+    ("finishNotice", AssistantCoreChecks.finishNotice),
     ("asks", AssistantCoreChecks.asks),
     ("memoryModel", AssistantCoreChecks.memoryModel),
     ("memoryStore", AssistantCoreChecks.memoryStore),

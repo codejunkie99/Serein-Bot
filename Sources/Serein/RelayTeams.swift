@@ -258,17 +258,29 @@ extension RelayOrchestrator {
         closeHandoff(child.id, .failed, result: "The task it was part of ended.", report: false)
       }
     }
-    announceEnd(record, state, result)
+    announceEnd(record, state, result, notice: report)
   }
-  private func announceEnd(_ record: AssistantHandoff, _ state: AssistantHandoff.State, _ result: String?) {
+  /// `notice`: the finish shows a finish notice (SereinCore/FinishNotice.swift), unless the chat
+  /// it answers is on screen; one closed with its parent, or lost to a relaunch, shows none.
+  private func announceEnd(_ record: AssistantHandoff, _ state: AssistantHandoff.State, _ result: String?, notice: Bool) {
     let name = profileName(record.to)
+    var closed = record
+    closed.state = state
+    closed.result = result
+    closed.finishedAt = Date()
+    let origin = originChat(record)
+    let place = record.side == .swarm ? record.route.map { "Seat on " + Self.routeName($0) } : nil
+    let onScreen = NSApp.isActive && threadID == origin && RelayController.chatOnScreen
+    let card = notice && !onScreen
+      ? FinishNotice.handoff(closed, who: name, place: place, opens: origin, at: Date()) : nil
     if state == .done {
       note("\(name) finished the hand-off “\(String(record.task.prefix(60)))”", .auto)
+      if let card { TaskNotifications.shared.post(threadID: origin, title: "\(name) finished", body: card.summary, always: true, notice: card) }
     } else {
       note("The hand-off to \(name) failed", .auto)
       TaskNotifications.shared.post(
         threadID: record.askedIn, title: "\(name) couldn't finish",
-        body: "“\(String(record.task.prefix(80)))”: \(String((result ?? "").prefix(120)))", always: true)
+        body: "“\(String(record.task.prefix(80)))”: \(String((result ?? "").prefix(120)))", always: true, notice: card)
     }
   }
   /// Starts each waiting hand-off whose target chat is idle, oldest first. The target runs with only its own scope, on its own Main chat, as the lower trust
@@ -651,7 +663,7 @@ extension RelayOrchestrator {
       landReport(record)
       // A part that only waited holds no chat: a run there is not its own.
       if held.contains(record.id), let run = agent.hub.run(for: record.threadID) { agent.hub.stop(run) }
-      announceEnd(record, .failed, record.result)
+      announceEnd(record, .failed, record.result, notice: false)
     }
   }
   /// The person stopped the turn `run` in their chat: what it handed on stops with it, at every
