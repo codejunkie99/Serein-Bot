@@ -274,6 +274,8 @@ extension SmokeTest {
     // The shortcut: a tap opens the panel, another tap hides it (holding listens, which needs a microphone).
     if let controller = RelayController.shared {
       controller.summonPressed()
+      // A press alone shows nothing: a hold shows the voice pill, a tap opens the bar at the release.
+      try check(!relay.panelVisible(), "Pressing the shortcut does not open the bar before it is let go")
       controller.summonReleased()
       try await waitFor(2) { relay.panelVisible() }
       try check(relay.panelVisible(), "Tapping the shortcut opens Relay's panel")
