@@ -111,10 +111,14 @@ extension AssistantCoreChecks {
 
       // 1. Three plans: three seats on three models, one line, then one merged answer.
       let first = ask("Which plan should I pick?")
-      guard let swarm = start(3, three), let holderID = swarm.seats.first?.parentID, let holder = row(holderID) else {
+      let longTask = "Compare the three annual plans across price, team seat limits, export formats, offline support, audit logs, and migration effort; return one recommendation table with concrete trade-offs. REQUIREMENT_TAIL_9876"
+      guard case .started(let longSeats, _) = relay.startSwarm(longTask, count: 3, lead: lead, parent: nil, chat: chat, registry: three),
+        let holderID = longSeats.first?.parentID, let holder = row(holderID)
+      else {
         try check(false, "swarm: three plans start a swarm")
         return
       }
+      let swarm = (seats: longSeats, line: "")
       let routes = swarm.seats.compactMap(\.route)
       try check(Set(routes.map(\.provider)) == [claude, codex, gemini] && routes.count == 3 && holder.side == .swarmLead
           && swarm.seats.allSatisfy { $0.side == .swarm && $0.parentID == holder.id },
@@ -128,6 +132,9 @@ extension AssistantCoreChecks {
       try check(!relay.handoffsStarting.contains(holder.threadID) && row(swarm.seats[0].id)?.reported != true,
         "swarm: the merged turn waits while a seat is out, and the results wait with it")
       end(swarm.seats[2].id)
+      let mergePrompt = relay.resultsPrompt(holder, swarm.seats.compactMap { row($0.id) })
+      try check(mergePrompt.contains("The original task:\n" + longTask) && mergePrompt.contains("REQUIREMENT_TAIL_9876"),
+        "swarm: the lead's merge prompt carries the full original task beyond 120 characters")
       try check(relay.handoffsStarting.contains(holder.threadID) && swarm.seats.allSatisfy { row($0.id)?.reported == true },
         "swarm: once every seat is back, even a failed one, the lead's one merged turn starts with every result")
       merge(holder)

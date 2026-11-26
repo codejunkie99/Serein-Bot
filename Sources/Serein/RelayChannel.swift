@@ -42,9 +42,9 @@ extension RelayOrchestrator {
     // A swarm seat's words never post: its lead's one merged answer does, as that lead's reply.
     if record.side == .swarm { return true }
     let origin = originChat(record)
-    // A side seat answers the person's message, which a quit may have lost from a busy chat: it
-    // goes in first, under its own id, so the answer has its question.
-    if record.side == .busy, let asked = record.mention?.post {
+    // A side seat or tagged turn answers the person's message, which a quit may have lost from a
+    // busy chat: it goes in first, under its own id, so the answer has its question.
+    if record.side != .background, case .byPerson(let asked)? = record.mention {
       var message = AgentMessage(role: "you", text: record.task)
       message.id = asked
       channelPost(message, into: origin)

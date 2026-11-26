@@ -484,6 +484,13 @@ struct LiveTurnFacts: View {
   /// An approval waits in this chat: the plan's current step asks first.
   var gateAsked = false
   @Environment(\.palette) private var p
+  /// Whether `LiveTurnFacts` renders `message` while the foreground turn is still running.
+  static func draws(_ message: AgentMessage, profiles: [RelayProfile]) -> Bool {
+    if message.line != nil { return true }
+    if message.role == "you", !message.text.isEmpty { return true }
+    if let id = message.from, profiles.contains(where: { $0.id == id }), !message.text.isEmpty { return true }
+    return false
+  }
   var body: some View {
     let facts: AssistantDesk.Facts? = desk.facts[chat]
     let above: [AgentMessage] = facts?.above ?? []
@@ -493,6 +500,11 @@ struct LiveTurnFacts: View {
     ForEach(above, id: \.id) { message in
       if message.line != nil {
         HostLineView(message: message, profiles: profiles)
+      } else if message.role == "you", !message.text.isEmpty {
+        HStack {
+          Spacer(minLength: 80)
+          PersonBubble(text: message.text, tail: true)
+        }
       } else if let id = message.from, let author = profiles.first(where: { $0.id == id }), !message.text.isEmpty {
         GroupMessageRow(profile: author) {
           Text(verbatim: message.text).font(AssistantType.body).foregroundStyle(p.ink).lineSpacing(3)

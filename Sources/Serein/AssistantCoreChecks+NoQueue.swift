@@ -82,10 +82,12 @@ extension AssistantCoreChecks {
         try check(false, "no queue: a busy chat's message takes a side seat")
         return
       }
+      let queuedBubble = relay.desk.facts[chat]?.above.first { $0.id == asked }
       try check(relay.pending.isEmpty && side.from == lead && side.to == lead && side.askedIn == chat && side.parentID == nil
           && relay.handoffsStarting.contains(side.threadID) && side.threadID.hasPrefix(RelayOrchestrator.seatPrefix)
-          && seen(asked) == 1 && relay.handoffLedger.daily.isEmpty,
-        "no queue: a busy chat plus a new message gives a side seat right away, its message in the chat, with no queue")
+          && seen(asked) == 1 && queuedBubble.map { LiveTurnFacts.draws($0, profiles: relay.team.profiles) } == true
+          && relay.handoffLedger.daily.isEmpty,
+        "no queue: a busy chat plus a new message gives a side seat right away, its message renders in the live chat, with no queue")
 
       // 2. Its answer posts once, under that message, in the origin chat.
       close(side.id, "Sunny, 24 °C.")

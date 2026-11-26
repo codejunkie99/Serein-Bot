@@ -175,6 +175,59 @@ extension AssistantCoreChecks {
     stray.seats.append(.init(id: "s2", who: "x", thread: "t2", reach: reachOf([.web, .mac, .mail]), parent: "s1", handoff: "h2"))
     stray.renarrow([:])
     try check(stray.seats[1].reach.scope.destinations == [.web], "A seat stored wider than its parent is narrowed before it runs")
+
+    // Narrowed seat reach holds at runtime across offeredComputer, scopeRefusal and assistantRefusal:
+    // a restricted sender handing off to a computer-enabled target cannot widen into .computer or .mac.
+    try MainActor.assumeIsolated {
+      guard RelayOrchestrator.shared == nil else {
+        try check(false, "reach: no Relay runs before this suite starts one")
+        return
+      }
+      let files = FileManager.default
+      let root = files.temporaryDirectory.appendingPathComponent("serein-reach-\(UUID().uuidString)", isDirectory: true)
+      try files.createDirectory(at: root, withIntermediateDirectories: true)
+      defer { try? files.removeItem(at: root) }
+      let browser = try BrowserModel(root: root)
+      try files.createDirectory(
+        at: browser.library.root.appendingPathComponent("relay", isDirectory: true), withIntermediateDirectories: true)
+      let gates = GateSettings.shared
+      let savedComputer = gates.object(forKey: ComputerPolicy.enabledKey)
+      gates.set(true, forKey: ComputerPolicy.enabledKey)
+      defer { gates.set(savedComputer, forKey: ComputerPolicy.enabledKey) }
+      let agent = AgentModel(browser: browser, discoverProviders: false)
+      let relay = RelayOrchestrator.start(agent: agent, browser: browser)
+      defer { RelayOrchestrator.releaseForChecks(relay) }
+      defer { relay.stopEverything(pause: true) }
+      let narrow = RelayProfile(id: "narrow", name: "Narrow", scope: AssistantScope(destinations: [.web, .answer]))
+      let wide = RelayProfile(id: "wide", name: "Wide", scope: AssistantScope(destinations: [.web, .answer, .mac, .computer]))
+      _ = relay.changeTeam(actor: "user", "Add Narrow and Wide") { current in
+        var copy = current
+        copy.profiles.append(contentsOf: [narrow, wide])
+        return copy
+      }
+      let record = relay.sendHandoff(from: narrow, to: wide, task: "Check the site", team: "", teamName: "All", how: .auto)
+      var spec = RunSpec(threadID: record.threadID, provider: .claude, executable: "/bin/sleep", model: "", effort: "low",
+        mode: .research, projectID: nil, projectName: nil, title: "Narrowed handoff", scope: "", autoRouting: false,
+        grants: RunGrants(), limits: RunLimits(hard: 600, idle: 600))
+      spec.initiator = .handoff
+      let task = try browser.beginTask(isolated: true, allowActions: false, includeCurrent: false)
+      let liveRun = try agent.hub.start(spec, task: task, arguments: ["60"], folder: root, prompt: "", transcript: [])
+      defer {
+        agent.hub.stop(liveRun)
+        browser.endTask(task.capability.task)
+      }
+      try check(relay.offeredComputer(thread: record.threadID, relay: false, initiator: .handoff) == nil,
+        "reach: offeredComputer refuses .computer on a hand-off from a sender without .computer")
+      try check(relay.scopeRefusal(thread: record.threadID, runKey: TaskMode.anywhere.runKey, relay: false, initiator: .handoff) != nil,
+        "reach: scopeRefusal refuses .mac on a hand-off from a sender without .mac")
+      try check(browser.assistantRefusal(.computer, taskID: task.capability.task) != nil
+          && browser.assistantRefusal(.mac, taskID: task.capability.task) != nil
+          && browser.assistantRefusal(.web, taskID: task.capability.task) == nil,
+        "reach: assistantRefusal enforces the narrowed seat scope rather than the target's wider profile")
+      relay.closeHandoff(record.id, .done, result: "Done.", report: false)
+      try check(browser.assistantRefusal(.web, taskID: task.capability.task) != nil,
+        "reach: assistantRefusal fails closed once the hand-off is no longer open")
+    }
   }
 
   static func staffing(_ check: Check) throws {

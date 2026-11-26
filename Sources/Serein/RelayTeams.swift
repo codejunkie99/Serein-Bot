@@ -49,7 +49,7 @@ extension RelayOrchestrator {
     if initiator == .handoff {
       guard let record = openHandoff(thread: thread) else { return nil }
       target = profile(id: record.to)
-      guard placeRefusal(.computer, for: target, suggestOthers: false) == nil else { return nil }
+      guard seatReach(record, target: target).scope.allows(.computer) else { return nil }
       personal = personal || record.personal == true
     } else {
       guard let profile = assistant(thread: thread, initiator: initiator, relay: relay), placeRefusal(.computer, for: profile) == nil
@@ -122,7 +122,9 @@ extension RelayOrchestrator {
     if initiator == .handoff {
       guard let record = openHandoff(thread: thread) else { return "That hand-off is no longer open, so it did not start." }
       guard let place = AssistantPlace.of(runKey: runKey), place != .answer else { return nil }
-      return placeRefusal(place, for: profile(id: record.to), suggestOthers: false)
+      let target = profile(id: record.to)
+      guard !seatReach(record, target: target).scope.allows(place) else { return nil }
+      return AssistantScope.refusal(name: target.name, place: place, others: [])
     }
     guard !relay, let profile = assistant(thread: thread, initiator: initiator, relay: relay),
       let place = AssistantPlace.of(runKey: runKey)
@@ -459,7 +461,7 @@ extension RelayOrchestrator {
   }
   /// What the target reads when hand-offs it sent end: each result, fenced as untrusted, then
   /// whether anything it handed on is still out or it is time to finish.
-  private func resultsPrompt(_ record: AssistantHandoff, _ results: [AssistantHandoff]) -> String {
+  func resultsPrompt(_ record: AssistantHandoff, _ results: [AssistantHandoff]) -> String {
     var lines = results.map { result -> String in
       // A swarm seat is the lead itself on another model: its answer is labelled by that model.
       let name = result.side == .swarm ? "the seat on " + (result.route.map(Self.routeName) ?? "your own model") : profileName(result.to)
@@ -475,6 +477,7 @@ extension RelayOrchestrator {
     let sender = profileName(record.from)
     let out = handoffLedger.records.filter { $0.isOpen && $0.parentID == record.id }.map { profileName($0.to) }
     if record.side == .swarmLead {
+      lines.insert("The original task:\n" + record.task, at: 0)
       lines.append("Every seat is back. Compare their answers and write the one answer to the task, in full; it posts in the chat, answering the user. Never post a seat's answer as it is.")
       return lines.joined(separator: "\n\n")
     }
@@ -911,7 +914,10 @@ extension BrowserModel {
   func assistantRefusal(_ place: AssistantPlace?, taskID: String) -> String? {
     guard let found = assistantScope(forTask: taskID), let relay = RelayOrchestrator.shared else { return nil }
     let needed = place ?? (found.mode == .page ? .page : .web)
-    return relay.placeRefusal(needed, for: found.profile, suggestOthers: !found.handoff)
+    guard !found.scope.allows(needed) else { return nil }
+    let others = !found.handoff
+      ? relay.team.handoffTargets(from: found.profile.id).filter { (relay.effectiveScope($0) ?? relay.personScope).allows(needed) } : []
+    return AssistantScope.refusal(name: found.profile.name, place: needed, others: others.map(\.name))
   }
   /// A connected app left out of the task's assistant's own list (`AssistantScope.apps`), refused
   /// before anything is listed, read or sent. `key` is `AssistantScope.composioAppKey` or
