@@ -50,23 +50,46 @@ public enum RunSteering {
 public struct SteerLedger: Equatable, Sendable {
   /// `shown` is what the person typed (their bubble); `wire` is what went to the engine.
   public struct Line: Equatable, Sendable {
+    public let id: UUID
     public let shown: String
     public let wire: String
-    public init(shown: String, wire: String) {
+    public init(shown: String, wire: String, id: UUID = UUID()) {
+      self.id = id
       self.shown = shown
       self.wire = wire
     }
   }
+  public struct Resolution: Sendable {
+    public let line: Line
+    public let delivered: Bool
+  }
   public private(set) var waiting: [Line] = []
+  private var settled: [UUID: Bool] = [:]
+  private var returned: [Line] = []
+  public var hasReturnedLines: Bool { !returned.isEmpty }
+  public var pendingDisplay: [Line] { returned + waiting }
+  public func waitsForNextTurn(_ line: Line) -> Bool { returned.contains { $0.id == line.id } }
   public init() {}
 
   public mutating func wrote(_ line: Line) { waiting.append(line) }
 
-  /// For engines Serein drives itself (Codex app server, Local model): the oldest waiting line.
-  public mutating func take() -> Line? { waiting.isEmpty ? nil : waiting.removeFirst() }
-  /// At run end: the person's words the engine never read, oldest first. Empties the ledger.
-  public mutating func leftovers() -> [String] {
-    defer { waiting = [] }
-    return waiting.map(\.shown)
+  /// Acknowledgements may arrive out of order; expose only the resolved prefix in send order.
+  public mutating func resolve(_ id: UUID, delivered: Bool) -> [Resolution] {
+    guard waiting.contains(where: { $0.id == id }), settled[id] == nil else { return [] }
+    settled[id] = delivered
+    var ready: [Resolution] = []
+    while let first = waiting.first, let received = settled.removeValue(forKey: first.id) {
+      let line = waiting.removeFirst()
+      if received { ready.append(Resolution(line: line, delivered: true)) }
+      else { returned.append(line) }
+    }
+    return ready
+  }
+  /// Rejected lines wait until finish so separate acknowledgements cannot reverse a prepend queue.
+  /// A known delivery stays delivered; an unacknowledged line goes back once.
+  public mutating func finish() -> [Resolution] {
+    defer { waiting = []; settled = [:]; returned = [] }
+    return returned.map { Resolution(line: $0, delivered: false) }
+      + waiting.map { Resolution(line: $0, delivered: settled[$0.id] ?? false) }
   }
 }

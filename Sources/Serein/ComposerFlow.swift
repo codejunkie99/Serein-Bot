@@ -184,7 +184,7 @@ import SwiftUI
     guard let agent, let run = agent.hub.run(for: thread), agent.hub.takesWords(run) else { return .nextTurn }
     return RunSteering.path(
       agent.hub.steerWire(run), carriesContext: carriesContext,
-      othersWaiting: !queue.items(for: thread).isEmpty, byPerson: true)
+      othersWaiting: run.steering.hasReturnedLines || !queue.items(for: thread).isEmpty, byPerson: true)
   }
   /// The open chat's path for what is typed and attached now.
   var stepPath: RunSteering.Path {
@@ -848,10 +848,10 @@ struct SteeringRows: View {
   @ObservedObject var run: AgentRun
   @Environment(\.palette) var p
   var body: some View {
-    ForEach(Array(run.steering.waiting.enumerated()), id: \.offset) { _, line in
+    ForEach(run.steering.pendingDisplay, id: \.id) { line in
       VStack(alignment: .leading, spacing: 2) {
         Text(line.shown).font(UIStyle.body).lineLimit(2)
-        Text(verbatim: RunSteering.sent(app: run.spec.provider.name)).role(.meta)
+        Text(verbatim: run.steering.waitsForNextTurn(line) ? "Waiting for the next reply" : RunSteering.sent(app: run.spec.provider.name)).role(.meta)
       }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
         .background(p.panel, in: RoundedRectangle(cornerRadius: UIStyle.controlRadius)).opacity(0.6)
         .accessibilityElement(children: .combine)

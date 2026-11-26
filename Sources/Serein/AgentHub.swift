@@ -216,8 +216,8 @@ extension TaskMode {
   }
   /// Words the person sent into this turn that its engine has not read yet (`AgentHub.steer`).
   @Published var steering = SteerLedger()
-  /// Takes back words the engine never read: their owner keeps them for the next turn.
-  var unread: (@MainActor ([String]) -> Void)?
+  /// Each steer keeps its own return path, including the context of the send that made it.
+  var steerReturns: [UUID: @MainActor ([String]) -> Void] = [:]
   /// The engine read the person's words: their bubble joins the transcript. Mid-answer it goes
   /// just above the reply that is streaming, so the reply stays the last assistant message;
   /// after an answer it goes below it, with a new empty reply.
@@ -842,24 +842,38 @@ extension TaskMode {
   /// which keeps it for the next turn. Never starts, stops or widens a turn.
   func steer(_ run: AgentRun, _ text: String, unread: @escaping @MainActor ([String]) -> Void) {
     guard takesWords(run) else { return unread([text]) }
-    run.unread = unread
     let line = SteerLedger.Line(shown: text, wire: AgentPrivacy.redact(text))
+    run.steerReturns[line.id] = unread
     run.steering.wrote(line)
     if let turn = run.engineTurn {
       Task { [weak self, weak run, engines] in
         let outcome = await engines.steer(turn.request.thread, line.wire)
-        // A run that ended meanwhile already handed its ledger back (finish).
-        guard let run, let line = run.steering.take() else { return }
+        // Finish may already have reconciled these lines. Never acknowledge a different send.
+        guard let run else { return }
+        let delivered: Bool
         switch outcome {
-        // Maybe delivered counts as read: words are never sent twice.
-        case .steered, .indeterminate:
-          run.took(line.shown, ownReply: false)
-          self?.onTranscript?(run)
-        case .refused, .handedBack:
-          unread([line.shown])
+        case .steered, .indeterminate: delivered = true
+        case .refused, .handedBack: delivered = false
         }
+        let ready = run.steering.resolve(line.id, delivered: delivered)
+        self?.settleSteers(ready, in: run)
       }
     }
+  }
+  private func settleSteers(_ ready: [SteerLedger.Resolution], in run: AgentRun) {
+    guard !ready.isEmpty else { return }
+    var returned: [(String, (@MainActor ([String]) -> Void))] = []
+    for result in ready {
+      let callback = run.steerReturns.removeValue(forKey: result.line.id)
+      if result.delivered {
+        run.took(result.line.shown, ownReply: false)
+        onTranscript?(run)
+      } else if let callback {
+        returned.append((result.line.shown, callback))
+      }
+    }
+    // Both Main and task queues prepend returned words, so reverse callbacks preserve send order.
+    for (text, callback) in returned.reversed() { callback([text]) }
   }
 
   /// Stops one run and revokes only its capability. Other runs keep going.
@@ -998,9 +1012,8 @@ extension TaskMode {
   }
   private func finish(_ run: AgentRun, outcome: RunRecord.Outcome) {
     // The one place words leave a run unread: back to their owner, for the next turn.
-    let unread = run.steering.leftovers()
-    if !unread.isEmpty { run.unread?(unread) }
-    run.unread = nil
+    settleSteers(run.steering.finish(), in: run)
+    run.steerReturns = [:]
     // Remove only the streaming placeholder, never an action- or screenshot-only reply.
     if let last = run.transcript.last, last.role == "assistant", last.text.isEmpty,
       last.activities?.isEmpty != false, last.images?.isEmpty != false

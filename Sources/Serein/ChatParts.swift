@@ -670,10 +670,10 @@ struct QueuedBubbles: View {
     @ObservedObject var run: AgentRun
     @Environment(\.palette) private var p
     var body: some View {
-      ForEach(Array(run.steering.waiting.enumerated()), id: \.offset) { _, line in
+      ForEach(run.steering.pendingDisplay, id: \.id) { line in
         VStack(alignment: .trailing, spacing: 4) {
           PersonBubble(text: line.shown, tail: true).opacity(0.6)
-          Text(verbatim: RunSteering.sent(app: run.spec.provider.name)).font(AssistantType.meta).foregroundStyle(p.secondary)
+          Text(verbatim: run.steering.waitsForNextTurn(line) ? "Waiting for the next reply" : RunSteering.sent(app: run.spec.provider.name)).font(AssistantType.meta).foregroundStyle(p.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .combine)

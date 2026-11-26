@@ -1499,7 +1499,8 @@ import SereinCore
       if !interrupt, let run, run.spec.initiator != .handoff, agent.hub.takesWords(run),
         RunSteering.path(
           agent.hub.steerWire(run), carriesContext: !attachments.isEmpty || trail != nil || page != nil,
-          othersWaiting: !pending.isEmpty || approvals.contains { $0.threadID == threadID }, byPerson: userMessage) == .intoTurn
+          othersWaiting: !pending.isEmpty || run.steering.hasReturnedLines || approvals.contains { $0.threadID == threadID },
+          byPerson: userMessage) == .intoTurn
       {
         if userMessage { noteCorrection(prompt, thread: threadID) }
         agent.hub.steer(run, prompt) { [weak self] unread in self?.keepForNextTurn(unread, inWindow: inWindow) }
@@ -1942,6 +1943,8 @@ import SereinCore
     dropPending()
     redirecting = false
     if let run {
+      // A stopped reply drops the words it never read; they are not sent with the next turn.
+      if run.spec.relay { run.steerReturns.removeAll() }
       agent.hub.stop(run)
     } else if sending {
       // The turn is still being handed to the AI app: it stops as soon as it starts.
@@ -5091,7 +5094,7 @@ import SereinCore
     }
     guard let run else { return true }
     // Words it has not read yet come back to this chat if it ends without reading them.
-    guard run.steering.waiting.isEmpty else { return false }
+    guard run.steering.waiting.isEmpty, !run.steering.hasReturnedLines else { return false }
     if let owner = ownerRun { return owner.thread == threadID }
     return run.spec.relay && run.spec.initiator == .relay
   }

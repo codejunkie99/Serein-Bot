@@ -31,13 +31,33 @@ extension AssistantCoreChecks {
     let other = SteerLedger.Line(shown: "second", wire: "second")
     ledger.wrote(line)
     ledger.wrote(other)
-    try check(ledger.take() == line && ledger.take() == other && ledger.take() == nil,
-      "An engine Serein drives takes lines oldest first")
+    try check(ledger.resolve(other.id, delivered: true).isEmpty,
+      "A later steer acknowledgement waits for the first message")
+    let ordered = ledger.resolve(line.id, delivered: false)
+    try check(ordered.map(\.line) == [other] && ordered.allSatisfy(\.delivered)
+      && ledger.waiting.isEmpty && ledger.hasReturnedLines && ledger.resolve(other.id, delivered: false).isEmpty
+      && ledger.finish().map(\.line) == [line] && !ledger.hasReturnedLines,
+      "Out-of-order acknowledgements keep each outcome on its own message and hold rejected words until finish")
     ledger.wrote(line)
     ledger.wrote(other)
+    _ = ledger.resolve(other.id, delivered: true)
+    let finished = ledger.finish()
     try check(
-      ledger.leftovers() == [line.shown, "second"] && ledger.waiting.isEmpty && ledger.leftovers().isEmpty,
-      "Unread words leave the ledger once, as the person typed them, oldest first")
+      finished.map(\.line) == [line, other] && finished.map(\.delivered) == [false, true]
+        && ledger.waiting.isEmpty && ledger.finish().isEmpty && ledger.resolve(line.id, delivered: true).isEmpty,
+      "Finish returns only unacknowledged words while retaining known deliveries, once and in send order")
+    ledger.wrote(line)
+    ledger.wrote(other)
+    try check(ledger.resolve(line.id, delivered: false).isEmpty
+      && ledger.resolve(other.id, delivered: false).isEmpty && ledger.hasReturnedLines,
+      "Separate refused acknowledgements stay with the run until their return order is known")
+    let rejected = ledger.finish()
+    var returned = MessageQueue()
+    for result in rejected.reversed() { returned.requeue([result.line.shown], thread: "T") }
+    try check(rejected.map(\.line) == [line, other] && rejected.allSatisfy { !$0.delivered }
+      && returned.items(for: "T").map(\.text) == [line.shown, other.shown]
+      && ledger.finish().isEmpty,
+      "Run finish returns separately refused words once in send order through the prepend queue")
 
     var queue = MessageQueue()
     let ids = ["a", "b", "c", "d"].compactMap { queue.enqueue($0, thread: "T")?.id }
