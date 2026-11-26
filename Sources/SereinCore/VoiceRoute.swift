@@ -41,6 +41,8 @@ public struct VoiceRoute: Equatable, Sendable {
   public var words: String
   /// Who gets them, by the roster's name; nil when the route changes nothing.
   public var to: String?
+  /// Stable target for a named assistant, so a stop does not depend on switching chats.
+  public var targetProfileID: String? = nil
   public var reason: Reason
   /// The words are a stop for the assistant they reach, so they start no turn there: the bar
   /// drops what the hold took.
@@ -76,17 +78,16 @@ public struct VoiceRoute: Equatable, Sendable {
     if RelayStop.stops(text, overShown: showing, running: running) { return bare(text) }
     if asksForNewAssistant(text) { return toMain(text, team: team, reason: .newAssistant) }
     if let hit = addressed(text, team: team) {
-      // Words said to another assistant are judged by that one's state: “Scout, cancel this” over
-      // something shown is about that thing unless Scout works. A stop keeps Scout's name only
-      // then, so Scout's chat can come forward for it. Every other stop goes without the name:
-      // said to the one in front, to a team (its words would start a turn), to an assistant with
-      // nothing to stop, and “stop everything”, which acts from the chat in front.
+      // A named reply-stop keeps its target even when that assistant is idle; a stop to an idle
+      // assistant must never fall through to the reply in front. “Stop everything” stays global.
       let other = team.profiles.first { $0.name == hit.name && $0.id != team.activeID }
       let theirs = other.map { busy.contains($0.id) } ?? false
       let stop = RelayStop.stops(hit.words, overShown: showing, running: other == nil ? running : theirs)
-      if stop, !(theirs && RelayStop.kind(hit.words) == .reply) { return bare(hit.words) }
+      if stop, RelayStop.kind(hit.words) == .everything { return bare(hit.words) }
+      if stop, other == nil { return bare(hit.words) }
       let message = hit.words.isEmpty ? "@" + hit.name : "@" + hit.name + ", " + hit.words
-      return VoiceRoute(message: message, words: hit.words, to: hit.name, reason: .named, stop: stop)
+      return VoiceRoute(message: message, words: hit.words, to: hit.name, targetProfileID: other?.id,
+                        reason: .named, stop: stop)
     }
     if let best = fit(text, team: team) {
       // Already in front: the words go as they are.

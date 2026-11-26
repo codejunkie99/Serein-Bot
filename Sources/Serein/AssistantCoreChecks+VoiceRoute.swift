@@ -119,14 +119,15 @@ extension AssistantCoreChecks {
     route = plan("Scout, stop.", active: "inbox", showing: true, busy: ["scout"])
     let told = plan("tell Scout to cancel that", showing: true, busy: ["scout"])
     let reaches = route.message == "@Scout, stop" && route.words == "stop" && route.to == "Scout" && route.reason == .named
-      && route.stop && told.message == "@Scout, cancel that" && told.stop
+      && route.stop && route.targetProfileID == "scout" && told.message == "@Scout, cancel that" && told.stop
     func bare(_ route: VoiceRoute, _ words: String = "stop") -> Bool { route.message == words && route.to == nil && route.stop }
-    let idle = bare(plan("Scout, stop.", active: "inbox", showing: true, running: true))
+    let idle = plan("Scout, stop.", active: "inbox", showing: true, running: true)
+    let idleTargeted = idle.message == "@Scout, stop" && idle.stop && idle.targetProfileID == "scout"
     let inFront = bare(plan("Scout, stop.", active: "scout", showing: true, running: true, busy: ["scout"]))
     let toTeam = bare(plan("tell the Trip team to stop", busy: ["scout", "inbox"]))
     let everything = bare(plan("tell Scout to stop everything", busy: ["scout"]), "stop everything")
-    try check(reaches && idle && inFront && toTeam && everything,
-      "A stop said to another assistant by name reaches it while a run is in its own chat; said to one with nothing running there, to the one in front or to a team, and “stop everything” said to anyone, it goes without the name [reaches it: \(reaches), nothing running: \(idle), in front: \(inFront), team: \(toTeam), everything: \(everything)]")
+    try check(reaches && idleTargeted && inFront && toTeam && everything,
+      "A named stop keeps its assistant target even while that assistant is idle; stops to the chat in front, a team and “stop everything” stay bare [busy target: \(reaches), idle target: \(idleTargeted), in front: \(inFront), team: \(toTeam), everything: \(everything)]")
     route = plan("Scout, cancel this", showing: true, running: true)
     let busyScout = plan("Scout, stop the server", busy: ["scout"])
     try check(route.message == "@Scout, cancel this" && !route.stop && busyScout.to == "Scout" && !busyScout.stop,

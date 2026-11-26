@@ -1962,6 +1962,28 @@ import SereinCore
     stopNotice = .stoppedReply(working: liveTasks, others: otherLiveTasks)
     note("Stopped the reply", .user)
   }
+  /// A stop said to another assistant by name (`VoiceRoute.targetProfileID`): ends that
+  /// assistant's reply in its own chat, without bringing the chat forward. Only that thread's
+  /// cards and questions are declined.
+  func stopReply(in target: String) {
+    guard target != threadID else { return stopReply() }
+    let live = agent.hub.run(for: target)
+    let forms = questionForms.filter { ($0.threadID ?? turnThread) == target }
+    let ids = Set(forms.map(\.id))
+    questionForms.removeAll { ids.contains($0.id) }
+    for form in forms { form.answer(nil) }
+    declineApprovals(thread: target)
+    frames.unbindPage(target)
+    if turnThread == target {
+      turnBrief = nil
+      redirecting = false
+      if sending && live == nil { cancelTurn = true }
+    }
+    if let live, live.isActive {
+      if live.spec.relay { live.steerReturns.removeAll() }
+      agent.hub.stop(live)
+    }
+  }
   /// Declines every card one thread has open: its approvals, any that moved to an alert, and its
   /// steps waiting on the one-time card. Stop uses it for Serein's turn, a model switch for the
   /// chat it moves (AgentModel.switchModel), and Edit and rerun for the chat it rewinds

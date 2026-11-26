@@ -1218,6 +1218,7 @@ import UniformTypeIdentifiers
         text, team: relay.team, chatInFront: chatInFront(), showing: showing, running: running,
         busy: relay.workingElsewhere)
       : nil
+    let namedStop = route?.stop == true && route?.targetProfileID != nil
     // A stop is the whole message: with what the hold took, `ask` would send it instead of stopping.
     // Routed words are judged by the assistant they reach (`VoiceRoute.stop`).
     let stop = route?.stop ?? RelayStop.stops(text, overShown: showing, running: running)
@@ -1235,6 +1236,21 @@ import UniformTypeIdentifiers
       for item in attachments { SereinSurface.main.attach(item) }
       SereinRouter.show(draft: route?.message ?? text)
       ToastCenter.shared.show(ScreenContext.dragPictureNotice)
+      hide(deferring: false)
+      return
+    }
+    // A stop said to another assistant by name stops it where it runs; its chat stays where it is.
+    if namedStop, let route, let target = route.targetProfileID {
+      GuideCenter.shared.record(.barSent)
+      HintCenter.shared.recordBarUsed()
+      HintCenter.shared.recordInteraction()
+      relay.stopReply(in: relay.mainThread(of: target))
+      if let to = route.to { relay.note("Spoken stop went to \(to)", .auto) }
+      barStepAside?.cancel()
+      barTurnThread = nil
+      barTurnNotifies = false
+      barExchange = nil
+      answerOnly = false
       hide(deferring: false)
       return
     }
