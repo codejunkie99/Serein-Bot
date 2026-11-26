@@ -14,6 +14,18 @@ extension RelayOrchestrator {
     return [saved.threadID] + (saved.pastThreadIDs ?? [])
   }
 
+  /// The chats a cold session on `thread` may see in the registry slice (RelayChatRegistry), by
+  /// the rule `searchChats` keeps: nil, every chat, for the person's own chats and the main
+  /// assistant's. Another assistant's chat, task, hand-off seat or ask sees only its own chats.
+  func registryChats(for thread: String) -> Set<String>? {
+    let owner = desk.asks[thread]?.targetID
+      ?? handoffLedger.records.last { $0.threadID == thread }?.to
+      ?? childOwners[thread]
+      ?? team.profiles.first { chatThreads(of: $0.id).contains(thread) }?.id
+    guard let owner, !owner.isEmpty, owner != team.mainProfileID else { return nil }
+    return Set(chatThreads(of: owner)).union([thread])
+  }
+
   func searchChats(_ query: String?, limit: Int?, frame: TurnFrame) throws -> [String: Any] {
     guard frame.profile == team.mainProfileID else { throw SereinError.invalid(Self.chatsMainOnly) }
     let words = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
