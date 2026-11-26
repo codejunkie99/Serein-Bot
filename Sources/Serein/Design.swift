@@ -135,7 +135,7 @@ enum UIStyle {
   static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
     .system(size: size * textScale, weight: weight == .bold ? .bold : .regular, design: .monospaced)
   }
-  /// Settings › Appearance › Text size, applied to every font above (TextSizeController).
+  /// Settings › General › Text size, applied to every font above (TextSizeController).
   nonisolated(unsafe) static var textScale: CGFloat = 1
   /// A width that holds words (a menu, a popover, a column): it grows with a text size above
   /// 100%, so the words in it are not cut. At 100% and below it is the given width.
@@ -514,7 +514,7 @@ extension NSColor {
   }
 }
 /// Unset by default: views then draw with the palette that matches their effective appearance,
-/// so every hosting view, sheet and popover follows Settings › Appearance without wiring.
+/// so every hosting view, sheet and popover follows Settings › General without wiring.
 struct PaletteKey: EnvironmentKey { static let defaultValue: Palette? = nil }
 /// `--ui-reduced-effects` is the default, so every hosting view, sheet and popover of a preview
 /// holds still, and code with no view reads the same flag (`MessageMotion.reduced`).

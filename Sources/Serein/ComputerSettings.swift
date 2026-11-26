@@ -37,6 +37,17 @@ struct ComputerSettings: View {
         Text(notice).role(.meta).accessibilityAddTraits(.updatesFrequently)
       }
       VStack(alignment: .leading, spacing: 8) {
+        SettingsCaption("Each assistant's computer", info: Self.computersInfo)
+        if let relay = RelayController.shared?.relay {
+          ComputerList(relay: relay, deleting: $deleting, resetting: $resetting, moving: $moving, removing: $removing)
+        } else {
+          Text("Serein is not set up yet.").role(.meta)
+        }
+      }
+      // Where computers run and Docker's limits are set up once (docs/demos/simple-settings.decision.md):
+      // folded, with every switch that loosens an assistant's computer still in view above.
+      SettingsAdvanced(page: "Computer", count: 8) {
+      VStack(alignment: .leading, spacing: 8) {
         SettingsCaption("Where computers run", info: Self.placesInfo)
         VStack(spacing: 0) {
           BuiltInPlace()
@@ -47,16 +58,9 @@ struct ComputerSettings: View {
         }.frame(maxWidth: .infinity, alignment: .leading).settingsCard()
       }
       VStack(alignment: .leading, spacing: 8) {
-        SettingsCaption("Each assistant's computer", info: Self.computersInfo)
-        if let relay = RelayController.shared?.relay {
-          ComputerList(relay: relay, deleting: $deleting, resetting: $resetting, moving: $moving, removing: $removing)
-        } else {
-          Text("Serein is not set up yet.").role(.meta)
-        }
-      }
-      VStack(alignment: .leading, spacing: 8) {
-        SettingsCaption("Advanced")
+        SettingsCaption("Docker limits and image")
         AdvancedComputerSettings(memoryMB: memoryMB, cpus: $cpus, deletingImage: $deletingImage)
+      }
       }
     }
     .confirmationDialog(

@@ -1,6 +1,6 @@
 import Foundation
 
-/// An app's MCP server connected by its address (Settings › Connections), with no GitHub manifest:
+/// An app's MCP server connected by its address (the Marketplace (Your apps, On this Mac)), with no GitHub manifest:
 /// Serein lists the server's tools, the person reviews every one on a card, and the result is a
 /// local plugin manifest that goes through the same install, sign-in, session and gate paths as
 /// any other plugin. Everything here is pure, so it is checked in SereinChecks.

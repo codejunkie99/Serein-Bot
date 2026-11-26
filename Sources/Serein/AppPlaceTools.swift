@@ -131,6 +131,12 @@ extension RelayToolHost {
       out["projects"] = relay.browser.listedProjects.map {
         ["id": $0.id, "name": $0.name, "folder": URL(fileURLWithPath: $0.path).lastPathComponent]
       }
+    case "connect_apps":
+      // What Settings › Connections and Settings › Plugins read before they moved here: names with
+      // on or off, never a key, token or sign-in.
+      out["connections"] = NativeConnection.allCases.map { ["name": $0.label, "state": $0.isOn() ? "connected" : "not connected"] }
+      out["skills"] = PluginHost.shared.skills.map(\.name)
+      out["change"] = "The person connects, turns off and removes apps in the Marketplace. Open it for them with app_open."
     case let id where id.hasPrefix("assistant/"):
       let profile = try namedAssistant(a)
       let listing = listAssistants()["assistants"] as? [[String: Any]] ?? []
@@ -171,7 +177,7 @@ extension RelayToolHost {
   private func readSettings(_ page: String) -> [String: Any] {
     var out: [String: Any] = [:]
     switch page {
-    case "General", "Appearance":
+    case "General":
       out["values"] = AgentSettings.values(on: page)
     case "Relay":
       out["assistants"] = relay.team.profiles.map(\.name)
@@ -179,10 +185,6 @@ extension RelayToolHost {
       out["ai_apps"] = Provider.allCases.filter(\.thinksForSerein).map {
         ["name": $0.name, "state": relay.agent.available[$0] != nil ? "ready" : "not set up"]
       }
-    case "Connections":
-      out["connections"] = NativeConnection.allCases.map { ["name": $0.label, "state": $0.isOn() ? "connected" : "not connected"] }
-    case "Plugins":
-      out["skills"] = PluginHost.shared.skills.map(\.name)
     default: break
     }
     let changes = AppPlaces.place("settings/" + page)?.changes ?? []

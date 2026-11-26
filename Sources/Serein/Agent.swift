@@ -937,11 +937,11 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
           || (computerPlace == .macOS && RelayOrchestrator.shared.map {
             ComputerHost.shared.takesPrivateChats(ComputerHost.shared.computer(for: $0.turnProfileID)) } == true))
       // Calendar, Reminders, Contacts and Notes, read once like the download switch: Serein's own
-      // run only, with its Mac tools, for each connection the person turned on (Settings › Connections).
+      // run only, with its Mac tools, for each connection the person turned on (Marketplace › On this Mac).
       let connections = relay && allowMac ? NativeConnections.on : []
       let connectionArgs = connections.map(\.flag)
       // Background work in Mac apps, read once like the others: its wording and properties only
-      // while Settings › AI apps › Mac access › Let assistants work in the background is on.
+      // while Settings › Privacy › Mac permissions › Let assistants work in the background is on.
       var macArgs: [String] = []
       if allowMac {
         macArgs.append("--mac")
@@ -977,7 +977,7 @@ enum TaskMode: String, Codable, CaseIterable, Identifiable {
       if engineRuns && mode == .project && !grant.ownSetup { helperList.append(PeerTools.flag) }
       if offersApps { helperList.append("--connected-apps") }
       // Mail and Messages, only Serein's own run, while the person turned them on and the
-      // assistant this turn acts for may use them (Settings › Connections, AssistantScope).
+      // assistant this turn acts for may use them (Marketplace › On this Mac, AssistantScope).
       if relay { helperList += Connections.helperFlags { RelayOrchestrator.shared?.placeRefusal($0) == nil } }
       if offersComputer {
         helperList.append("--computer")

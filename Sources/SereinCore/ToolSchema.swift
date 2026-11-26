@@ -17,7 +17,7 @@ public enum ToolSchema {
   /// the definitions without background work, unchanged so the cached tool prefix holds.
   public static var macObserveTool: [String: Any] { macObserveDefinition(background: false) }
   public static var macActTool: [String: Any] { macActDefinition(background: false) }
-  /// mac_observe; with `background` (Settings › AI apps › Mac access › Let assistants work in the
+  /// mac_observe; with `background` (Settings › Privacy › Mac permissions › Let assistants work in the
   /// background is on) it also offers `background` and `window`.
   public static func macObserveDefinition(background: Bool) -> [String: Any] {
     var properties: [String: Any] = ["app": ["type": "string"], "picture": ["type": "boolean"]]
@@ -81,7 +81,7 @@ public enum ToolSchema {
   /// Every tool the helper runs for its arguments, the hidden groups included (`offered` lists).
   public static func everyTool(_ args: [String]) -> [[String: Any]] {
     // Calendar, Reminders, Contacts and Notes (NativeConnection): each while the person's switch
-    // in Settings › Connections is on; the host checks the switch and the task's Mac grant again.
+    // in Marketplace › On this Mac is on; the host checks the switch and the task's Mac grant again.
     let connections: [[String: Any]] = NativeConnection.allCases.filter { args.contains($0.flag) }.flatMap(\.tools)
     // Built in typed steps: as one chained expression the type checker gives up.
     // Serein's own assistant works on websites through a Mac (AssistantWeb): no tabs, no page helpers.
@@ -114,7 +114,7 @@ public enum ToolSchema {
     if args.contains("--team") { list.append(RelayTools.handoffTool) }
     // Team tools (PeerTools): a task's agent calls other agent CLIs; Peers runs them.
     if args.contains(PeerTools.flag) { list += PeerTools.tools }
-    // Mail and Messages (Settings › Connections), for Serein's own run; the host checks each call.
+    // Mail and Messages (Marketplace › On this Mac), for Serein's own run; the host checks each call.
     if args.contains("--relay") { list += Connections.tools(args) }
     // Serein's computer (ComputerTools): only for an assistant that may use it; the host checks every call.
     if args.contains("--computer") { list += ComputerTools.tools(own: args.contains("--computer-own"), mac: args.contains("--computer-mac")) }

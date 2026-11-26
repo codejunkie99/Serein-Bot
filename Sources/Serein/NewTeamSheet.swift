@@ -245,8 +245,8 @@ private struct StarterDetail: View {
 }
 
 /// Describe the team: the words go to Serein as one turn of the person's own AI app, which
-/// proposes a team with team_propose (its tool description steers the call); the proposal card
-/// shows here, and Create team answers it.
+/// makes a team with team_propose (its tool description steers the call), with no card; the
+/// sheet closes on the new team.
 private struct DescribeTeam: View {
   @ObservedObject var relay: RelayOrchestrator
   var back: () -> Void
@@ -310,6 +310,11 @@ private struct DescribeTeam: View {
     }
     // The card answered elsewhere (in the chat): the sheet has nothing left to show.
     .onChange(of: relay.approvals.count) { _, _ in if sawCard, self.card == nil { TeamSheets.shared.dismiss() } }
+    .onChange(of: relay.team.teams.count) { old, new in
+      guard sentAt != nil, new > old else { return }
+      NotificationCenter.default.post(name: SidebarModeSwitch.showAssistants, object: nil)
+      TeamSheets.shared.dismiss()
+    }
   }
   private func suggest() {
     let text = words.trimmingCharacters(in: .whitespacesAndNewlines)

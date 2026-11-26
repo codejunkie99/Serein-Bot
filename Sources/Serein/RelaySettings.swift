@@ -47,8 +47,10 @@ enum RelaySettingsKey {
   static let links = "links"
   static let downloads = "downloads"
   static let recipes = "recipes"
-  /// The sections after "For every assistant", in page order (Teams sits under the assistants).
-  static let order = [asks, defaultApp, anyApp, reminders, links, downloads, recipes]
+  /// The headed sections inside Advanced, in page order. Teams sits under the assistants and Ask
+  /// from any app in view; `asks` and `defaultApp` moved to Privacy and AI apps, and a request for
+  /// either opens there (`ReferenceSettings.movedSections`).
+  static let order = [reminders, links, downloads, recipes]
   static let titles: [String: String] = [
     teams: "Teams", asks: "Asks first", defaultApp: "Default AI app", anyApp: "Ask from any app",
     reminders: "Your reminders", links: "Links from other apps", downloads: "Task downloads",
@@ -67,11 +69,21 @@ private struct RelaySettingsPages: View {
     if let id = key, RelaySettingsKey.titles[id] == nil {
       AssistantSettingsPage(relay: relay, profileID: id)
     } else {
+      // Everyday first (docs/demos/simple-settings.decision.md): your assistants, teams, the two
+      // switches most people set, and reaching Serein from any app. The rest folds under Advanced.
+      // Allowed without asking is on Privacy and the app Serein thinks with on AI apps.
       VStack(alignment: .leading, spacing: 32) {
         RelayAssistantsPage(relay: relay, agent: agent, controller: controller, part: .assistants)
         section(RelaySettingsKey.teams)
         RelayAssistantsPage(relay: relay, agent: agent, controller: controller, part: .everyAssistant)
-        ForEach(RelaySettingsKey.order, id: \.self, content: section)
+        SettingsSection(RelaySettingsKey.anyApp, title: RelaySettingsKey.titles[RelaySettingsKey.anyApp] ?? "") {
+          RelayAnyAppSettings(controller: controller, part: .everyday)
+        }
+        SettingsAdvanced(page: "Relay", count: 12) {
+          RelayAssistantsPage(relay: relay, agent: agent, controller: controller, part: .everyAssistantMore)
+          RelayAnyAppSettings(controller: controller, part: .advanced)
+          ForEach(RelaySettingsKey.order, id: \.self, content: section)
+        }
       }
     }
   }
@@ -81,9 +93,6 @@ private struct RelaySettingsPages: View {
   @ViewBuilder private func sub(_ key: String) -> some View {
     switch key {
     case RelaySettingsKey.teams: RelayTeamsSettings(relay: relay)
-    case RelaySettingsKey.asks: RelayAsksSettings(relay: relay, controller: controller)
-    case RelaySettingsKey.defaultApp: RelayDefaultAppSettings(relay: relay, agent: agent)
-    case RelaySettingsKey.anyApp: RelayAnyAppSettings(controller: controller)
     case RelaySettingsKey.reminders: RelayRemindersSettings(relay: relay)
     case RelaySettingsKey.links: RelayLinksSettings(relay: relay)
     case RelaySettingsKey.downloads: RelayDownloadsSettings()
@@ -94,7 +103,7 @@ private struct RelaySettingsPages: View {
 
 /// Settings › Assistants itself (board 14).
 private struct RelayAssistantsPage: View {
-  enum Part { case assistants, everyAssistant }
+  enum Part { case assistants, everyAssistant, everyAssistantMore }
   @ObservedObject var relay: RelayOrchestrator
   @ObservedObject var agent: AgentModel
   let controller: RelayController
@@ -113,6 +122,8 @@ private struct RelayAssistantsPage: View {
       }
     case .everyAssistant:
       SettingsRowList("For every assistant") { everyAssistant }
+    case .everyAssistantMore:
+      SettingsRowList("For every assistant") { everyAssistantMore }
     }
   }
 
@@ -123,6 +134,17 @@ private struct RelayAssistantsPage: View {
     ) {
       SettingsGlyphTile(systemName: "sunrise")
     }
+    SettingsSwitchRow(
+      title: "Tell me when tasks finish", answer: "A sentence or two when a task Serein started ends",
+      isOn: Binding(get: { relay.reportsFinishedWork }, set: { relay.reportsFinishedWork = $0 }),
+      info: "Serein checks each task it started when it finishes and tells you the result in a sentence or two. Each report is one short reply from your AI app."
+    ) {
+      SettingsGlyphTile(systemName: "flag")
+    }
+  }
+
+  /// Under Advanced: what Serein reads of your other AI apps, and its routine suggestions.
+  @ViewBuilder private var everyAssistantMore: some View {
     SettingsSwitchRow(
       title: "Updates from your AI apps", answer: "When a chat finishes or needs you",
       isOn: $sessionUpdates, label: "Text me when a chat in another AI app finishes or needs me",
@@ -142,13 +164,6 @@ private struct RelayAssistantsPage: View {
       isOn: Binding(get: { relay.suggestsRoutines }, set: { relay.suggestsRoutines = $0 }), info: RelayAssistantsPage.suggestNote
     ) {
       SettingsGlyphTile(systemName: "sparkles")
-    }
-    SettingsSwitchRow(
-      title: "Tell me when tasks finish", answer: "A sentence or two when a task Serein started ends",
-      isOn: Binding(get: { relay.reportsFinishedWork }, set: { relay.reportsFinishedWork = $0 }),
-      info: "Serein checks each task it started when it finishes and tells you the result in a sentence or two. Each report is one short reply from your AI app."
-    ) {
-      SettingsGlyphTile(systemName: "flag")
     }
   }
 
@@ -179,7 +194,12 @@ private struct RelayAssistantRow: View {
 
 /// Settings › Assistants › Ask from any app: ⌥Space in every app, the menu bar, and the two keys.
 struct RelayAnyAppSettings: View {
+  /// `everyday`: the opt-ins (⌥Space, Fn, the menu bar), in view on the page. `advanced`: what Serein
+  /// can see, the edge of the screen and the shortcuts, inside the page's Advanced fold. `all`: both,
+  /// before Serein runs in this window.
+  enum Part { case all, everyday, advanced }
   let controller: RelayController?
+  var part: Part = .all
   @Environment(\.palette) var p
   @AppStorage(RelayOrchestrator.enabledKey) private var enabled = false
   @AppStorage(RelayOrchestrator.menuBarKey) private var menuBar = false
@@ -201,6 +221,7 @@ struct RelayAnyAppSettings: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
+      if part != .advanced {
       SettingsPageHeader("Ask from any app", sentence: "Reach Serein from every app, and keep it in the menu bar.")
       // The two opt-ins: ⌥Space in every app, and (without it) staying in the menu bar.
       SettingsBlock("From any app", info: enabled ? callInfo : nil) {
@@ -219,6 +240,8 @@ struct RelayAnyAppSettings: View {
           SettingsNote("Serein keeps running, so requests and alerts still happen.")
         }
       }
+      }
+      if part != .everyday {
       if enabled { SettingsBlock("What Serein can see", info: Self.seesInfo) { screenRow } }
       SettingsBlock("On your screen") {
         Toggle("Keep your assistants at the edge of the screen", isOn: Binding(get: { dock }, set: { on in
@@ -228,6 +251,7 @@ struct RelayAnyAppSettings: View {
         SettingsNote("Each face shows when an assistant is working or needs you. Click one to chat, or drop a file on its chat.")
       }
       SettingsBlock("Shortcuts") { shortcuts }
+      }
     }.onAppear {
       summonDraft = summon
       killDraft = kill
@@ -420,24 +444,22 @@ struct RelayAsksSettings: View {
   }
 }
 
-/// Settings › Assistants › Default AI app: the app Serein, and every assistant without an AI app
-/// of its own, thinks with ("Serein thinks with"), each with its logo.
-private struct RelayDefaultAppSettings: View {
+/// Settings › AI apps, its first card (it was AI apps › Serein thinks with): the app Serein, and every
+/// assistant without an AI app of its own, thinks with ("Serein thinks with"), each with its logo.
+struct RelayDefaultAppSettings: View {
   @ObservedObject var relay: RelayOrchestrator
   @ObservedObject var agent: AgentModel
   @Environment(\.palette) var p
   private var providers: [Provider] { Provider.allCases.filter { $0.thinksForSerein && agent.available[$0] != nil } }
   var body: some View {
-    VStack(alignment: .leading, spacing: 24) {
-      SettingsPageHeader(
-        "Default AI app",
-        sentence: "Serein uses this AI app's sign-in, like any task. The tasks it starts use it too unless Serein picks another.")
-      SettingsRowList("Serein thinks with", note: providers.isEmpty ? nil : "An assistant with its own AI app keeps it. Choose one on its page.") {
-        if providers.isEmpty {
-          SettingsEmptyRow(glyph: "terminal", text: "No AI app on this Mac can think for Serein yet. Set one up in Settings › AI apps.")
-        }
-        ForEach(providers) { provider in providerRow(provider) }
+    SettingsRowList(
+      "Serein thinks with",
+      info: "Serein uses this AI app's sign-in, like any task. The tasks it starts use it too unless Serein picks another. An assistant with its own AI app keeps it; choose one on its page."
+    ) {
+      if providers.isEmpty {
+        SettingsEmptyRow(glyph: "terminal", text: "No AI app on this Mac can think for Serein yet. Set one up below.")
       }
+      ForEach(providers) { provider in providerRow(provider) }
     }
   }
   private func providerRow(_ provider: Provider) -> some View {

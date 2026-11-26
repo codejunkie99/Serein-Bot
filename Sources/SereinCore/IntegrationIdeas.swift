@@ -1,4 +1,4 @@
-/// Things to ask Serein with each connected app, shown as buttons in Settings › Connections and in
+/// Things to ask Serein with each connected app, shown as buttons in the Marketplace (Your apps, On this Mac) and in
 /// a new chat. A click sends the words as the person's own message, so every step that sends,
 /// changes or deletes still asks on its card. Most ideas only read, and none needs editing first
 /// (no made-up names, dates or places).

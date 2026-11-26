@@ -6,7 +6,7 @@ import SwiftUI
 /// page, both on the card's own colour so the window keeps one sidebar and one card. The
 /// Marketplace, which opens the same way, uses the same header row.
 
-/// The card's first row while Settings shows: "⚙ Settings › AI apps › Mac access", then the
+/// The card's first row while Settings shows: "⚙ Settings › Privacy › Mac permissions", then the
 /// search field and ×. Each level above the open one is a button back to it; the one just above
 /// takes Esc, and on a page itself × does. With the sidebar hidden the row first clears the
 /// traffic lights and holds Show sidebar, as every other view's first row does.
@@ -106,7 +106,8 @@ struct SettingsPageList: View {
   static var width: CGFloat { (204 * UIStyle.textScale).rounded() }
 
   private var groups: [(group: String, pages: [SettingsCategory])] {
-    SettingsCategory.grouped(SettingsCategory.search(query))
+    SettingsCategory.grouped(
+      query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? SettingsCategory.all : SettingsIndex.pages(query))
   }
 
   var body: some View {

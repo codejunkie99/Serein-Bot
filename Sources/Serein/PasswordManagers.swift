@@ -106,14 +106,14 @@ struct ManagerSignIn: Identifiable {
 
 /// Logins from 1Password (`op`, unlocked by its app) and Bitwarden (`bw`, unlocked by the master
 /// password the person types in Serein's sheet) for Sign in as … on a task's sign-in page, when
-/// Settings › Passwords turns it on. Only the person's pick in that menu starts it; the fill is
+/// Settings › Vault turns it on. Only the person's pick in that menu starts it; the fill is
 /// `PasswordCapture.fillForTask`'s, as for a saved login: the same origin checks, nothing is sent,
 /// then Hand back. The tools run from a fixed, checked path with a minimal environment of their
 /// own; Bitwarden's session key lives only here and only for ten minutes; nothing they print is
 /// logged or kept.
 @MainActor final class PasswordManagers: ObservableObject {
   static let shared = PasswordManagers()
-  /// Settings › Passwords › Password managers (GateSettings; off, and off while that file cannot
+  /// Settings › Vault › Options › Password managers (GateSettings; off, and off while that file cannot
   /// be read).
   static let enabledKey = "serein.passwords.managers"
   static var enabled: Bool { GateSettings.shared.bool(forKey: enabledKey) }
@@ -444,7 +444,7 @@ enum ManagerCLI {
   }
 }
 
-/// Settings › Passwords › Password managers: the switch for 1Password and Bitwarden in Sign in as ….
+/// Settings › Vault › Options › Password managers: the switch for 1Password and Bitwarden in Sign in as ….
 struct PasswordManagerSettings: View {
   @GateStorage(PasswordManagers.enabledKey) private var enabled = false
   @Environment(\.palette) var p

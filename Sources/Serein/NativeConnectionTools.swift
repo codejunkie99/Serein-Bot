@@ -4,7 +4,7 @@ import EventKit
 import SereinCore
 
 /// Calendar and Reminders through EventKit, Contacts through the Contacts framework, Notes through
-/// fixed Apple-event scripts whose values ride as parameters (Settings › Connections). What macOS
+/// fixed Apple-event scripts whose values ride as parameters (the Marketplace (Your apps, On this Mac)). What macOS
 /// lets Serein do, and the calls themselves. Every call passes one gate first
 /// (`BrowserModel.nativeConnectionCall`, `ApprovalDoor.answer`). Mac run not verified.
 @MainActor enum NativeConnections {

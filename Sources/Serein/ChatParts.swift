@@ -949,6 +949,9 @@ struct MessageActions: View {
   var speak: ((String) -> Void)? = nil
   var saveShortcut = false
   var edit: (() -> Void)? = nil
+  /// On a reply to Serein's own check-in or brief: the menu's last item, which opens where that
+  /// is turned off (`RelayAutomatic.settingsTitle`).
+  var settings: (title: String, open: () -> Void)? = nil
   @Environment(\.palette) private var p
   @ObservedObject private var book = ReplyVersionBook.shared
   /// Either control holding the keyboard shows both (`MessageHoverControls`).
@@ -973,6 +976,10 @@ struct MessageActions: View {
         if let speak { SereinMenuItem.action("Read aloud", icon: "speaker.wave.2") { speak(text) } }
         if saveShortcut { SereinMenuItem.action("Save as shortcut", icon: "bookmark") { ShortcutBook.offer(text) } }
         if let edit { SereinMenuItem.action("Edit", icon: "pencil", edit) }
+        if let settings {
+          SereinMenuItem.divider
+          SereinMenuItem.action(settings.title, icon: "gearshape", settings.open)
+        }
       } label: { glyph("ellipsis") }
         .buttonStyle(AssistantPressStyle()).fixedSize()
         .focused($focused)

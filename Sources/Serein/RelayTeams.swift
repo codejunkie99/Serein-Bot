@@ -9,7 +9,7 @@ extension RelayOrchestrator {
 
   /// The places the person allows any assistant: everything (Mac apps too while Accessibility is
   /// off: the chat then shows how to turn it on, MacAccessWait), except Mail and Messages unless
-  /// turned on in Settings › Connections, the
+  /// turned on in the Marketplace (Your apps, On this Mac), the
   /// calendar and contacts while their connections are off, connected apps while there is
   /// neither a Composio key nor an MCP connection on, and Serein's computer unless its switch is
   /// on. A scope only narrows this.
@@ -223,6 +223,7 @@ extension RelayOrchestrator {
       }
     }
     announceEnd(record, state, result)
+    stopAutoTeams(autoTeams.settle(handoffLedger.records))
   }
   private func announceEnd(_ record: AssistantHandoff, _ state: AssistantHandoff.State, _ result: String?) {
     let name = profileName(record.to)
@@ -450,6 +451,7 @@ extension RelayOrchestrator {
     for record in gone {
       closeExpired(record)
     }
+    if !gone.isEmpty { stopAutoTeams(autoTeams.settle(handoffLedger.records)) }
     startWaitingHandoffs()
     deliverHandoffReports()
   }
@@ -474,6 +476,20 @@ extension RelayOrchestrator {
       if held.contains(record.id), let run = agent.hub.run(for: record.threadID) { agent.hub.stop(run) }
       announceEnd(record, .failed, record.result)
     }
+  }
+  /// Root tasks ended (`AutoTeams`): their open hand-offs end as failed, told to nobody, and every
+  /// run of theirs or of their teammates stops. Peer calls under those runs stop with them (AgentHub).
+  func stopAutoTeams(_ stop: AutoTeams.Stop) {
+    guard !stop.isEmpty else { return }
+    let held = Set(handoffLedger.records.filter { $0.state == .running }.map(\.id))
+    let ended = handoffLedger.stop(Set(stop.handoffs), now: Date())
+    if !ended.isEmpty { saveHandoffs() }
+    let threads = ended.filter { held.contains($0.id) }.map(\.threadID) + stop.teammates.compactMap(existingThread(of:))
+    // The chat on screen is the person's own: a teammate they switched to keeps their reply.
+    for thread in threads where thread != threadID {
+      if let run = agent.hub.run(for: thread), run.isActive { agent.hub.stop(run) }
+    }
+    note("The task a team was made for ended, so its work stopped", .auto)
   }
   /// An assistant was deleted: its hand-offs, to it or from it, end.
   func endHandoffs(involving id: String) {
@@ -556,18 +572,6 @@ extension RelayToolHost {
   static let lowerTrust =
     "Only the person can ask for this. This turn was not started by their message, so nothing was asked or changed."
 
-  /// Team changes and hand-offs always ask: Autopilot never decides them and no lasting allow
-  /// covers them; no person stops them before any card.
-  private func gateTeam(
-    _ effect: ApprovalGate.Effect, title: String, detail: String, button: String, more: String? = nil,
-    moreName: String = "the details", proposal: RelayOrchestrator.TeamProposalDraft? = nil
-  ) async throws -> ApprovalGate.HumanAnswer {
-    guard relay.startedByPerson, !relay.runsUnattended else { throw SereinError.invalid(Self.lowerTrust) }
-    return await relay.confirmAnswer(
-      title, detail, button: button, thread: relay.threadID, more: more, moreName: moreName, moreOpen: more != nil,
-      effect: effect, proposal: proposal)
-  }
-
   /// `assistant_handoff {to, task}`: starts the task on the target's own Main chat at once
   /// (RelayOrchestrator.sendHandoff), with no card. `handoffChat`: the call comes from the run of
   /// the hand-off that holds that chat (BrowserModel.perform), which sends as its target.
@@ -620,6 +624,7 @@ extension RelayToolHost {
     // The person chose hand-offs without a card: it starts at once, within the same limits, and
     // every step the target takes still asks on its own card.
     let record = relay.sendHandoff(from: sender, to: target, task: task, team: key, teamName: teamName, parent: parent, how: .auto)
+    if parent == nil { relay.autoTeams.link(chain: record.id) }
     let next = parent == nil ? "Tell the user in one line that it was sent."
       : "Its result starts your next turn here. Do what you can of the rest now, then end this turn in one line."
     return [
@@ -628,30 +633,24 @@ extension RelayToolHost {
     ]
   }
 
-  /// `team_propose`: one card with every member, what each may use (what the person does not
-  /// allow is dropped and listed) and the full instructions. Nothing is saved before Create team,
-  /// and the card holds only for the roster it showed.
+  /// `team_propose`: no card. Each member goes through `AutoTeams.admit`; the admitted ones are
+  /// created at once for this turn's root task, and the refused ones come back with their reasons.
   func proposeTeam(_ a: [String: Any]) async throws -> [String: Any] {
     guard relay.startedByPerson, !relay.runsUnattended else { throw SereinError.invalid(Self.lowerTrust) }
-    let shown = relay.team
-    let parsed = try TeamProposal.parse(a, person: relay.personPlaces, team: shown)
-    // Change… on the card edits the draft; Create team saves what the card held last.
-    let draft = RelayOrchestrator.TeamProposalDraft(proposal: parsed, shown: shown)
-    let human = try await gateTeam(
-      .settings, title: "Create the team “\(parsed.name)”?",
-      detail: ApprovalGate.askLine(.settings) + "\n" + parsed.summary, button: "Create team",
-      more: parsed.instructionsText, moreName: "every member's instructions", proposal: draft)
-    guard human == .yes else {
-      throw SereinError.invalid(human == .no ? "The user declined the team. Nothing was created." : ActionAdmission.needsPerson)
+    guard let maker = relay.actingProfile else { throw SereinError.invalid("No assistant is answering.") }
+    let parsed = try TeamProposal.parse(a, person: relay.personPlaces, team: relay.team, keepTaken: true)
+    let admission = relay.autoTeams.admit(
+      parsed, roster: relay.team, createdBy: maker.id, root: relay.autoTeams.turnRoot(), activeChain: [maker.id])
+    let rejected = admission.rejected.map { ["member": $0.member, "reason": $0.reason] }
+    guard !admission.proposal.members.isEmpty else {
+      return ["team": parsed.name, "created": [String](), "rejected": rejected, "note": "Nothing was created. Fix what was refused and propose again."]
     }
-    guard relay.team == shown else {
-      throw SereinError.invalid("The assistants changed while the card waited, so no team was created. Propose it again.")
-    }
-    let proposal = draft.proposal
-    let created = try relay.createTeam(proposal, actor: "relay")
+    let created = try relay.createTeam(admission.proposal, actor: "relay")
+    relay.autoTeams.seat(admission, created: created)
     return [
-      "team": proposal.name, "created": created.map(\.name), "lead": proposal.lead ?? "",
-      "dropped": proposal.members.filter { !$0.dropped.isEmpty }.map { ["member": $0.name, "dropped": $0.dropped] as [String: Any] },
+      "team": admission.proposal.name, "created": created.map(\.name), "lead": admission.proposal.lead ?? "",
+      "rejected": rejected,
+      "dropped": admission.proposal.members.filter { !$0.dropped.isEmpty }.map { ["member": $0.name, "dropped": $0.dropped] as [String: Any] },
     ]
   }
 }

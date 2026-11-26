@@ -1,6 +1,6 @@
 import Foundation
 
-/// Settings › Plugins › Import from your AI apps: the MCP servers and skills the person set up in
+/// Marketplace › Plugins › Import from your AI apps: the MCP servers and skills the person set up in
 /// their other AI apps, read from those apps' own setup files, only for the apps the person ticked
 /// and only when they ask (`read`). Nothing here runs or writes anything. Everything read is
 /// untrusted text: names are cleaned and cut, and a server that cannot come in says why.

@@ -200,6 +200,8 @@ import SereinCore
   /// Hand-offs between assistants and their counters (relay/handoffs.json, 0600): the limits live
   /// here, in host state the model cannot edit, and survive a relaunch.
   @Published var handoffLedger = HandoffLedger()
+  /// Teammates assistants made on their own, with the root task each serves (RelayTeams.swift).
+  var autoTeams = AutoTeams()
   /// Chats waiting on Accessibility, and those whose grant came (relay/mac-access.json, MacAccessCard.swift).
   @Published var macAccess = MacAccessWait()
   /// While a card waits: the 2-second check and the observer of Serein becoming active.
@@ -844,9 +846,10 @@ import SereinCore
 
   static func start(agent: AgentModel, browser: BrowserModel) -> RelayOrchestrator {
     if let shared { return shared }
-    migrate(agent: agent, browser: browser)
+    let allowAll = migrate(agent: agent, browser: browser)
     let relay = RelayOrchestrator(agent: agent, browser: browser)
     shared = relay
+    if let allowAll { relay.deliver(receipt: allowAll, into: relay.threadID) }
     if persists { Task { await relay.research.load() } }
     // Task panel tabs restored at launch that are Serein's own chats leave it now that Serein
     // knows its chats: they show in the Serein surface.
@@ -854,9 +857,10 @@ import SereinCore
     return relay
   }
   /// Once per install, before anything reads them: explicit values for what the old on/off switch
-  /// used to hold back (AssistantMigration). Never in previews or checks.
-  private static func migrate(agent: AgentModel, browser: BrowserModel) {
-    guard persists else { return }
+  /// used to hold back (AssistantMigration), then the Allow all upgrade, whose receipt it returns.
+  /// Never in previews or checks.
+  private static func migrate(agent: AgentModel, browser: BrowserModel) -> Receipt? {
+    guard persists else { return nil }
     let root = browser.library.root
     _ = ActionClickDefault.apply()
     PairingGrantReset.migrateOnce(root: root, defaults: .standard)
@@ -897,6 +901,7 @@ import SereinCore
           repeats: .daily, action: true))
         try? library.save(stored, to: "relay/reminders.json")
       })
+    return AssistantMigration.allowAllLaunch(.standard, gates: GateSettings.shared)
   }
   private init(agent: AgentModel, browser: BrowserModel) {
     self.agent = agent
@@ -1683,6 +1688,13 @@ import SereinCore
     limitedApps[provider.rawValue] = until ?? now.addingTimeInterval(Self.unnamedLimitWait)
     namedLimitResets[provider.rawValue] = until
   }
+  /// Shared with `AppPeerHost` so team-tool limits and chat failover read one limit table.
+  func notePeerLimit(_ provider: Provider, until: Date?, now: Date = Date()) {
+    noteLimited(provider, until: until, now: now)
+  }
+  func limitedProviders(now: Date = Date()) -> Set<String> {
+    Set(limitedApps.filter { $0.value > now }.keys).union(failedApps.filter { $0.value > now }.keys)
+  }
   /// The AI app a usage-limit hold would move to now (`ModelFallback.elsewhere`): the person's
   /// backups from another AI app first, then any other installed, signed-in AI app that can
   /// answer as the assistant, never one whose own limit is still on.
@@ -2297,6 +2309,12 @@ import SereinCore
     if run.spec.relay, run.spec.threadID != threadID {
       agent.amendThread(run.spec.threadID) { Self.landReplyTags(in: &$0) }
     }
+    // Serein's turn ended, in whichever chat: stopped or failed, it ends the root task its teams
+    // were made for; a correction does not.
+    if run.spec.relay {
+      let cancelled = [.stopped, .stuck].contains(run.record.outcome) && !redirecting
+      stopAutoTeams(autoTeams.turnEnded(cancelled: cancelled, handoffs: handoffLedger.records))
+    }
     if run.spec.threadID == threadID {
       turnPage = nil
       turnBrief = nil
@@ -2641,6 +2659,7 @@ import SereinCore
     capture = nil
     if let run { agent.hub.stop(run) }
     for run in childRuns where run.isActive { agent.hub.stop(run) }
+    stopAutoTeams(autoTeams.stopAll(handoffLedger.records))
     stopHandoffs()
     // Light asks stop too (RelayAsks.swift); link turns are scheduled turns, so their ledger
     // rows ended above.
@@ -5633,20 +5652,23 @@ extension RelayOrchestrator {
       ideas = RelayProactive.ideas(in: reply)
     }
     if CommandLine.arguments.contains("--ui-serein-automatic") {
-      // `--ui-serein-automatic`: turns Serein started itself, each as its “why” line: a scheduled
-      // request, one with nothing new (hidden), an alert's change, a webhook and a check-in.
+      // `--ui-serein-automatic`: turns Serein started itself. A webhook, an alert's change and a
+      // scheduled request have their “why” line (one with nothing new is hidden); a check-in and
+      // the brief, last, are plain messages.
       let stamp = RelayToolHost.stamp(now)
       thread.messages += [
         AgentMessage(role: "you", text: RelayHook.prompt(source: "GitHub", body: #"{"action":"opened","pull_request":"Fix checkout"}"#, key: nil)),
         AgentMessage(role: "assistant", text: "GitHub: a pull request “Fix checkout” was opened."),
-        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
-        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
         AgentMessage(role: "you", text: RelayWatch.changePrompt(name: "Flight price to Tokyo", before: "$420", now: "$380")),
         AgentMessage(role: "assistant", text: "The flight to Tokyo dropped from $420 to $380, its lowest this month."),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Back up the shop-web database", repeats: .daily, now: stamp)),
         AgentMessage(role: "assistant", text: "NOTHING NEW"),
         AgentMessage(role: "you", text: RelayUnattended.prompt(text: "Check my inbox and tell me what needs me", repeats: .weekdays, now: stamp)),
         AgentMessage(role: "assistant", text: "Two emails need you: Maya asked about the 4 pm review, and Northwind's invoice is due Friday."),
+        AgentMessage(role: "you", text: RelayProactive.prompt(.checkIn)),
+        AgentMessage(role: "assistant", text: "You have 20 minutes before the design review. Want me to pull up the notes?"),
+        AgentMessage(role: "you", text: RelayUnattended.prompt(text: RelayBriefing.text, repeats: .daily, now: stamp)),
+        AgentMessage(role: "assistant", text: "Good morning. Two meetings today, the design review at 4 and dinner with Maya at 7. Nothing ran overnight."),
       ]
     }
     if Self.previewDoHere {

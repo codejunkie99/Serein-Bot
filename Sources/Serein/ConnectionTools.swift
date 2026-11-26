@@ -1,7 +1,7 @@
 import AppKit
 import SereinCore
 
-/// Mail and Messages through the Apple apps (Settings › Connections). The rules are pure in
+/// Mail and Messages through the Apple apps (Marketplace › On this Mac). The rules are pure in
 /// SereinCore/Connections.swift; this runs their fixed scripts with osascript (values only as
 /// arguments), reads the chosen Messages conversations read-only, and asks on Serein's card
 /// before anything is sent, moved, marked or deleted. Only Serein's own run holds these tools.
@@ -471,7 +471,7 @@ extension BrowserModel {
     }
     let chosen = Connections.chosenChats()
     guard !chosen.isEmpty else {
-      throw SereinError.invalid("The person has not chosen any conversations yet. They choose them in Settings › Connections › Messages.")
+      throw SereinError.invalid("The person has not chosen any conversations yet. They choose them in Marketplace › On this Mac › Messages.")
     }
     let allowedDays = Connections.days()
     let days = min(max((a["days"] as? Int) ?? allowedDays, 1), allowedDays)

@@ -102,7 +102,7 @@ struct MarketplaceApps: View {
       if showsMac {
         VStack(alignment: .leading, spacing: 10) {
           Text("On this Mac").font(UIStyle.bodyStrong).foregroundStyle(p.ink).accessibilityAddTraits(.isHeader)
-          ConnectionSettings(macOnly: true)
+          ConnectionSettings()
         }
       }
       if nothingFound {
@@ -148,8 +148,8 @@ struct MarketplaceApps: View {
       HStack(spacing: 8) {
         appActions(app, state: state)
         if state != .notSetUp {
-          Button("Manage in Settings") { RelayController.shared?.openSettings("Connections") }
-            .help("Settings › Connections: its tools, its sign-in and Remove")
+          Button("Manage") { place = .yours }
+            .help("Your apps: its tools, its sign-in and Remove")
         }
       }
       Rectangle().fill(p.line).frame(height: UIStyle.hairline)
@@ -188,17 +188,17 @@ struct MarketplaceApps: View {
     switch app.signIn {
     case .browser: return "Your browser, on \(app.name)'s own sign-in page."
     case .key(let key): return "A \(key.name) you make in \(app.name), kept in the Keychain."
-    case .composio: return "Composio's sign-in, once Composio is on in Settings › Connections."
+    case .composio: return "Composio's sign-in, once Composio is on in Marketplace › Your apps."
     }
   }
 
   /// Connect: a key app asks for its token first; a Composio app with Composio off opens
-  /// Settings › Connections, where Composio is turned on (closing Settings comes back here); any
+  /// the Marketplace (Your apps, On this Mac), where Composio is turned on (closing Settings comes back here); any
   /// other app connects at once.
   private func start(_ app: ConnectorCatalog.Connector) {
     switch app.signIn {
     case .key: keyFor = app
-    case .composio where !ComposioApps.available: RelayController.shared?.openSettings("Connections")
+    case .composio where !ComposioApps.available: place = .yours
     default: model.connect(app)
     }
   }

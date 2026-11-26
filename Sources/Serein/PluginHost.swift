@@ -21,7 +21,7 @@ import Security
     /// The link it was added from and the full commit, for update checks.
     var link: String? = nil
     var commit: String? = nil
-    /// The https address of an app's MCP server connected by address (Settings › Connections):
+    /// The https address of an app's MCP server connected by address (Marketplace › Your apps):
     /// its manifest is local, built from a review of the server's own tool list. Nil otherwise.
     var address: String? = nil
     /// For a connection: every tool the person reviewed, on or off, by its server name, pinned
@@ -39,7 +39,7 @@ import Security
     /// A skill the person saved from a finished task (Save as Skill). Its text is pinned under
     /// `skillPin` when they save or turn it on, so a copy changed on disk is off until they do again.
     var saved: Bool? = nil
-    /// The AI app an imported server or skill came from (Settings › Plugins › Import from your AI
+    /// The AI app an imported server or skill came from (Marketplace › Plugins › Import from your AI
     /// apps). An imported server's tool descriptions and answers reach the model fenced, as text
     /// nobody reviewed.
     var imported: String? = nil
@@ -97,7 +97,7 @@ import Security
     }
     return package.manifest?.mcp == nil ? states[package.id]?.enabled ?? true : states[package.id]?.enabled == true
   }
-  /// A server connected by address (Settings › Connections) rather than a plugin folder or link.
+  /// A server connected by address (Marketplace › Your apps) rather than a plugin folder or link.
   func isConnection(_ package: PluginPackage) -> Bool { states[package.id]?.address != nil }
   /// Every enabled plugin tool, as Relay's CLI lists it. A connection's tools are offered only
   /// while the assistant Serein acts for may use connected apps (AssistantScope).
@@ -243,7 +243,7 @@ import Security
   func call(_ qualified: String, _ arguments: [String: Any]) async throws -> [String: Any] {
     guard let (package, manifest, declared) = tool(qualified) else { throw SereinError.invalid("That plugin tool is off.") }
     let connection = isConnection(package)
-    let page = connection ? "Settings › Connections" : "Settings › Plugins"
+    let page = connection ? "Marketplace › Your apps" : "Marketplace › Plugins"
     let program: Bool = !connection && states[package.id]?.imported != nil
     // A connection's and an imported program's answers are their data, never instructions, and
     // their whole tool list must still be the one reviewed.
@@ -343,7 +343,7 @@ import Security
       }
       return try await remoteExchange(
         plugin: manifest.id, name: manifest.name, url: url, oauth: server.auth == "oauth2", tokenName: server.token,
-        page: isConnection(package) ? "Settings › Connections" : "Settings › Plugins", mayRetry: mayRetry, body)
+        page: isConnection(package) ? "Marketplace › Your apps" : "Marketplace › Plugins", mayRetry: mayRetry, body)
     }
     return try await commandExchange(
       id: manifest.id, name: manifest.name, folder: package.folder, command: server.command ?? "",
@@ -380,7 +380,7 @@ import Security
     if let data { environment["SEREIN_PLUGIN_DATA"] = data.path }
     for key in env {
       guard let value = Self.secret(plugin: id, name: key) else {
-        throw SereinError.invalid("\(name) needs \(key). Add it in Settings › Plugins.")
+        throw SereinError.invalid("\(name) needs \(key). Add it in Marketplace › Plugins.")
       }
       environment[key] = value
     }
@@ -459,8 +459,8 @@ import Security
   static func heldMessage(_ name: String, _ changed: [String], program: Bool = false) -> String {
     let names: String = changed.prefix(6).joined(separator: ", ")
     let next: String = program
-      ? "It is off. Remove it in Settings › Plugins and import it again to review them."
-      : "It is off until you review them again in Settings › Connections."
+      ? "It is off. Remove it in Marketplace › Plugins and import it again to review them."
+      : "It is off until you review them again in Marketplace › Your apps."
     return "\(name)'s tools changed since you reviewed them (\(names)). " + next
   }
 
@@ -489,7 +489,7 @@ import Security
   /// The access token a remote plugin call goes out with: the stored one, or a refreshed one.
   static func bearer(plugin: String) async throws -> String {
     guard let tokens = oauthTokens(plugin: plugin) else {
-      throw SereinError.invalid("Sign in to this plugin in Settings › Plugins.")
+      throw SereinError.invalid("Sign in to this plugin in Marketplace › Plugins.")
     }
     if !PluginOAuth.expired(tokens) { return tokens.accessToken }
     return try await refresh(plugin: plugin, tokens: tokens)
@@ -498,7 +498,7 @@ import Security
     guard let refreshToken = tokens.refreshToken, !refreshToken.isEmpty,
       let endpoint = tokens.tokenEndpoint, let clientID = tokens.clientID
     else {
-      throw SereinError.invalid("Sign in to this plugin again in Settings › Plugins.")
+      throw SereinError.invalid("Sign in to this plugin again in Marketplace › Plugins.")
     }
     let fresh = try await PluginOAuth.exchange(
       PluginOAuth.refreshRequest(refreshToken: refreshToken, clientID: clientID), tokenEndpoint: endpoint)
@@ -662,7 +662,7 @@ extension PluginHost {
   }
 }
 
-// MARK: connections by address (Settings › Connections)
+// MARK: connections by address (Marketplace › Your apps)
 
 /// A connection's server answered with a tool list unlike the reviewed one (thrown inside the
 /// exchange, off the main actor).
@@ -724,7 +724,7 @@ extension PluginHost {
   func offeredTools(_ draft: Draft) async throws -> [[String: Any]] {
     let result = try await remoteExchange(
       plugin: draft.id, name: draft.name, url: draft.url, oauth: draft.auth == .oauth,
-      tokenName: draft.auth == .token ? MCPServerConnection.tokenName : nil, page: "Settings › Connections"
+      tokenName: draft.auth == .token ? MCPServerConnection.tokenName : nil, page: "Marketplace › Your apps"
     ) { rpc in ["tools": try PluginSession.listTools(rpc)] }
     return result["tools"] as? [[String: Any]] ?? []
   }
@@ -802,11 +802,11 @@ extension PluginHost {
   }
 }
 
-// MARK: import from the person's other AI apps (Settings › Plugins)
+// MARK: import from the person's other AI apps (Marketplace › Plugins)
 
 extension PluginHost {
   /// A server picked in the import list, on its way in: the plugin id its manifest and Keychain
-  /// items use, and for an address the connection draft it joins Settings › Connections as.
+  /// items use, and for an address the connection draft it joins Marketplace › Your apps as.
   struct ImportDraft: Equatable {
     let server: AppImport.Server
     let id: String
@@ -857,8 +857,8 @@ extension PluginHost {
     return MCPServerConnection.review(tools)
   }
 
-  /// The person confirmed a picked server's card: an address joins Settings › Connections and a
-  /// program Settings › Plugins, each as a local manifest of the tools switched on, through the
+  /// The person confirmed a picked server's card: an address joins Marketplace › Your apps and a
+  /// program Marketplace › Plugins, each as a local manifest of the tools switched on, through the
   /// plugin install path, off until the person turns it on there, which refuses a tool list
   /// unlike the one on the card.
   @discardableResult

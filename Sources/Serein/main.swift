@@ -643,9 +643,14 @@ import SwiftUI
   }
   func showSettings(_ section: String) {
     RelayController.shared?.hide(deferring: false, review: false)
-    UserDefaults.standard.set(section, forKey: "serein.settingsSection")
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    // Apps, connections and plugins are managed in the Marketplace: an old link opens its place there.
+    if let place = SettingsCategory.moved(section) {
+      browser?.openMarketplace(place)
+      return
+    }
+    UserDefaults.standard.set(section, forKey: "serein.settingsSection")
     browser?.showSettings = true
   }
   func menu() {

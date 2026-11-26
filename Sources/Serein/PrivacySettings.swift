@@ -16,11 +16,19 @@ struct PrivacySettings: View {
   /// One page: what Serein sees, what it keeps, then web pages; every former sub-page is a section
   /// under its part (`SettingsInline`).
   var body: some View {
+    // Everyday first (docs/demos/simple-settings.decision.md): what Serein sees, what macOS lets it
+    // do, what you allowed for good, the sites it treats differently, history and what it keeps.
+    // The rest folds under Advanced; every list that takes an approval back stays one click away.
     VStack(alignment: .leading, spacing: 32) {
       PrivacyPage(browser: browser, confirmClear: $confirmClear, part: .sees)
-      ForEach([PrivacyKey.sites, PrivacyKey.routineSites, PrivacyKey.signIns, PrivacyKey.pageTools], id: \.self, content: section)
+      ForEach([PrivacyKey.mac, PrivacyKey.allowed, PrivacyKey.sites, PrivacyKey.history], id: \.self, content: section)
       PrivacyPage(browser: browser, confirmClear: $confirmClear, part: .keeps)
-      ForEach([PrivacyKey.history, PrivacyKey.chats, PrivacyKey.permissions, PrivacyKey.blocking], id: \.self, content: section)
+      SettingsAdvanced(page: "Privacy", count: 7) {
+        PrivacyPage(browser: browser, confirmClear: $confirmClear, part: .banners)
+        ForEach(
+          [PrivacyKey.routineSites, PrivacyKey.signIns, PrivacyKey.pageTools, PrivacyKey.chats, PrivacyKey.permissions, PrivacyKey.blocking],
+          id: \.self, content: section)
+      }
     }
   }
   private func section(_ key: String) -> some View {
@@ -29,6 +37,15 @@ struct PrivacySettings: View {
   @ViewBuilder private func sub(_ key: String) -> some View {
     switch key {
     case PrivacyKey.history: PrivacyHistorySettings(browser: browser)
+    // From Privacy › Mac permissions: what macOS lets Serein do belongs with what Serein may do.
+    case PrivacyKey.mac: MacPermissionsSettings()
+    // From Assistants: every standing yes with its Ask again, and every site rule with its Remove.
+    case PrivacyKey.allowed:
+      if let controller = RelayController.shared {
+        RelayAsksSettings(relay: controller.relay, controller: controller)
+      } else {
+        SereinUnavailable().frame(height: 80)
+      }
     case PrivacyKey.sites:
       PrivacySubpage(title: "Sites Serein treats differently", sentence: "Sites Serein never opens, or asks about first.") {
         SettingsBlock("Sites Serein treats differently") { SiteRuleSettings() }
@@ -77,7 +94,10 @@ enum PrivacyKey {
   static let chats = "chats"
   static let permissions = "permissions"
   static let blocking = "blocking"
+  static let mac = "mac"
+  static let allowed = "allowed"
   static let titles: [String: String] = [
+    mac: "Mac permissions", allowed: "Allowed without asking",
     history: "History", sites: "Sites Serein treats differently", routineSites: "Routine steps go ahead on",
     signIns: "Sites Serein stays signed in to",
     pageTools: "Tools that sites offer", chats: "Chats on this Mac", permissions: "Site permissions", blocking: "Ads and trackers",
@@ -98,7 +118,7 @@ private struct PrivacySubpage<Content: View>: View {
 }
 
 private struct PrivacyPage: View {
-  enum Part { case sees, keeps }
+  enum Part { case sees, keeps, banners }
   @ObservedObject var browser: BrowserModel
   @Binding var confirmClear: Bool
   let part: Part
@@ -114,6 +134,7 @@ private struct PrivacyPage: View {
   var body: some View {
     switch part {
     case .sees: SettingsRowList("What Serein sees") { sees }
+    case .banners: SettingsRowList("On task pages") { banners }
     case .keeps:
       SettingsRowList("What Serein keeps", note: "Messages are kept on this Mac. What you send goes to your chosen AI app.") { keeps }
     }
@@ -130,6 +151,9 @@ private struct PrivacyPage: View {
     ) {
       SettingsGlyphTile(systemName: "macwindow")
     }
+  }
+  /// Under Advanced: the choice Serein makes on a cookie or consent banner.
+  @ViewBuilder private var banners: some View {
     SettingsSwitchRow(
       title: "Cookie and consent banners",
       answer: "Serein picks the option that shares the least, such as Reject all, and the task shows what it chose. It never accepts all cookies without asking you.",

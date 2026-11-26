@@ -8,7 +8,7 @@ extension UIStyle {
   /// Gap between the window edge, the sidebar contents, the content card and the task panel.
   static let chromeInset: CGFloat = 8
   /// One compact sidebar, with no separate rail. Settings keeps its own 256-point category column.
-  /// Grows with the text size (Settings › Appearance) so sidebar labels keep their room, and by
+  /// Grows with the text size (Settings › General) so sidebar labels keep their room, and by
   /// what the person dragged its edge (`sidebarExtraKey`); dragged narrower than the list goes,
   /// it is the rail of faces (`sidebarRailKey`, `SidebarWidth`).
   static var wallWidth: CGFloat { sidebarRail ? SidebarWidth.rail : sidebarUsual + sidebarExtra }

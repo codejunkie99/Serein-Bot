@@ -11,6 +11,7 @@ enum AssistantCoreChecks {
 
   static let suites: [(String, (Check) throws -> Void)] = [
     ("receipts", AssistantCoreChecks.receipts),
+    ("allowAllLaunch", AssistantCoreChecks.allowAllLaunch),
     ("secureCard", AssistantCoreChecks.secureCard),
     ("admission", AssistantCoreChecks.admission),
     ("schedules", AssistantCoreChecks.schedules),
@@ -110,6 +111,14 @@ enum AssistantCoreChecks {
     ("harnessRules", AssistantCoreChecks.harnessRules),
     ("engines", AssistantCoreChecks.engines),
     ("peers", AssistantCoreChecks.peers),
+    ("peerQuota", AssistantCoreChecks.peerQuota),
+    ("limitWords", AssistantCoreChecks.limitWords),
+    ("roomCallee", AssistantCoreChecks.roomCallee),
+    ("swarmBoard", AssistantCoreChecks.swarmBoard),
+    ("swarmWriters", AssistantCoreChecks.swarmWriters),
+    ("stuckLoopback", AssistantCoreChecks.stuckLoopback),
+    ("autoTeams", AssistantCoreChecks.autoTeams),
+    ("acpRegistry", AssistantCoreChecks.acpRegistry),
     ("grokEngine", AssistantCoreChecks.grokEngine),
     ("cursorEngine", AssistantCoreChecks.cursorEngine),
     ("geminiEngine", AssistantCoreChecks.geminiEngine),

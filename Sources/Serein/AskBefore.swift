@@ -343,7 +343,7 @@ struct RelayApprovalCard: View {
     Text(title).lineLimit(1).frame(maxWidth: .infinity)
   }
   /// The lasting choice, under the answers: routine steps on a site (until removed in Settings ›
-  /// Privacy), or a connected app's reads (until turned off in Settings › Connections). It never
+  /// Privacy), or a connected app's reads (until turned off in the Marketplace (Your apps, On this Mac)). It never
   /// covers a hard stop.
   private var showsAlways: Bool { approval.grants != nil && !blocked }
   @ViewBuilder private var alwaysLink: some View {

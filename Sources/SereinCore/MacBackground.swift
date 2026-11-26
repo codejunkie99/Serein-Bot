@@ -5,13 +5,13 @@ import Foundation
 /// with keys addressed to that app's process alone, so the person's pointer, front app and focus
 /// stay theirs. Every step still asks on the mac_act card. The words and refusals are pure here.
 public enum MacBackgroundPolicy {
-  /// Settings › AI apps › Mac access: off until the person turns it on.
+  /// Settings › Privacy › Mac permissions: off until the person turns it on.
   public static let enabledKey = "serein.mac.background"
   /// The answer to any step the app offers no background way to do (a point on a canvas, a drag).
   public static let needsForeground =
     "This needs the foreground; ask to use foreground mode. mac_act without background asks the person on its own card."
   public static let off =
-    "Background work in Mac apps is off. The person turns it on from a card Serein offers in its chat (setup_offer, topic background) or in Settings › AI apps › Mac access; until then use mac_observe and mac_act without background."
+    "Background work in Mac apps is off. The person turns it on from a card Serein offers in its chat (setup_offer, topic background) or in Settings › Privacy › Mac permissions; until then use mac_observe and mac_act without background."
   public static let unattended =
     "Background work in Mac apps needs the person there to answer each step, so it is refused in a scheduled or unattended run."
   public static let stopped = "The person stopped background work for this task. Do not retry it."

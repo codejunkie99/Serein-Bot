@@ -203,16 +203,16 @@ public enum RelayTools {
         ], ["name", "steps"]),
       tool(
         "team_propose",
-        "Propose a new team of assistants when the user asks you to make one (\"make a team that …\"). name: the team's name. members: each new assistant's name, persona (one line on who it is), canUse (places it may use: web, page, answer, mac, project, mail, messages, calendar, contacts, connectedApps, computer; keep to what its job needs) and instructions (how it works, up to 2000 characters). lead: the member who answers messages to the team. The user sees every member, what each may use and the full instructions on one card and decides; nothing is created unless they press Create team. Places the user does not allow are dropped and the card says so.",
+        "Make a new team of assistants when a task needs several, or the user asks for one (\"make a team that …\"). It is created at once, with no card. name: the team's name. members: each new assistant's name, role (its job on this task, one per role), persona (one line on who it is), canUse (places it may use: web, page, answer, mac, project, mail, messages, calendar, contacts, computer; keep to what its job needs) and instructions (how it works, up to 2000 characters). lead: the member who answers messages to the team. New members start with no connected apps; places the user does not allow are dropped. A member that is refused (no role, a role already taken for this task, a name already used) comes back in rejected with the reason: fix it and propose that member again. Then hand each member its part with assistant_handoff.",
         [
           "name": string,
           "members": [
             "type": "array", "items": [
               "type": "object", "properties": [
-                "name": string, "persona": string,
+                "name": string, "role": string, "persona": string,
                 "canUse": ["type": "array", "items": ["type": "string", "enum": AssistantPlace.allCases.map(\.rawValue)]],
                 "instructions": string,
-              ], "required": ["name", "persona", "canUse", "instructions"], "additionalProperties": false,
+              ], "required": ["name", "role", "persona", "canUse", "instructions"], "additionalProperties": false,
             ],
           ],
           "lead": string,

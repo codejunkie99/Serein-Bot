@@ -325,7 +325,7 @@ extension RelayOrchestrator {
   }
   /// The harness, model and effort an assistant thinks with: its own route while that harness can
   /// think for Serein on this Mac (the model kept only when the AI app lists it,
-  /// `RelayToolHost.modelAndEffort`); else Serein's own (Settings › Assistants › Default AI app) at its
+  /// `RelayToolHost.modelAndEffort`); else Serein's own (Settings › AI apps › Serein thinks with) at its
   /// default model. Its Main chat, hand-offs to it, its turns of speaking first and the tasks it
   /// starts without naming an AI app all use this.
   func assistantEngine(_ profile: RelayProfile?) -> (provider: Provider, model: String, effort: String) {

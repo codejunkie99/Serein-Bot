@@ -5,6 +5,9 @@ import Foundation
 /// AssistantCoreChecks.
 public enum MarketplacePlace: Hashable, Sendable {
   case apps, teams, plugins, mac
+  /// The apps the person connected, to manage: each one's tools, sign-in and Remove, and Composio's
+  /// key. Settings › Connections held it before apps and plugins left Settings for the Marketplace.
+  case yours
   /// One group's every app, from its See all on Apps.
   case category(ConnectorCatalog.Category)
   /// An app the person added, by its catalog id.
@@ -19,6 +22,7 @@ public enum MarketplacePlace: Hashable, Sendable {
     case .teams: return "Teams"
     case .plugins: return "Plugins"
     case .mac: return "On this Mac"
+    case .yours: return "Your apps"
     case .category(let category): return category.title
     case .app(let id): return ConnectorCatalog.all.first { $0.id == id }?.name ?? "App"
     }

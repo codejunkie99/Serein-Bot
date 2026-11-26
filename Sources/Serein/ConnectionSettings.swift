@@ -2,15 +2,13 @@ import AppKit
 import SereinCore
 import SwiftUI
 
-/// Settings › Connections, three lists: the apps on this Mac (Mail and Messages here, Calendar,
-/// Reminders, Contacts and Notes in NativeConnectionsRows), each with its own icon; online apps
-/// through Composio (ComposioConnectionsRows), each with its logo; and apps connected by their MCP
-/// server's address (MCPConnectionsRows). A row shows what Serein may do and what macOS allows,
-/// its switch turns it on (after the privacy line) or off, and its chevron opens its settings.
-/// Reading Messages is its own switch, with the conversations and days it covers.
+/// The Marketplace's On this Mac page (and its searches): the apps on this Mac (Mail and Messages
+/// here, Calendar, Reminders, Contacts and Notes in NativeConnectionsRows), each with its own icon,
+/// then Your files (reading the whole Mac and running commands). A row shows what Serein may do and
+/// what macOS allows, its switch turns it on (after the privacy line) or off, and its chevron opens
+/// its settings. Reading Messages is its own switch, with the conversations and days it covers.
+/// Connected apps (Composio and servers by address) are on the Marketplace's Your apps page.
 struct ConnectionSettings: View {
-  /// Only the apps on this Mac, for the Marketplace (its On this Mac page and searches).
-  var macOnly = false
   @GateStorage(Connections.key(.mail)) private var mail = false
   @GateStorage(Connections.key(.messages)) private var messages = false
   @GateStorage(Connections.messagesReadKey) private var readMessages = false
@@ -31,7 +29,6 @@ struct ConnectionSettings: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 24) {
       VStack(alignment: .leading, spacing: 8) {
-        if !macOnly { SettingsCaption("On this Mac", info: ConnectionStatusWords.onThisMacInfo) }
         VStack(spacing: 0) {
           row(.mail, on: mail, divider: false)
           row(.messages, on: messages)
@@ -40,14 +37,6 @@ struct ConnectionSettings: View {
         }.frame(maxWidth: .infinity, alignment: .leading).card(p)
       }
       wholeMac
-      if !macOnly {
-        // Apps that connect in one click, with no key (OneClickConnect.swift).
-        OneClickConnectorRows()
-        // Apps connected through Composio (ComposioApps).
-        ComposioConnectionsRows()
-        // Apps connected by their MCP server's address (MCPConnectionsSettings.swift).
-        MCPConnectionsRows()
-      }
     }
     .task(id: "\(mail)|\(messages)|\(readMessages)") { await refresh() }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

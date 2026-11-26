@@ -46,22 +46,20 @@ public enum AppPlaces {
 
   /// The places `app_read` answers; every other place has its own reading tool.
   public static let readable: Set<String> =
-    Set(["board", "history", "saved", "projects"] + inspectorTabs.map { "assistant/" + $0 } + SettingsCategory.all.map { "settings/" + $0.id })
+    Set(["board", "history", "saved", "projects", "connect_apps"] + inspectorTabs.map { "assistant/" + $0 } + SettingsCategory.all.map { "settings/" + $0.id })
   /// The assistant panel's tabs (`AssistantInspector.Tab`), as stored.
   public static let inspectorTabs: [String] = ["details", "library", "activity"]
 
   /// What changes each Settings page by tool; every other page is the person's to change.
   static let settingsChanges: [String: [String]] = [
     "General": ["settings_set", "update"],
-    "Appearance": ["settings_set"],
     "Relay": ["assistant_make", "assistant_change", "assistant_delete", "instructions_propose"],
     "Agents": ["agent_sign_in"],
-    "Connections": ["connect_app"],
   ]
 
   public static let all: [AppPlace] = sections + settings + assistant + [
-    AppPlace("connect_apps", .connectApps, "The Marketplace, open in the main window: apps to connect, starter teams and plugins. Only the person connects.",
-             reads: ["connected_app_tools"], changes: ["connect_app"]),
+    AppPlace("connect_apps", .connectApps, "The Marketplace, open in the main window: apps to connect, starter teams and plugins, the person's connected apps and the apps on this Mac. Only the person connects, turns off or removes.",
+             reads: [readTool, "connected_app_tools"], changes: ["connect_app"]),
     AppPlace("search", .search, "The Search palette over the window: the person's assistants, chats and Settings pages.",
              reads: ["chats_search"]),
   ]
@@ -99,7 +97,7 @@ public enum AppPlaces {
   static var settings: [AppPlace] {
     SettingsCategory.all.map { page in
       let changes = settingsChanges[page.id] ?? []
-      let reads = [readTool] + (["General", "Appearance"].contains(page.id) ? ["settings_get"] : [])
+      let reads = [readTool] + (page.id == "General" ? ["settings_get"] : [])
       let rest = changes.isEmpty
         ? " The person changes it here: open it for them."
         : " Approvals, access, sign-ins, pairings, privacy, passwords and keys are the person's: open it for them."

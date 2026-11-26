@@ -59,9 +59,30 @@ public enum PeerTools {
           ]
         ], required: ["jobs"]),
       Spec(
+        name: "peer_swarm", label: "Started a swarm",
+        description:
+          "Run any number of parallel workers over a shared SwarmBoard (with optional read-only verifier) and return one combined report. Workers may use the same or different CLIs. Parallel write workers isolate in git worktrees when applicable.",
+        properties: [
+          "goal": ["type": "string", "minLength": 1, "maxLength": 2_000],
+          "workers": [
+            "type": "array", "minItems": 1,
+            "items": [
+              "type": "object", "additionalProperties": false, "required": ["name", "agent", "task"],
+              "properties": [
+                "name": ["type": "string", "minLength": 1, "maxLength": 40],
+                "agent": agent,
+                "task": ["type": "string", "minLength": 1, "maxLength": 8_000],
+                "write": ["type": "boolean"],
+              ],
+            ],
+          ],
+          "verifier": agent,
+          "rounds": ["type": "integer", "minimum": 1, "maximum": maxRounds],
+        ], required: ["goal", "workers"]),
+      Spec(
         name: "peer_wait", label: "Waited for other agents",
         description:
-          "Wait for runs from peer_ask, peer_bridge or peer_burst (all of yours when runs is left out) for up to seconds, as long as one call can, then report every job and the answers so far. Call again to keep waiting.",
+          "Wait for runs from peer_ask, peer_bridge, peer_burst or peer_swarm (all of yours when runs is left out) for up to seconds, as long as one call can, then report every job and the answers so far. Call again to keep waiting.",
         properties: ["runs": ["type": "array", "items": string], "seconds": ["type": "integer", "minimum": 1]],
         required: []),
       Spec(
@@ -149,6 +170,41 @@ public enum PeerTools {
         }
       }
       return .success(.burst(jobs))
+    case "peer_swarm":
+      guard let goal = text("goal"), let list = arguments["workers"] as? [[String: Any]], !list.isEmpty else {
+        return .failure(PeerToolError("peer_swarm takes goal and workers (at least one {name, agent, task})."))
+      }
+      var workers: [PeerSwarmWorker] = []
+      var seenNames = Set<String>()
+      for raw in list {
+        guard let workerName = (raw["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !workerName.isEmpty,
+          let task = (raw["task"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !task.isEmpty
+        else { return .failure(PeerToolError("Every swarm worker needs a name and task.")) }
+        let key = workerName.lowercased()
+        guard seenNames.insert(key).inserted else {
+          return .failure(PeerToolError("Swarm worker names must be unique (\(workerName))."))
+        }
+        switch agent(raw["agent"]) {
+        case .success(let one):
+          workers.append(PeerSwarmWorker(name: workerName, agent: one, task: task, write: raw["write"] as? Bool ?? false))
+        case .failure(let error):
+          return .failure(error)
+        }
+      }
+      let rounds = arguments["rounds"] as? Int ?? 2
+      guard (1...maxRounds).contains(rounds) else { return .failure(PeerToolError("rounds is 1 to \(maxRounds).")) }
+      let verifier: HarnessDriver?
+      if arguments["verifier"] != nil {
+        switch agent(arguments["verifier"]) {
+        case .success(let v): verifier = v
+        case .failure(let error): return .failure(error)
+        }
+      } else {
+        verifier = nil
+      }
+      return .success(.swarm(PeerSwarmRequest(goal: goal, workers: workers, verifier: verifier, rounds: rounds)))
     case "peer_wait":
       let runs = (arguments["runs"] as? [Any])?.compactMap { $0 as? String } ?? []
       return .success(.wait(runs: runs, seconds: arguments["seconds"] as? Int))
@@ -166,6 +222,12 @@ public enum PeerTools {
     switch state {
     case .queued: return "queued, not started yet"
     case .working: return "working"
+    case .waitingForMemory: return "waiting for memory, starts by itself when this Mac has room"
+    case .limited(let until): return "waiting for its limit to reset, starts by itself at \(UsageLimit.when(until, now: Date()))"
+    case .limitUnclear(let at?):
+      return "waiting for its limit to clear, which it named no time for; one of its jobs checks again at \(UsageLimit.when(at, now: Date())), and this starts by itself once one gets through"
+    case .limitUnclear(nil):
+      return "waiting for its limit to clear, which it named no time for; another of its jobs is checking now, and this starts by itself once one gets through"
     case .parked: return "waiting on the person: a secure card is open in the chat"
     case .answered: return "answered"
     case .failed(let why): return "failed: \(why)"
@@ -186,13 +248,17 @@ public enum PeerTools {
         shown = Set(["writer", "reviewer"].compactMap { role in report.jobs.lastIndex { $0.role?.hasPrefix(role) == true } })
       }
       for (index, job) in report.jobs.enumerated() {
-        lines.append("- \(job.agent.rawValue)\(job.role.map { ", \($0)" } ?? ""): \(words(job.state))")
+        let switched = job.reroutedFrom.map { " (for \($0.rawValue), at limit)" } ?? ""
+        lines.append("- \(job.agent.rawValue)\(switched)\(job.role.map { ", \($0)" } ?? ""): \(words(job.state))")
         if case .answered(let answer) = job.state, shown.contains(index) {
           lines.append(UntrustedText.wrap("agent_answer", String(answer.suffix(answerLimit)), ref: job.agent.rawValue))
         }
       }
       if case .bridge(let approved) = report.kind, report.settled {
         lines.append(approved ? "The reviewer approved the last draft." : "The reviewer did not approve; the last draft is the writer's final answer above.")
+      }
+      if case .swarm(let verified, _) = report.kind, report.settled {
+        lines.append(verified ? "The swarm verifier approved the final result." : "Swarm completed.")
       }
     }
     let open = reports.filter { !$0.settled }.map(\.id)
@@ -218,11 +284,38 @@ public struct PeerJob: Sendable, Equatable {
   }
 }
 
+public struct PeerSwarmWorker: Sendable, Equatable {
+  public var name: String
+  public var agent: HarnessDriver
+  public var task: String
+  public var write: Bool
+  public init(name: String, agent: HarnessDriver, task: String, write: Bool = false) {
+    self.name = name
+    self.agent = agent
+    self.task = task
+    self.write = write
+  }
+}
+
+public struct PeerSwarmRequest: Sendable, Equatable {
+  public var goal: String
+  public var workers: [PeerSwarmWorker]
+  public var verifier: HarnessDriver?
+  public var rounds: Int
+  public init(goal: String, workers: [PeerSwarmWorker], verifier: HarnessDriver? = nil, rounds: Int = 2) {
+    self.goal = goal
+    self.workers = workers
+    self.verifier = verifier
+    self.rounds = rounds
+  }
+}
+
 public enum PeerCall: Sendable, Equatable {
   /// One agent, or a meeting of several on the same question.
   case ask(agents: [HarnessDriver], question: String)
   case bridge(writer: HarnessDriver, reviewer: HarnessDriver, task: String, rounds: Int)
   case burst([PeerJob])
+  case swarm(PeerSwarmRequest)
   /// Empty `runs`: every open run of the caller's.
   case wait(runs: [String], seconds: Int?)
   /// nil: every run of the caller's.
@@ -231,6 +324,13 @@ public enum PeerCall: Sendable, Equatable {
 
 public enum PeerJobState: Sendable, Equatable {
   case queued, working
+  /// Started, but its CLI waits for this Mac to have memory for it.
+  case waitingForMemory
+  /// Not started: the CLI reached its usage or rate limit, so its jobs start by themselves at this time.
+  case limited(until: Date)
+  /// Not started: the CLI reached its limit and named no reset time. One of its jobs tries again at
+  /// `checksAt` (nil: one tries now), and the rest start once a try gets through.
+  case limitUnclear(checksAt: Date?)
   case answered(String)
   case failed(String)
   /// A secure card outlasted the callee's tool call; the person's answer starts its next turn.
@@ -239,7 +339,7 @@ public enum PeerJobState: Sendable, Equatable {
 
   public var settled: Bool {
     switch self {
-    case .queued, .working: return false
+    case .queued, .working, .waitingForMemory, .limited, .limitUnclear: return false
     case .answered, .failed, .parked, .stopped: return true
     }
   }
@@ -250,10 +350,13 @@ public struct PeerJobReport: Sendable, Equatable {
   /// "writer, round 1" in a bridge.
   public var role: String?
   public var state: PeerJobState
-  public init(agent: HarnessDriver, role: String? = nil, state: PeerJobState) {
+  /// The original CLI when this job failed over to `agent` because that CLI hit a limit.
+  public var reroutedFrom: HarnessDriver?
+  public init(agent: HarnessDriver, role: String? = nil, state: PeerJobState, reroutedFrom: HarnessDriver? = nil) {
     self.agent = agent
     self.role = role
     self.state = state
+    self.reroutedFrom = reroutedFrom
   }
 }
 
@@ -262,12 +365,14 @@ public struct PeerRunReport: Sendable, Equatable {
     case ask(count: Int)
     case bridge(approved: Bool)
     case burst
+    case swarm(verified: Bool, plan: SwarmPlan?)
 
     var words: String {
       switch self {
       case .ask(let count): return count == 1 ? "ask" : "meeting of \(count)"
       case .bridge: return "writer and reviewer"
       case .burst: return "burst"
+      case .swarm: return "swarm"
       }
     }
   }

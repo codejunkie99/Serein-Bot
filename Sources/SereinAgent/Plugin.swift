@@ -120,7 +120,7 @@ enum PluginCommand {
         # \(name)
 
         A Serein plugin. Check it with `serein-agent plugin validate .`, then add this folder in
-        Serein › Settings › Plugins and turn it on. Guide: docs/PLUGINS-GUIDE.md in Serein.
+        Serein › Marketplace › Plugins and turn it on. Guide: docs/PLUGINS-GUIDE.md in Serein.
 
         """,
     ]
