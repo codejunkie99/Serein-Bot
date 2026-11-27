@@ -231,20 +231,30 @@ extension AssistantCoreChecks {
       let peers = world.peers
       await peers.register(task: "top", caller: top)
       @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+      // Read the run once it settles, not whatever the 400 ms inline window caught. Ten waits stay far
+      // under claude's 10 s reset, so an answer still proves the failover came first.
+      func settled(_ reply: PeerReply) async -> PeerReply {
+        guard let id = reply.text.split(separator: " ", maxSplits: 2).dropFirst().first.map(String.init) else { return reply }
+        var reply = reply
+        for _ in 0..<10 where !reply.text.contains("): done.") {
+          reply = await peers.handle(.wait(runs: [id], seconds: 1), task: "top")
+        }
+        return reply
+      }
 
       // Safe failover: a long limit (> failoverThreshold) reroutes immediately to a backup CLI.
       world.host.setFallback { cli, excluded in
         cli == .claude && !excluded.contains(.codex) ? .codex : nil
       }
       world.gate[.claude] = .init(text: "You've hit your session limit", reset: Date().addingTimeInterval(10))
-      let failedOver = await peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top")
+      let failedOver = await settled(peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top"))
       notes.check(failedOver.text.contains("codex (for claude, at limit): answered")
         && failedOver.text.contains("codex says: urgent"),
         "Quota: a long limit fails over immediately to a safe backup CLI and notes the handoff")
 
       // A second ask while claude is already held fails over up front without calling claude again.
       let beforeUpfront = started(.claude)
-      let upfront = await peers.handle(.ask(agents: [.claude], question: "second"), task: "top")
+      let upfront = await settled(peers.handle(.ask(agents: [.claude], question: "second"), task: "top"))
       notes.check(started(.claude) == beforeUpfront
         && upfront.text.contains("codex (for claude, at limit): answered")
         && upfront.text.contains("codex says: second"),
