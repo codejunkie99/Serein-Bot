@@ -511,6 +511,13 @@ private struct InspectorComputerState: View {
         await host.resume(computer)
       }
     }
+    // Serein's own Mac sets itself up once the person opens it, and tries again when an unmetered
+    // connection arrives: `resumeInitialSetup` waits for one.
+    .task(id: [network.known, network.online, network.metered]) {
+      if preparesAutomatically, !awake, computer.starting == nil, computer.holder == nil, !computer.busy {
+        await host.resumeInitialSetup(computer)
+      }
+    }
   }
   private var state: some View {
     Group {
