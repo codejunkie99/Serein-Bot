@@ -76,7 +76,8 @@ import SwiftUI
       guard let agent = SereinRouter.agent else { return "Serein is not ready." }
       return await agent.flow.replyToTask(thread, text: words, interrupt: false)
     }
-    return RelayOrchestrator.shared?.replyFromNotice(target, words) ?? "Serein is not ready."
+    guard let relay = RelayOrchestrator.shared else { return "Serein is not ready." }
+    return relay.replyFromNotice(target, words)
   }
 
   private func forget(_ id: FinishNotice.ID) {

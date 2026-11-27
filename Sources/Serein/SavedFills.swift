@@ -61,8 +61,10 @@ extension BrowserModel {
     guard let values = await savedValues(item, parts: parts), let tab = card.tab else { return nil }
     guard await secureFill(card, values) == .filled else { return nil }
     for value in values.values { FilledValues.shared.add(value, task: card.task) }
+    // Below Allow all a saved card still asks before Pay: a card pass with no amount covers no press.
     tasks[card.task]?.securePasses[tab.id] = SecureCard.Pass(
-      tab: tab.id, pageVersion: tab.pageVersion, kind: card.kind, amount: card.amount,
+      tab: tab.id, pageVersion: tab.pageVersion, kind: card.kind,
+      amount: card.kind == .card && !allowsAll(task: card.task) ? nil : card.amount,
       field: card.kind == .card ? nil : card.ref)
     if let thread = card.thread {
       let entry = UUID().uuidString
@@ -82,11 +84,14 @@ extension BrowserModel {
 }
 
 extension RelayOrchestrator {
-  /// Every saved rule, for `FillGuard`: a rule only ever adds an ask, so none is left out. nil
-  /// when memory cannot be read, and then every fill and pay asks.
+  /// Every saved rule, every assistant's own included, for `FillGuard`: a rule only ever adds an
+  /// ask, so none is left out. nil when memory cannot be read, and then every fill and pay asks.
   func savedRules() async -> [MemoryRecord]? {
     guard let memory = await memoryStore() else { return nil }
-    let reader = memoryReader(team.mainProfileID ?? team.activeID)
-    return try? await memory.run { (store: MemoryStore) -> [MemoryRecord] in try store.rules(reader: reader) }
+    let readers = team.profiles.map { memoryReader($0.id) }
+    return try? await memory.run { (store: MemoryStore) -> [MemoryRecord] in
+      var seen = Set<MemoryRecord.ID>()
+      return try readers.flatMap { try store.rules(reader: $0) }.filter { seen.insert($0.id).inserted }
+    }
   }
 }
