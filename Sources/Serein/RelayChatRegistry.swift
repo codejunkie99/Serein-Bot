@@ -96,7 +96,8 @@ import SereinCore
     }
     guard gives else { return nil }
     refresh(model)
-    return ChatRegistry.slice(for: thread, project: project, personal: personal, query: query, digests: digests)
+    return ChatRegistry.slice(for: thread, project: project, personal: personal, query: query, digests: digests,
+                              only: RelayOrchestrator.shared?.registryChats(for: thread))
   }
 
   private func open(_ root: URL) {

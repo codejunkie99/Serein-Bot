@@ -60,6 +60,14 @@ extension AssistantCoreChecks {
       let tagged = relay.handoffLedger.records.last { $0.to == writer && $0.mention != nil }
       try check(words.refusal == nil && words.took && tagged?.isOpen == true && relay.team.activeID == lead,
         "mention plan: \"@Writer words\" while busy goes as a group turn in this chat, not refused [\(words)]")
+      // The chat registry's slice keeps chats_search's rule: the main assistant's chat sees every
+      // chat; Writer's own chat and its hand-off seat see only Writer's chats.
+      let writerChat = relay.mainThread(of: writer)
+      let tagSeat = tagged?.threadID ?? ""
+      let ownChats = relay.registryChats(for: writerChat), seatChats = relay.registryChats(for: tagSeat)
+      try check(relay.registryChats(for: chat) == nil && ownChats?.contains(writerChat) == true && ownChats?.contains(chat) == false
+          && seatChats?.contains(tagSeat) == true && seatChats?.contains(writerChat) == true && seatChats?.contains(chat) == false,
+        "mention plan: the registry slice gives Writer's chat and seat only Writer's chats [own: \(ownChats?.count ?? -1), seat: \(seatChats?.count ?? -1)]")
 
       let bare = relay.messagePlan("@Writer", hasAttachments: false).refusal
       try check(bare == "This chat is busy, so @Writer's chat can't open yet. Add a message to send it now."
