@@ -133,11 +133,12 @@ public struct AssistantChange: Equatable, Sendable {
   public var rewritesWords: Bool { job != nil || instructions != nil }
 
   /// The admission rule's verdict for this change in `turn`. `wordsNameIt`: the person's own
-  /// words name this assistant. A new job or new instructions apply at once only then; else the
-  /// person decides on a card, so a page or a mail cannot write an assistant's instructions.
+  /// words name this assistant. In the person's turn a new job or new instructions apply at once
+  /// only then; else they decide on a card below Allow all. Another turn applies (`Admission`):
+  /// `Staffing.mayRework` keeps it to assistants a bot made.
   public func verdict(turn: Admission.Turn, wordsNameIt: Bool) -> Admission.Verdict {
     let verdict = Admission.decide(admission, turn: turn, wordsNameIt: wordsNameIt)
-    if verdict == .apply, rewritesWords, !wordsNameIt { return .ask }
+    if verdict == .apply, turn == .person, rewritesWords, !wordsNameIt { return .ask }
     return verdict
   }
 

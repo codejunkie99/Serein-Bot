@@ -78,8 +78,6 @@ import SereinCore
   @Published var asks: [String: Ask] = [:]
   /// The names each chat is asking now, for its moving line ("Asking Planner…").
   @Published var asking: [String: [String]] = [:]
-  /// Each asker's asks of the last hour and its open runs (relay/asks.json).
-  var askRate = AskPolicy.Rate()
   /// The hidden chats of this launch's asks, also after they went, so no list, toast or notice
   /// shows them.
   var hiddenThreads: Set<String> = []
@@ -364,7 +362,7 @@ extension RelayOrchestrator {
     }
     guard changed, let plan = made else {
       if case .failure(let problem) = plan(team) { return .failure(problem) }
-      return .failure(.rosterFull)
+      return .failure(.notSaved)
     }
     if let staffed { rooms.update(staffed.lineage.madeIn) { $0.recordMade(plan.profile.id) } }
     persist(RelayPersona(name: plan.profile.name), team.folder(plan.profile.id) + "/persona.json")
@@ -573,8 +571,9 @@ extension RelayOrchestrator {
     }
     // A setting changed from the chat goes back while it still reads what the change wrote.
     if id.hasPrefix(ChatSettings.undoPrefix) { return undoSetting(id) }
-    // A memory change goes back off the main thread (`revertMemory`).
+    // A memory change goes back off the main thread (`revertMemory`), and so does a fill.
     if id.hasPrefix(Self.memoryUndoPrefix) { return .failure("That note changes back on its own path.") }
+    if id.hasPrefix(FillGuard.undoPrefix) { return .failure("That fill clears from Undo on its receipt.") }
     // "Stop suggesting routines" goes back: suggestions are on again.
     // The Allow all upgrade goes back: the level before it, as the person's own choice, so the
     // upgrade never runs again.
@@ -650,6 +649,19 @@ extension RelayOrchestrator {
   /// Undo, pressed on a receipt or on its toast: the change goes back and the chat says so. A
   /// memory change goes back off the main thread; the chat says so when it has.
   @discardableResult func undoReceipt(_ token: UndoToken) -> Bool {
+    if token.entry.hasPrefix(FillGuard.undoPrefix) {
+      let chat = threadID
+      desk.undo.remove(token.entry)
+      Task { [weak self] in
+        guard let self else { return }
+        if await self.browser.undoFill(token.entry) {
+          self.deliver(receipt: ReceiptCopy.undone(), into: chat)
+        } else {
+          self.lastError = "The page changed since, so the field stays as it is."
+        }
+      }
+      return true
+    }
     if token.entry.hasPrefix(Self.memoryUndoPrefix) {
       let chat = threadID
       Task { [weak self] in
@@ -706,7 +718,8 @@ extension RelayOrchestrator {
 
   func sweepAssistantWork(now: Date = Date()) {
     flushHostPosts()
-    sweepAsks(now: now)
+    // A late answer whose chat is on screen and idle starts its turn.
+    deliverLateAnswers()
     purgeRemovedLinks(now: now)
     // A plan with no move for 5 minutes folds while its turn runs (SPEC 2.6).
     for (thread, plan) in desk.plans where plan.idle(now: now) {
@@ -746,7 +759,7 @@ extension RelayToolHost {
     }
     let maker = relay.profile(id: frame.profile)
     let chat = frame.thread
-    let staffed = relay.staff(.newAssistant(draft), sender: maker, parent: nil, chat: chat, readOutside: frame.readOutside)
+    let staffed = relay.staff(.newAssistant(draft), sender: maker, parent: nil, chat: chat)
     guard case .make(let reach, let lineage) = staffed.verdict else { return Self.staffingRefusal(staffed.verdict) }
     switch relay.makeAssistant(draft, actor: "relay", chat: chat, staffed: .init(reach: reach, lineage: lineage)) {
     case .failure(let problem):
@@ -766,23 +779,29 @@ extension RelayToolHost {
 
   /// `assistant_change`. Narrowing, a new name or job and a pause apply from the person's own
   /// turn; letting it do more asks on a card (`sheet-permission`), or at Allow all applies with the
-  /// receipt's Undo; other turns are refused.
+  /// receipt's Undo. Another turn applies with no card, to an assistant a bot made
+  /// (`Staffing.mayRework`), and never past the reach of the assistant that asks.
   func changeAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     if let job = a["job"] as? String, let why = SavedText.problem(job) { throw SereinError.invalid(why) }
     let actingID: String = frame.acting ?? relay.team.activeID
+    let byPerson = frame.admission == .person
+    let ceiling = byPerson ? relay.personScope : relay.effectiveScope(relay.profile(id: actingID)) ?? relay.personScope
     let parsed = AssistantChange.parse(
-      a, actingID: actingID, team: relay.team, person: relay.personScope, global: relay.proactiveLevel)
+      a, actingID: actingID, team: relay.team, person: ceiling, global: relay.proactiveLevel)
     let change: AssistantChange
     switch parsed {
     case .success(let found): change = found
     case .failure(let problem): throw SereinError.invalid(problem.words)
+    }
+    if let why = relay.team.profiles.first(where: { $0.id == change.id }).flatMap({ Staffing.mayRework($0, in: frame.admission) }) {
+      throw SereinError.invalid(why)
     }
     let shown = relay.team
     // New words for an assistant apply at once only when the person's own words name it (safety
     // review 7): else a card, so a page cannot write another assistant's instructions.
     let named: Bool = ScheduleRequest.wordsName(change.name, in: frame.typedWords)
     let verdict = change.verdict(turn: frame.admission, wordsNameIt: named)
-    switch Admission.atLevel(verdict, turn: frame.admission, level: relay.level) {
+    switch Admission.atLevel(verdict, level: relay.level) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:
@@ -811,9 +830,10 @@ extension RelayToolHost {
   }
 
   /// `assistant_delete`: a card (`sheet-destructive-confirm`) that says what ends with it, then the
-  /// toast with a 10-second Undo. At Allow all the person's own turn archives it with no card: its
-  /// files wait in relay/removed and the receipt's Undo brings it back while the roster's history
-  /// holds the change. Nobody there refuses.
+  /// toast with a 10-second Undo. At Allow all, or in a turn the person did not start, it is
+  /// archived with no card: its files wait in relay/removed and the receipt's Undo brings it back
+  /// while the roster's history holds the change. Another turn archives only an assistant a bot
+  /// made (`Staffing.mayRework`).
   func deleteAssistant(_ a: [String: Any]) async throws -> [String: Any] {
     let raw: String = (a["name"] as? String) ?? (a["assistant"] as? String) ?? ""
     var wanted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -821,15 +841,16 @@ extension RelayToolHost {
     guard let target = relay.team.profile(named: wanted) else {
       throw SereinError.invalid(DeletePlan.Refusal.unknown.words)
     }
+    if let why = Staffing.mayRework(target, in: frame.admission) { throw SereinError.invalid(why) }
     let verdict = Admission.atLevel(
-      Admission.decide(.deleteAssistant, turn: frame.admission, wordsNameIt: true), turn: frame.admission, level: relay.level)
+      Admission.decide(.deleteAssistant, turn: frame.admission, wordsNameIt: true), level: relay.level)
     if case .refuse(let why) = verdict { throw SereinError.invalid(why) }
     let plan: DeletePlan
     switch relay.deletePlan(for: target.id) {
     case .success(let found): plan = found
     case .failure(let refusal): throw SereinError.invalid(refusal.words)
     }
-    let archives = verdict == .apply && relay.level == .proactive
+    let archives = verdict == .apply
     if !archives {
       let human = await relay.confirmAnswer(
         plan.title, plan.detail, button: DeletePlan.confirm, decline: DeletePlan.keep, thread: frame.thread, effect: .delete)

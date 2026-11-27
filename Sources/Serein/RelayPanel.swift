@@ -1359,7 +1359,11 @@ import UniformTypeIdentifiers
     guard let notice = BarWork.notice(
       name: relay.profileName(owner), ending: ending, reply: reply, readPersonal: relay.agent.readsPersonal(thread: thread))
     else { return }
-    TaskNotifications.shared.post(threadID: thread, title: notice.title, body: notice.body, always: true, result: true)
+    let card = FinishNotice.reply(
+      assistant: owner, thread: thread, who: notice.title, asked: barExchange?.prompt ?? "Your message", summary: notice.body,
+      failed: ending == .failed, at: Date())
+    TaskNotifications.shared.post(
+      threadID: thread, title: notice.title, body: notice.body, always: true, result: true, notice: card)
   }
   /// A finish notification's Show result: the reply where the person is, without bringing
   /// Serein's window forward. The dock's chat when the dock is on, else the bar with the reply

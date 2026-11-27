@@ -60,15 +60,16 @@ extension AssistantCoreChecks {
       ReceiptCopy.archived(name: "Scout", entry: "e").undo?.expires == nil,
       "An assistant archived at Allow all keeps its Undo while the roster's history holds it")
 
-    // Allow all turns each card into apply in the person's turn, refuse elsewhere; lower levels keep it.
-    let atLevel = { (v: Admission.Verdict, t: Admission.Turn, l: ApprovalLevel) in Admission.atLevel(v, turn: t, level: l) }
+    // Allow all turns each card into apply; lower levels keep it. A bot's turn never gets a card:
+    // decide applies there before the level is read.
+    let atLevel = { (v: Admission.Verdict, l: ApprovalLevel) in Admission.atLevel(v, level: l) }
     try check(
-      atLevel(.ask, .person, .proactive) == .apply && atLevel(.ask, .assistant, .proactive) != .apply
-        && atLevel(.ask, .person, .everyStep) == .ask && atLevel(.ask, .person, .riskyOnly) == .ask
-        && atLevel(.refuse("x"), .person, .proactive) == .refuse("x") && atLevel(.apply, .assistant, .everyStep) == .apply
-        && atLevel(Admission.decide(.makeLink, turn: .person, wordsNameIt: false), .person, .proactive) == .apply
-        && atLevel(Admission.decide(.deleteAssistant, turn: .person, wordsNameIt: true), .person, .proactive) == .apply,
-      "At Allow all a card becomes apply in the person's own turn and a refusal elsewhere; Every step and Only risky steps still ask")
+      atLevel(.ask, .proactive) == .apply && atLevel(.ask, .everyStep) == .ask && atLevel(.ask, .riskyOnly) == .ask
+        && atLevel(.refuse("x"), .proactive) == .refuse("x") && atLevel(.apply, .everyStep) == .apply
+        && atLevel(Admission.decide(.makeLink, turn: .person, wordsNameIt: false), .proactive) == .apply
+        && atLevel(Admission.decide(.deleteAssistant, turn: .person, wordsNameIt: true), .proactive) == .apply
+        && Admission.decide(.deleteAssistant, turn: .assistant, wordsNameIt: false) == .apply,
+      "At Allow all a card becomes apply; Every step and Only risky steps still ask the person; a bot's turn applies")
 
     // A kept sign-in at Allow all: the person_step card in the chat, never a window.
     let route = KeptSignInAsk.route("bank.example").text

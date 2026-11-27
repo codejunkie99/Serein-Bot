@@ -94,17 +94,23 @@ private final class Locked<Value>: @unchecked Sendable {
   /// `result`: a finished task's notice, which also offers Show result (the reply where the
   /// person is) beside opening the chat. `kind`: during quiet hours only an ask and a reminder go
   /// out; anything else waits for one summary per chat at the brief hour (RelayOutbox).
+  /// `notice`: a finish shows Serein's own notice in place of the banner, with a reply field
+  /// (FinishNoticePanel.swift); it needs no permission and no app bundle.
   func post(
     threadID: String, title: String, body: String, always: Bool = false, asks: Bool = false, result: Bool = false,
-    kind: RelayOutbox.Kind = .update
+    kind: RelayOutbox.Kind = .update, notice: FinishNotice? = nil
   ) {
-
-    guard supported, always || !NSApp.isActive else { return }
+    guard always || !NSApp.isActive else { return }
     let now = Date()
     if RelayOutbox.holds(kind, hour: Calendar.current.component(.hour, from: now)) {
-      hold(threadID: threadID, title: title, body: body, now: now)
+      if supported { hold(threadID: threadID, title: title, body: body, now: now) }
       return
     }
+    if let notice {
+      FinishNoticeCenter.shared.show(notice)
+      return
+    }
+    guard supported else { return }
     let content = UNMutableNotificationContent()
     content.title = title
     content.body = body

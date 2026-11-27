@@ -3,16 +3,17 @@ import Foundation
 import SereinCore
 @testable import SereinEngines
 
-/// Verifies the shared swarm message board, unlimited autonomous team policy, zero-permission
-/// upgrade rules, end-to-end `peer_swarm` over `Engines`, `GenericACPDriver` + ACP steering,
+/// Verifies the shared swarm message board, zero-permission upgrade rules, end-to-end `peer_swarm` over `Engines`, `GenericACPDriver` + ACP steering,
 /// `LaunchContract.warmTags`, and `HarnessStuck.isLoopbackAddress`.
 extension AssistantCoreChecks {
   static func swarmBoard(_ check: Check) throws {
     try checkBoardInterleavings(check)
-    try checkAutoTeamPolicy(check)
     try checkAllowAllUpgrade(check)
     try checkPeerSwarmTools(check)
     try checkPeerSwarmExecution(check)
+    try checkSwarmCountLine(check)
+    try checkSwarmCommand(check)
+    try checkSwarmBoardReload(check)
     try checkGenericACPAndSteer(check)
     try checkWarmTagsAndLoopback(check)
   }
@@ -77,43 +78,6 @@ extension AssistantCoreChecks {
       try check(
         SwarmMonitor.stallTarget(board: board, now: base.addingTimeInterval(1_000), idleAfter: 60) == nil,
         "Monitor returns nil once board is finished")
-    }
-  }
-
-  // MARK: - Unlimited AutoTeamPolicy
-
-  private static func checkAutoTeamPolicy(_ check: Check) throws {
-    var records: [AutoTeamPolicy.BotRecord] = []
-    for i in 1...10 {
-      let teamID = "team-\((i - 1) / 3 + 1)"
-      let decision = AutoTeamPolicy.admit(
-        id: "bot-\(i)", role: "specialist-\(i)", createdBy: "coordinator", parentTaskID: teamID,
-        existing: records, activeChain: ["coordinator"])
-      guard case .admit(let rec) = decision else {
-        try check(false, "Unlimited AutoTeamPolicy admits bot \(i) across team \(teamID)")
-        return
-      }
-      try check(rec.createdBy == "coordinator" && rec.connectedApps.isEmpty, "Bot \(i) records creator and starts with zero connected apps")
-      records.append(rec)
-    }
-    try check(records.count == 10, "AutoTeamPolicy admits more than 2 bots and more than 1 team without artificial caps")
-
-    let dup = AutoTeamPolicy.admit(
-      id: "bot-dup", role: "SPECIALIST-1", createdBy: "bot-2", parentTaskID: "team-1",
-      existing: records, activeChain: ["coordinator", "bot-2"])
-    if case .reject = dup {
-      try check(true, "Duplicate active role on the same task is rejected case-insensitively")
-    } else {
-      try check(false, "Duplicate active role must be rejected")
-    }
-
-    let cycle = AutoTeamPolicy.admit(
-      id: "bot-2", role: "fresh-role", createdBy: "bot-3", parentTaskID: "team-2",
-      existing: records, activeChain: ["coordinator", "bot-2", "bot-3"])
-    if case .reject = cycle {
-      try check(true, "Cycle in activeChain is rejected")
-    } else {
-      try check(false, "Cycle in activeChain must be rejected")
     }
   }
 
@@ -203,9 +167,9 @@ extension AssistantCoreChecks {
       notes.check(!reply.isError && reply.text.contains("The swarm verifier approved the final result."),
         "Same-CLI swarm (codex x4) runs, revises on verifier feedback, and reaches approval")
 
-      let w1First = world.host.callees.first { $0.cli == .codex && $0.prompt.message.contains("You are 'w1'") }
-      let w2First = world.host.callees.first { $0.cli == .codex && $0.prompt.message.contains("You are 'w2'") }
-      let verifierCall = world.host.callees.first { $0.prompt.message.contains("You are the read-only verifier") }
+      let w1First = world.host.callees.first { $0.cli == .codex && $0.prompt.message.contains("You are @w1") }
+      let w2First = world.host.callees.first { $0.cli == .codex && $0.prompt.message.contains("You are @w2") }
+      let verifierCall = world.host.callees.first { $0.prompt.message.contains("the read-only verifier") }
       notes.check(w1First?.access == .project(folder: folder, level: .full), "Write worker inherits writable access")
       notes.check(w2First?.access == .project(folder: folder, level: .review), "Non-write worker is downgraded to .review")
       notes.check(verifierCall?.access == .project(folder: folder, level: .review), "Verifier is downgraded to .review")
@@ -245,7 +209,10 @@ extension AssistantCoreChecks {
     defer { try? FileManager.default.removeItem(at: records.root) }
     let processes = PeerProcesses()
     let drivers: [any Driver] = [HarnessDriver.claude, .codex, .grok, .opencode].map(SwarmScript.init)
-    let engines = Engines(drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600))
+    // Plenty of memory, so a busy Mac does not hold workers back (`waitingForMemory`).
+    let room = EngineRoom(sample: { RoomSnapshot(totalBytes: 64 << 30, availableBytes: 48 << 30) }, footprint: { _ in nil }, tick: .milliseconds(5))
+    let engines = Engines(
+      drivers: drivers, host: processes, records: records, sleep: { _ in await Task.yield() }, tickEvery: .seconds(3_600), room: room)
     var limits = Peers.Limits()
     limits.inlineCap = .milliseconds(450)
     let host = FakePeerHost()
@@ -261,6 +228,111 @@ extension AssistantCoreChecks {
     guard done.wait(timeout: .now() + 30) == .success else { throw SereinError.invalid("FAIL: swarm check timed out") }
     if let error = box.error { throw error }
     for (passed, label) in notes.all { try check(passed, label) }
+  }
+
+  // MARK: - Live board: count line, the person's words, reload
+
+  /// Boards Peers sent, oldest first. They leave Peers in tasks, so they can land out of order.
+  private static func sent(_ host: FakePeerHost) -> [SwarmBoard] {
+    host.boards.sorted { $0.version < $1.version }
+  }
+
+  private static func checkSwarmCountLine(_ check: Check) throws {
+    let folder = URL(fileURLWithPath: "/tmp/swarm-count")
+    let top = PeerCaller(thread: ThreadKey("swarm-count"), cli: .codex, access: .project(folder: folder, level: .full))
+    try swarmWorld(check) { world, notes in
+      await world.peers.register(task: "swarm-count", caller: top)
+      let workers = (1...12).map { PeerSwarmWorker(name: "part\($0)", agent: .codex, task: "Read folder \($0)", write: false) }
+      let reply = await world.peers.handle(.swarm(PeerSwarmRequest(goal: "Read twelve folders", workers: workers, verifier: nil, rounds: 1)), task: "swarm-count")
+      var finished = reply.text.contains("Swarm completed.")
+      // Twelve turns can outlast the inline window on a busy Mac; the swarm keeps going either way.
+      if !reply.isError && !finished {
+        finished = await world.peers.handle(.wait(runs: [], seconds: 20), task: "swarm-count").text.contains("Swarm completed.")
+      }
+      notes.check(!reply.isError && finished, "A swarm of 12 workers runs to the end with no card")
+      notes.check(world.host.callees.count == 12, "All 12 workers start, none held behind an ask (\(world.host.callees.count) started)")
+      _ = await eventually { sent(world.host).last?.countLine == "Created a swarm of 12 bots, 12 done" }
+      let boards = sent(world.host)
+      let lines = boards.map(\.countLine)
+      notes.check(lines.contains("Created a swarm of 12 bots"), "The count line names the real number of bots (\(lines.first ?? "none"))")
+      notes.check(lines.last == "Created a swarm of 12 bots, 12 done", "The count line ends with every bot done (\(lines.last ?? "none"))")
+      let done = boards.map(\.settledBots)
+      notes.check(done == done.sorted() && Set(done).count > 2, "The count line grows as workers finish (\(Set(done).sorted()))")
+      notes.check(boards.last?.finished == true && boards.last?.room.isEmpty == true, "The board finishes with the swarm and leaves the chat to the app")
+    }
+  }
+
+  private static func checkSwarmCommand(_ check: Check) throws {
+    let folder = URL(fileURLWithPath: "/tmp/swarm-command")
+    let top = PeerCaller(thread: ThreadKey("swarm-command"), cli: .codex, access: .project(folder: folder, level: .full))
+    try swarmWorld(check) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "swarm-command", caller: top)
+      let request = PeerSwarmRequest(
+        goal: "Tidy two folders",
+        workers: [
+          PeerSwarmWorker(name: "holder", agent: .opencode, task: "SWARM-HOLD", write: false),
+          PeerSwarmWorker(name: "quick", agent: .codex, task: "Read docs", write: false),
+        ],
+        verifier: nil, rounds: 1)
+      let first = await peers.handle(.swarm(request), task: "swarm-command")
+      notes.check(first.text.contains("still working"), "The swarm keeps running while one worker holds")
+      let working = await eventually { sent(world.host).last?.members["holder"]?.state == .working }
+      notes.check(working, "The held worker shows as working on the board")
+      guard let bid = sent(world.host).last?.id else { return notes.check(false, "Peers sent a board") }
+      let delivery = await peers.command(board: bid, member: "holder", words: "Skip the tests folder")
+      notes.check(delivery == .steered, "The person's words steer the running worker (\(delivery))")
+      notes.check(SwarmSteers.shared.all.contains("Skip the tests folder"), "The words reach the worker's live seat, with no card")
+      _ = await eventually { sent(world.host).last?.members["holder"]?.state == .done }
+      let board = sent(world.host).last
+      let said = board?.posts.first { $0.author == "you" }
+      notes.check(said?.text == "@holder Skip the tests folder" && said?.mentions == ["holder"], "The person's words show on the board, aimed at the worker")
+      let answer = board?.posts.last { $0.author == "holder" }
+      notes.check(answer?.text.contains("steered: Skip the tests folder") == true && (said?.seq ?? .max) < (answer?.seq ?? 0),
+        "The worker's report comes after the person's words")
+      notes.check(board?.members["holder"]?.state == .done, "The steered worker finishes as done")
+      let lead = await peers.command(board: bid, member: "coordinator", words: "Hurry")
+      notes.check(lead == .lead, "Words to the lead go back to the chat's own run")
+      _ = await peers.handle(.stop(run: nil), task: "swarm-command")
+    }
+  }
+
+  private static func checkSwarmBoardReload(_ check: Check) throws {
+    let base = Date(timeIntervalSince1970: 1_800_000_000)
+    var board = SwarmBoard(id: "reload-1", room: "thread-reload", goal: "Ship the board")
+    board.register(name: "coordinator", role: .coordinator, workspace: .inherit, at: base)
+    for name in ["ui", "store", "docs"] {
+      board.register(name: name, role: .worker, workspace: .worktree, parent: "coordinator", agent: "codex", task: "Slice \(name)", at: base)
+    }
+    board.register(name: "ui-claude", role: .helper, workspace: .inherit, parent: "ui", agent: "claude", at: base)
+    board.register(name: "ui-claude-grok", role: .helper, workspace: .inherit, parent: "ui-claude", agent: "grok", at: base)
+    let texts = ["@ui Goal: Ship\nYour slice: Slice ui", "@store Goal: Ship\nYour slice: Slice store", "@ui-claude Check the colors",
+      "@ui [done] colors fine, see #3", "@coordinator [done] ui finished, see #4"]
+    for (i, text) in texts.enumerated() {
+      board.post(author: i < 2 ? "coordinator" : i == 2 ? "ui" : i == 3 ? "ui-claude" : "ui", text: text, at: base.addingTimeInterval(Double(i)))
+    }
+    board.setState("store", to: .working)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("swarm-reload-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let library = try Library(root: root)
+    try MainActor.assumeIsolated {
+      SwarmBoards().save(board, in: library)
+      let loaded = SwarmBoards().board(board.link, library: library)
+      try check(loaded != nil, "A swarm board saved in its chat reads back after a relaunch")
+      try check(loaded?.posts.map(\.seq) == [1, 2, 3, 4, 5] && loaded?.posts.map(\.text) == texts, "The board keeps every message in order across a reload")
+      let tree = loaded.map(SwarmBoardPage.rows)?.map { "\(String(repeating: " ", count: $0.depth))\($0.member.name)" }
+      try check(tree == ["coordinator", " ui", "  ui-claude", "   ui-claude-grok", " store", " docs"], "The board keeps the start tree, nested helpers included (\(tree ?? []))")
+      try check(loaded?.members["store"]?.state == .stopped, "A bot that was working before a relaunch shows as stopped")
+      try check(loaded?.countLine == "Created a swarm of 5 bots, 5 done", "The saved count line counts every bot (\(loaded?.countLine ?? "none"))")
+    }
+  }
+
+  private static func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
+    for _ in 0..<600 {
+      if await condition() { return true }
+      try? await Task.sleep(for: .milliseconds(5))
+    }
+    return false
   }
 
   // MARK: - GenericACPDriver, ACPSession steer, warmTags & loopback
@@ -484,9 +556,9 @@ private final class SwarmSession: EngineSession, @unchecked Sendable {
       return
     }
     let reply: String
-    if asked.contains("You are the read-only verifier") {
+    if asked.contains("the read-only verifier") {
       reply = asked.contains("round 2") ? "\(PeerTools.approved) verified all slices." : "NEEDS FIX: @w1 missing edge test"
-    } else if asked.contains("Revise your slice") {
+    } else if asked.contains("Fix your slice") {
       reply = "revised slice for \(cli.rawValue)"
     } else {
       reply = "completed slice by \(cli.rawValue)"
@@ -495,6 +567,21 @@ private final class SwarmSession: EngineSession, @unchecked Sendable {
     continuation.yield(.turnDone(.endTurn))
   }
 
-  func steer(_ text: String) async -> SteerOutcome { .steered }
+  /// Takes the words and ends the turn with them, so a held worker reports what it was told.
+  func steer(_ text: String) async -> SteerOutcome {
+    SwarmSteers.shared.add(text)
+    continuation.yield(.text("steered: \(text)"))
+    continuation.yield(.turnDone(.endTurn))
+    return .steered
+  }
+}
+
+/// Every steer a fake swarm CLI took.
+private final class SwarmSteers: @unchecked Sendable {
+  static let shared = SwarmSteers()
+  private let lock = NSLock()
+  private var items: [String] = []
+  var all: [String] { lock.withLock { items } }
+  func add(_ text: String) { lock.withLock { items.append(text) } }
 }
 #endif

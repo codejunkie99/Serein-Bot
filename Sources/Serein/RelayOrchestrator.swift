@@ -2058,7 +2058,10 @@ import SereinCore
     turnTry = nil
     personTurn = byPerson
     personWords = byPerson ? (request?.message.text ?? prompt) : nil
-    if byPerson, let personWords { lastRequest[threadID] = personWords }
+    if byPerson, let personWords {
+      lastRequest[threadID] = personWords
+      PersonSaid.shared.said(personWords, site: page.flatMap { URL(string: $0.url)?.host }, thread: threadID)
+    }
     // Receipts, lines and the plan card are this turn's from here on (RelayAssistantTools.swift).
     desk.facts[threadID] = nil
     desk.plans[threadID] = nil
@@ -2357,6 +2360,12 @@ import SereinCore
         noteReplyLanded(profileID: target, thread: run.spec.threadID)
       }
       return
+    }
+    // The person stopped a turn of the chat's own, not for a new message: what it handed on stops too.
+    if run.spec.relay, run.spec.initiator == .relay, run.record.outcome == .stopped,
+      !(redirecting && run.spec.threadID == threadID)
+    {
+      stopHandedOn(run)
     }
     // A scheduled turn that ran in its owner's own chat (`drainScheduled`).
     if let owner = ownerRun, owner.thread == run.spec.threadID, run.spec.relay {

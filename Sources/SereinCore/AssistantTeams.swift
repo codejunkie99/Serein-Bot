@@ -240,7 +240,6 @@ public struct AssistantGroup: Codable, Equatable, Identifiable, Sendable {
   public var leadID: String?
 
   public static let nameLimit = 40
-  public static let maxMembers = 8
 
   public init(id: String = UUID().uuidString, name: String, memberIDs: [String], leadID: String? = nil) {
     self.id = id
@@ -389,13 +388,13 @@ extension RelayTeam {
     profiles.filter { $0.id != id && (teams.isEmpty || sharedGroup(id, $0.id) != nil) }
   }
 
-  /// A new team. nil when its name is empty, too long or taken, or its members are not 1 to 8
-  /// distinct assistants of this roster, or its lead is not one of them.
+  /// A new team, of any size. nil when its name is empty, too long or taken, or its members are not
+  /// one or more distinct assistants of this roster, or its lead is not one of them.
   public func addingGroup(_ group: AssistantGroup) -> RelayTeam? {
     let name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, name.count <= AssistantGroup.nameLimit,
       !teams.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
-      (1...AssistantGroup.maxMembers).contains(group.memberIDs.count), Set(group.memberIDs).count == group.memberIDs.count,
+      !group.memberIDs.isEmpty, Set(group.memberIDs).count == group.memberIDs.count,
       group.memberIDs.allSatisfy({ id in profiles.contains { $0.id == id } }),
       group.leadID.map({ group.memberIDs.contains($0) }) ?? true
     else { return nil }
@@ -415,9 +414,8 @@ extension RelayTeam {
 
   /// A proposed team made real after "Create team": each member a new assistant with its scope and
   /// the next free colour, and one team with its lead. nil when the roster changed so that it no
-  /// longer fits (a name taken, too many assistants, the team's name taken).
+  /// longer fits (a name taken, the team's name taken).
   public func addingTeam(_ proposal: TeamProposal) -> (team: RelayTeam, created: [RelayProfile])? {
-    guard profiles.count + proposal.members.count <= Self.maxProfiles else { return nil }
     var team = self
     var created: [RelayProfile] = []
     for member in proposal.members {
@@ -498,7 +496,7 @@ public struct TeamProposal: Equatable, Sendable {
     public var neverSites: [String] = []
     /// Its icon: an emoji or a symbol from an imported file, never a picture (`AssistantIcon.shareable`).
     public var icon: AssistantIcon?
-    /// Its job on the team ("researcher"), which `AutoTeamPolicy` requires once per root task.
+    /// Its job on the team ("researcher").
     public var role: String
     public init(name: String, persona: String, places: Set<AssistantPlace>, dropped: [String], instructions: String,
                 neverSites: [String] = [], icon: AssistantIcon? = nil, role: String = "") {
@@ -524,12 +522,8 @@ public struct TeamProposal: Equatable, Sendable {
   public static let personaLimit = 160
 
   /// Reads the tool's arguments. Limits refuse rather than cut: a name, persona or instructions
-  /// that is too long, a name already on the roster, or a team too big is an error that says so.
-  /// `keepTaken`: a member named like an assistant on the roster stays in, so `AutoTeams.admit`
-  /// refuses that member alone, with its reason.
-  public static func parse(
-    _ a: [String: Any], person: Set<AssistantPlace>, team: RelayTeam, keepTaken: Bool = false
-  ) throws -> TeamProposal {
+  /// that is too long, a name already on the roster, or no member at all is an error that says so.
+  public static func parse(_ a: [String: Any], person: Set<AssistantPlace>, team: RelayTeam) throws -> TeamProposal {
     let name = (a["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, name.count <= AssistantGroup.nameLimit else {
       throw SereinError.invalid("name is the team's name, 1 to \(AssistantGroup.nameLimit) characters.")
@@ -539,13 +533,7 @@ public struct TeamProposal: Equatable, Sendable {
       throw SereinError.invalid("The person already has a team called that. Choose another name.")
     }
     let raw = a["members"] as? [[String: Any]] ?? []
-    guard (1...AssistantGroup.maxMembers).contains(raw.count) else {
-      throw SereinError.invalid("members lists 1 to \(AssistantGroup.maxMembers) assistants.")
-    }
-    guard team.profiles.count + raw.count <= RelayTeam.maxProfiles else {
-      throw SereinError.invalid(
-        "The person has \(team.profiles.count) assistants and the most is \(RelayTeam.maxProfiles). Propose at most \(RelayTeam.maxProfiles - team.profiles.count).")
-    }
+    guard !raw.isEmpty else { throw SereinError.invalid("members lists at least one assistant.") }
     var members: [Member] = []
     for entry in raw {
       let memberName = (entry["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -553,7 +541,7 @@ public struct TeamProposal: Equatable, Sendable {
         throw SereinError.invalid("Each member needs a name of 1 to 40 characters.")
       }
       guard oneLine(memberName) else { throw SereinError.invalid(oneLineRefusal) }
-      guard keepTaken || team.profile(named: memberName) == nil,
+      guard team.profile(named: memberName) == nil,
         !members.contains(where: { $0.name.caseInsensitiveCompare(memberName) == .orderedSame })
       else { throw SereinError.invalid("\(memberName) is already an assistant's name. Give each new member its own name.") }
       let persona = (entry["persona"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -734,17 +722,11 @@ public struct AssistantHandoff: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-/// The hand-offs and their counters, saved in relay/handoffs.json (0600) so a relaunch never
-/// resets a limit. Limits refuse with a reason; they never cut a task short.
+/// The hand-offs, saved in relay/handoffs.json (0600). Its rules refuse with a reason; they never
+/// cut a task short. A file from before keeps a `daily` counter, which decoding ignores.
 public struct HandoffLedger: Codable, Equatable, Sendable {
   public var records: [AssistantHandoff]
-  /// Hand-offs taken per reader per day, keyed "assistant id|yyyy-MM-dd". Keys from before were a
-  /// team id, which no assistant shares, so they only age out.
-  public var daily: [String: Int]
 
-  public static let maxOpenPerAssistant = 3
-  /// Hand-offs one assistant may be sent in a day, from anyone.
-  public static let maxPerReaderPerDay = 20
   public static let queueExpiry: TimeInterval = 24 * 60 * 60
   public static let stallAfter: TimeInterval = 30 * 60
   /// Closed hand-offs kept for the status lines; open ones are always kept.
@@ -752,17 +734,14 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
   public static let taskLimit = 2_000
   /// The most of a closed hand-off's result kept, and of a side seat's answer posted.
   public static let resultLimit = 4_000
-  /// The most assistants one task passes through, its first sender included.
+  /// The most assistants one task passes through, its first sender included: the recursion
+  /// depth. It is the only bound on a task's hand-offs; how many run at once is paced by memory
+  /// (`EngineRoom`) and the provider's quota, never by a count.
   public static let maxChain = 4
-  /// The most hand-offs that share one root, the root included.
-  public static let maxPerRoot = 8
 
-  public init(records: [AssistantHandoff] = [], daily: [String: Int] = [:]) {
+  public init(records: [AssistantHandoff] = []) {
     self.records = records
-    self.daily = daily
   }
-
-  static func key(_ reader: String, _ now: Date) -> String { reader + "|" + RelayProactive.dayKey(now) }
 
   /// The open hand-off whose target works in `thread`, if any.
   public func open(thread: String) -> AssistantHandoff? {
@@ -796,8 +775,8 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     }
   }
 
-  /// Why `parent`'s target (`fromName`) cannot hand part of its task to `to`, or nil: no loop, at
-  /// most `maxChain` assistants on one task, at most `maxPerRoot` hand-offs under one root.
+  /// Why `parent`'s target (`fromName`) cannot hand part of its task to `to`, or nil: no loop, no
+  /// wait cycle, at most `maxChain` assistants on one task.
   public func chainRefusal(parent: AssistantHandoff, fromName: String, to: String, toName: String) -> String? {
     if parent.holders.contains(to) {
       return "\(toName) already holds this task further up the chain, so it can't go back there. Reply with what you have instead."
@@ -808,31 +787,20 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     if parent.holders.count >= Self.maxChain {
       return "This task has already passed through \(Self.maxChain) assistants, the most for one task. Finish it yourself, or reply with what you have."
     }
-    let root = parent.rootID ?? parent.id
-    if records.filter({ $0.id == root || $0.rootID == root }).count >= Self.maxPerRoot {
-      return "This task has been handed on \(Self.maxPerRoot) times, the most for one task. Finish it yourself, or reply with what you have."
-    }
     return nil
   }
-
-  /// Why a new hand-off from `from` to `to` cannot be sent now, or nil. The day's cap is the
-  /// reader's: hand-offs no longer need a shared team, and a root already stops at `maxPerRoot`,
-  /// so the one flood left to bound is many tasks into one assistant. `to` is "" for an assistant
-  /// not made yet, which has had nothing.
-  public func refusal(from: String, fromName: String, to: String, toName: String, now: Date) -> String? {
-    // A side seat is the person's message, not a hand-off the assistant sent.
-    if records.filter({ $0.from == from && $0.isOpen && $0.side == nil }).count >= Self.maxOpenPerAssistant {
-      return "\(fromName) already has \(Self.maxOpenPerAssistant) hand-offs open. Wait for one to finish, or do this part yourself."
-    }
-    if !to.isEmpty, (daily[Self.key(to, now)] ?? 0) >= Self.maxPerReaderPerDay {
-      return "\(toName) has been handed \(Self.maxPerReaderPerDay) tasks today, the most in a day. Hand this to another assistant, or do this part yourself."
-    }
-    return nil
+  /// What a turn in `thread` that started at `since` handed on and is still open, at every depth:
+  /// the roots it sent from that chat and everything under them. A side seat answers another
+  /// message of the person's, so it is never one of them.
+  public func handedOn(from thread: String, since: Date) -> Set<AssistantHandoff.ID> {
+    let roots = Set(records.filter {
+      $0.parentID == nil && $0.askedIn == thread && $0.createdAt >= since && $0.side != .busy && $0.side != .background
+    }.map(\.id))
+    return Set(records.filter { $0.isOpen && roots.contains($0.rootID ?? $0.id) }.map(\.id))
   }
-  /// A hand-off: recorded and counted toward its reader's day. A side seat is recorded only.
+  /// A hand-off, recorded.
   public mutating func admit(_ handoff: AssistantHandoff, now: Date) {
     records.append(handoff)
-    if handoff.side == nil { daily[Self.key(handoff.to, now), default: 0] += 1 }
     trim(now: now)
   }
   /// Hand-offs that waited in the queue longer than a day expire; returns them, each once.
@@ -888,137 +856,11 @@ public struct HandoffLedger: Codable, Equatable, Sendable {
     return records[i]
   }
   /// Open hand-offs kept whole, and every closed one of a task that still has one open (its
-  /// count is the limit per root, and its result may be owed to its parent); then the newest
-  /// closed ones. Counters only for today.
+  /// result may be owed to its parent); then the newest closed ones.
   public mutating func trim(now: Date) {
     let live = Set(records.filter(\.isOpen).map { $0.rootID ?? $0.id })
     let closed = records.filter { !$0.isOpen && !live.contains($0.rootID ?? $0.id) }.suffix(Self.kept)
     let keep = Set(closed.map(\.id))
     records = records.filter { live.contains($0.rootID ?? $0.id) || keep.contains($0.id) }
-    let today = "|" + RelayProactive.dayKey(now)
-    daily = daily.filter { $0.key.hasSuffix(today) }
-  }
-}
-
-/// Teammates assistants made on their own (team_propose), with no card: who made each and the
-/// root task it serves, so the end of that task stops them and everything under it. A root task
-/// is a Serein turn that made a team, and it lives on through the hand-off chains that turn
-/// sent.
-// shortcut: kept in memory, so a hand-off still queued at a relaunch loses its root task and no
-// cascade reaches it; save it beside relay/handoffs.json if queued work must cascade after one.
-public struct AutoTeams: Equatable, Sendable {
-  public private(set) var bots: [AutoTeamPolicy.BotRecord] = []
-  /// The root task of each hand-off chain a root task's turn sent, by the chain's first hand-off.
-  public private(set) var chains: [String: String] = [:]
-  /// The root task of the Serein turn running now, once it made a team.
-  public private(set) var turn: String?
-
-  public init() {}
-
-  public struct Rejection: Equatable, Sendable {
-    public var member: String
-    public var reason: String
-  }
-  public struct Admission: Equatable, Sendable {
-    /// Only the admitted members, in order; the lead is dropped when it was refused.
-    public var proposal: TeamProposal
-    public var records: [AutoTeamPolicy.BotRecord]
-    public var rejected: [Rejection]
-  }
-  /// What ending root tasks stops: their open hand-offs, and the teammates made for them whose
-  /// chat no other task holds.
-  public struct Stop: Equatable, Sendable {
-    public var teammates: [String] = []
-    public var handoffs: [String] = []
-    public var isEmpty: Bool { teammates.isEmpty && handoffs.isEmpty }
-  }
-
-  /// The running turn's root task, made the first time it is asked for.
-  public mutating func turnRoot() -> String {
-    if let turn { return turn }
-    let root = UUID().uuidString
-    turn = root
-    return root
-  }
-  /// The root task `handoff` belongs to: the one whose turn sent its chain, else its chain's root.
-  public func root(of handoff: AssistantHandoff) -> String {
-    let chain = handoff.rootID ?? handoff.id
-    return chains[chain] ?? chain
-  }
-  /// A chain the running turn sent belongs to that turn's root task.
-  public mutating func link(chain: String) {
-    if let turn { chains[chain] = turn }
-  }
-
-  /// Every member through `AutoTeamPolicy.admit`: a role, `createdBy`, no member already in the
-  /// active chain, one teammate per role per root task. A member named like an assistant on the
-  /// roster is refused too: a team only ever gets new assistants.
-  public func admit(
-    _ proposal: TeamProposal, roster: RelayTeam, createdBy: String, root: String, activeChain: [String]
-  ) -> Admission {
-    var kept: [TeamProposal.Member] = []
-    var records: [AutoTeamPolicy.BotRecord] = []
-    var rejected: [Rejection] = []
-    for member in proposal.members {
-      let existing = roster.profile(named: member.name)
-      let decision = AutoTeamPolicy.admit(
-        id: existing?.id ?? UUID().uuidString, role: member.role, createdBy: createdBy, parentTaskID: root,
-        existing: bots + records, activeChain: activeChain)
-      switch decision {
-      case .reject(let reason):
-        rejected.append(Rejection(member: member.name, reason: reason))
-      case .admit where existing != nil:
-        rejected.append(Rejection(
-          member: member.name, reason: "\(member.name) is already an assistant's name. Give each new member its own name."))
-      case .admit(let record):
-        kept.append(member)
-        records.append(record)
-      }
-    }
-    var admitted = proposal
-    admitted.members = kept
-    if let lead = proposal.lead, !kept.contains(where: { $0.name.caseInsensitiveCompare(lead) == .orderedSame }) {
-      admitted.lead = nil
-    }
-    return Admission(proposal: admitted, records: records, rejected: rejected)
-  }
-  /// The admitted members are on the roster now as `created`, in the same order.
-  public mutating func seat(_ admission: Admission, created: [RelayProfile]) {
-    for (record, profile) in zip(admission.records, created) {
-      var seated = record
-      seated.id = profile.id
-      bots.append(seated)
-    }
-  }
-
-  /// The running turn ended. Stopped or failed, its root task ends now; otherwise it lives on
-  /// while a hand-off it sent is open.
-  public mutating func turnEnded(cancelled: Bool, handoffs: [AssistantHandoff]) -> Stop {
-    guard let root = turn else { return Stop() }
-    turn = nil
-    return cancelled ? end([root], handoffs) : settle(handoffs)
-  }
-  /// Ends every root task whose turn is over and that has no hand-off open. Safe to call after
-  /// any change: a second call finds nothing left.
-  public mutating func settle(_ handoffs: [AssistantHandoff]) -> Stop {
-    let open = Set(handoffs.filter(\.isOpen).map { root(of: $0) })
-    let done = Set(bots.map(\.parentTaskID)).subtracting(open).subtracting([turn].compactMap { $0 })
-    return end(done, handoffs)
-  }
-  /// Stop Everything: every root task ends now.
-  public mutating func stopAll(_ handoffs: [AssistantHandoff]) -> Stop {
-    let roots = Set(bots.map(\.parentTaskID) + chains.values + [turn].compactMap { $0 })
-    turn = nil
-    return end(roots, handoffs)
-  }
-  private mutating func end(_ roots: Set<String>, _ handoffs: [AssistantHandoff]) -> Stop {
-    guard !roots.isEmpty else { return Stop() }
-    let under = handoffs.filter { $0.isOpen && roots.contains(root(of: $0)) }
-    // A teammate whose chat another task's hand-off holds keeps working on that one.
-    let busy = Set(handoffs.filter { $0.isOpen && !roots.contains(root(of: $0)) }.map(\.to))
-    let mates = bots.filter { roots.contains($0.parentTaskID) && !busy.contains($0.id) }.map(\.id)
-    bots.removeAll { roots.contains($0.parentTaskID) }
-    chains = chains.filter { !roots.contains($0.value) }
-    return Stop(teammates: mates, handoffs: under.map(\.id))
   }
 }

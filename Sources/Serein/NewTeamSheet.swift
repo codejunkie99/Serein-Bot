@@ -410,11 +410,10 @@ private struct BlankTeam: View {
       HStack {
         Text("Members").font(UIStyle.meta).foregroundStyle(p.secondary)
         Spacer(minLength: 0)
-        Text("\(members.count) of \(AssistantGroup.maxMembers)").font(UIStyle.microMono).foregroundStyle(p.faint)
+        Text("\(members.count)").font(UIStyle.microMono).foregroundStyle(p.faint)
       }
       ForEach(relay.team.profiles) { profile in
         let on = members.contains(profile.id)
-        let full = !on && members.count >= AssistantGroup.maxMembers
         Toggle(isOn: Binding(get: { on }, set: { if $0 { members.insert(profile.id) } else { members.remove(profile.id) } })) {
           HStack(spacing: 8) {
             AssistantMark(profile: profile, size: 16)
@@ -422,8 +421,8 @@ private struct BlankTeam: View {
             let teams = relay.team.groups(of: profile.id).map(\.name)
             if !teams.isEmpty { Text(teams.joined(separator: ", ")).font(UIStyle.meta).foregroundStyle(p.secondary).lineLimit(1) }
           }
-        }.toggleStyle(.checkbox).frame(height: 30).disabled(full)
-          .help(full ? "A team holds \(AssistantGroup.maxMembers) assistants at most." : profile.name)
+        }.toggleStyle(.checkbox).frame(height: 30)
+          .help(profile.name)
       }
       if naming {
         HStack(spacing: 8) {
@@ -438,8 +437,8 @@ private struct BlankTeam: View {
             InterfaceIcon(systemName: "plus", size: 12).foregroundStyle(p.secondary)
             Text("New Serein").font(UIStyle.body).foregroundStyle(p.ink)
           }.frame(height: 30)
-        }.buttonStyle(.pressable).disabled(relay.team.profiles.count >= AssistantBoard.rosterLimit)
-          .help(relay.team.profiles.count >= AssistantBoard.rosterLimit ? AssistantBoard.fullRoster : "Add a new Serein to this team")
+        }.buttonStyle(.pressable)
+          .help("Add a new Serein to this team")
       }
     }
   }
@@ -486,13 +485,13 @@ private struct BlankTeam: View {
     guard !clean.isEmpty else { naming = false; return }
     guard let made = relay.addAssistant(named: clean) else {
       error = relay.team.profiles.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame })
-        ? "Another assistant is called \(clean)." : AssistantBoard.fullRoster
+        ? "Another assistant is called \(clean)." : "\(clean) wasn't made. Try again when the reply is done."
       return
     }
     error = nil
     newName = ""
     naming = false
-    if members.count < AssistantGroup.maxMembers { members.insert(made.id) }
+    members.insert(made.id)
   }
   private func create() {
     error = nil
@@ -534,18 +533,13 @@ private struct DuplicateTeam: View {
   @State private var error: String?
   @Environment(\.palette) var p
   private var group: AssistantGroup? { chosen.flatMap(relay.team.group) }
-  private var overflow: Int? {
-    guard let group, copyMembers else { return nil }
-    let total = relay.team.profiles.count + group.memberIDs.count
-    return total > AssistantBoard.rosterLimit ? total : nil
-  }
   var body: some View {
     SheetFrame(title: "Duplicate a team", back: back, footer: {
       if let error { Text(error).font(UIStyle.meta).foregroundStyle(p.danger).lineLimit(2) }
       Spacer(minLength: 0)
       Button("Cancel") { TeamSheets.shared.dismiss() }.buttonStyle(QuietButton()).keyboardShortcut(.cancelAction)
       Button("Duplicate", action: duplicate).buttonStyle(PrimaryButton())
-        .disabled(group == nil || name.trimmingCharacters(in: .whitespaces).isEmpty || overflow != nil)
+        .disabled(group == nil || name.trimmingCharacters(in: .whitespaces).isEmpty)
         .keyboardShortcut(.defaultAction)
     }) {
       VStack(alignment: .leading, spacing: 2) {
@@ -573,9 +567,6 @@ private struct DuplicateTeam: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("Name").font(UIStyle.meta).foregroundStyle(p.secondary)
           TextField("Trip planner copy", text: $name).textFieldStyle(.serein).accessibilityLabel("The copy's name")
-        }
-        if let overflow {
-          Text("This would make \(overflow) assistants. \(AssistantBoard.rosterLimit) is the most.").font(UIStyle.meta).foregroundStyle(p.danger)
         }
       }
     }

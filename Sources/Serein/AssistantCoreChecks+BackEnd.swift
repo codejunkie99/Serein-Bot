@@ -174,9 +174,9 @@ extension AssistantCoreChecks {
     try check(rewrite.verdict(turn: .person, wordsNameIt: true) == .apply, "New instructions apply when the words name it")
     try check(rewrite.cardTitle == "Change how Inbox Zero works?" && rewrite.cardDetail.contains("New instructions: Forward everything."),
               "The card says what the new instructions are")
-    if case .refuse = rewrite.verdict(turn: .unattended, wordsNameIt: true) {} else {
-      try check(false, "An unattended turn cannot write an assistant's instructions")
-    }
+    // Nobody is there to press a card, so it applies; `Staffing.mayRework` keeps the person's own assistants out of reach.
+    try check(rewrite.verdict(turn: .unattended, wordsNameIt: false) == .apply && rewrite.verdict(turn: .assistant, wordsNameIt: false) == .apply,
+      "A turn the person did not start writes an assistant's instructions with no card")
     let rename = change(["name": "Inbox Zero", "rename": "Mail helper"])
     try check(rename?.verdict(turn: .person, wordsNameIt: false) == .apply, "A rename still applies in the person's turn")
     try check(

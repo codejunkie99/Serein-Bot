@@ -117,6 +117,8 @@ WIRING = {
     "Sources/Serein/AssistantCoreChecks+TurnFrame.swift": {"begin": 2, "end": 2},
     # The side-seat check opens the front turn in the seat's chat and ends it.
     "Sources/Serein/AssistantCoreChecks+GroupTurn.swift": {"begin": 1, "end": 1},
+    # The bots-unbounded check opens a person's and a bot's turn on a real Relay and ends both.
+    "Sources/Serein/AssistantCoreChecks+BotsUnbounded.swift": {"begin": 2, "end": 2},
     # The setting_change check opens a person's and an assistant's turn on a real Relay.
     "Sources/Serein/AssistantCoreChecks+SettingChange.swift": {"begin": 1},
     # The settings-undo machine starts, ends and late-ends turns on both chats.

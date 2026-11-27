@@ -72,7 +72,7 @@ extension AssistantCoreChecks {
     try check(A.decide(.board, turn: .person, wordsNameIt: true) == .apply
               && A.decide(.board, turn: .person, wordsNameIt: false) == .ask,
               "A Board move the person's words name applies; otherwise the person decides on a card")
-    if case .refuse = A.decide(.board, turn: .assistant, wordsNameIt: true) {} else { try check(false, "Another assistant's turn cannot move a card") }
+    try check(A.decide(.board, turn: .assistant, wordsNameIt: false) == .apply, "Another assistant's turn moves a card with no card of its own")
     try check(TypedConsent.names(.board, in: "Move the dentist card to done")
               && TypedConsent.names(.board, in: "mark taxes as finished")
               && !TypedConsent.names(.board, in: "What is on my board?"),

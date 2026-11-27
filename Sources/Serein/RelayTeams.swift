@@ -203,7 +203,7 @@ extension RelayOrchestrator {
     }
     // The tool call runs in the sender's turn: its steps so far are the packet's trail.
     let message = how == .user ? "board-" + record.id : parent == nil ? rootMessage ?? lastPersonMessage(chat) : nil
-    record = pack(record, root: .person(thread: chat, message: message ?? "handoff-" + (record.rootID ?? record.id)),
+    record = pack(record, root: .chat(thread: chat, message: message ?? "handoff-" + (record.rootID ?? record.id)),
                   sender: how == .user ? nil : agent.hub.run(for: chat))
     handoffLedger.admit(record, now: Date())
     saveHandoffs()
@@ -258,17 +258,29 @@ extension RelayOrchestrator {
         closeHandoff(child.id, .failed, result: "The task it was part of ended.", report: false)
       }
     }
-    announceEnd(record, state, result)
+    announceEnd(record, state, result, notice: report)
   }
-  private func announceEnd(_ record: AssistantHandoff, _ state: AssistantHandoff.State, _ result: String?) {
+  /// `notice`: the finish shows a finish notice (SereinCore/FinishNotice.swift), unless the chat
+  /// it answers is on screen; one closed with its parent, or lost to a relaunch, shows none.
+  private func announceEnd(_ record: AssistantHandoff, _ state: AssistantHandoff.State, _ result: String?, notice: Bool) {
     let name = profileName(record.to)
+    var closed = record
+    closed.state = state
+    closed.result = result
+    closed.finishedAt = Date()
+    let origin = originChat(record)
+    let place = record.side == .swarm ? record.route.map { "Seat on " + Self.routeName($0) } : nil
+    let onScreen = NSApp.isActive && threadID == origin && RelayController.chatOnScreen
+    let card = notice && !onScreen
+      ? FinishNotice.handoff(closed, who: name, place: place, opens: origin, at: Date()) : nil
     if state == .done {
       note("\(name) finished the hand-off “\(String(record.task.prefix(60)))”", .auto)
+      if let card { TaskNotifications.shared.post(threadID: origin, title: "\(name) finished", body: card.summary, always: true, notice: card) }
     } else {
       note("The hand-off to \(name) failed", .auto)
       TaskNotifications.shared.post(
         threadID: record.askedIn, title: "\(name) couldn't finish",
-        body: "“\(String(record.task.prefix(80)))”: \(String((result ?? "").prefix(120)))", always: true)
+        body: "“\(String(record.task.prefix(80)))”: \(String((result ?? "").prefix(120)))", always: true, notice: card)
     }
   }
   /// Starts each waiting hand-off whose target chat is idle, oldest first. The target runs with only its own scope, on its own Main chat, as the lower trust
@@ -327,7 +339,7 @@ extension RelayOrchestrator {
   /// What `record`'s seat may use now: its seat's reach (the one its launch gives, before it has
   /// one), never wider than its target's own today.
   func seatReach(_ record: AssistantHandoff, target: RelayProfile) -> Reach {
-    let own = Reach.person(personScope).narrowed(to: target.scope)
+    let own = Reach.ofPerson(personScope).narrowed(to: target.scope)
     guard let id = record.room, let room = rooms.known(id) else { return own }
     let seat = room.seats.first { $0.handoff == record.id } ?? seat(for: record, target: target, in: room)
     return seat.reach.narrowed(to: own.scope)
@@ -348,7 +360,7 @@ extension RelayOrchestrator {
     let thread = record.threadID
     // A row from before rooms, or one a relaunch left waiting: packed now, reusing what it has.
     let packed = results.isEmpty
-      ? pack(record, root: .person(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)), sender: nil) : record
+      ? pack(record, root: .chat(thread: record.askedIn, message: "handoff-" + (record.rootID ?? record.id)), sender: nil) : record
     if packed.room != record.room || packed.packet != record.packet {
       updateHandoff(record.id) {
         $0.room = packed.room
@@ -497,7 +509,7 @@ extension RelayOrchestrator {
     // "@Writer can you…" in its reply tags Writer, whose turn it then waits for (`GroupTurn`).
     // A swarm seat's words never post in the chat.
     if outcome == .done, record.side != .swarm, let target = team.profiles.first(where: { $0.id == record.to }) {
-      channelSay(lastReply, from: target, parent: record, chat: record.threadID, readOutside: !run.steps.isEmpty, addressed: true)
+      channelSay(lastReply, from: target, parent: record, chat: record.threadID, addressed: true)
     }
     // Something its target handed on is still out, or its result has yet to reach this chat: it
     // stays open and ends with the turn those results start (`deliverChainResults`).
@@ -638,19 +650,27 @@ extension RelayOrchestrator {
   }
   /// The kill switch: every hand-off that holds a chat ends, whole chains with it; ones queued on
   /// their own wait.
-  func stopHandoffs() {
+  /// `ids`: only these, as a stopped turn ends what it handed on (`stopHandedOn`); nil, all of
+  /// them, as Stop Everything does.
+  func stopHandoffs(_ ids: Set<AssistantHandoff.ID>? = nil) {
     // The ledger first: a run that ends below finds its hand-off closed, so its end hands no
     // result to a parent and starts nothing that waited (`finishHandoff`).
     let held = Set(handoffLedger.records.filter { $0.state == .running }.map(\.id))
-    let ended = handoffLedger.stop(now: Date())
+    let ended = ids.map { handoffLedger.stop($0, now: Date()) } ?? handoffLedger.stop(now: Date())
     saveHandoffs()
     for record in ended {
       updateHandoff(record.id) { $0.posted = false }
       landReport(record)
       // A part that only waited holds no chat: a run there is not its own.
       if held.contains(record.id), let run = agent.hub.run(for: record.threadID) { agent.hub.stop(run) }
-      announceEnd(record, .failed, record.result)
+      announceEnd(record, .failed, record.result, notice: false)
     }
+  }
+  /// The person stopped the turn `run` in their chat: what it handed on stops with it, at every
+  /// depth, as Stop Everything would stop it (`HandoffLedger.handedOn`).
+  func stopHandedOn(_ run: AgentRun) {
+    let open = handoffLedger.handedOn(from: run.spec.threadID, since: run.record.startedAt)
+    if !open.isEmpty { stopHandoffs(open) }
   }
   /// An assistant was deleted: its hand-offs, to it or from it, end.
   func endHandoffs(involving id: String) {
@@ -743,14 +763,13 @@ extension RelayToolHost {
   static let lowerTrust =
     "Only the person can ask for this. This turn was not started by their message, so nothing was asked or changed."
 
-  /// A `carryOn` or `retryClean` verdict as the tool result: nothing changed, and the sentence the
-  /// model follows. Never a card, never a question for the person.
+  /// A `carryOn` verdict as the tool result: nothing changed, and the sentence the model follows.
+  /// Never a card, never a question for the person.
   static func staffingRefusal(_ verdict: Staffing.Verdict) -> [String: Any] {
     let note = "Nothing changed. Follow these words; do not ask the person."
     switch verdict {
     case .carryOn(let words): return ["carry_on": words, "note": note]
-    case .retryClean(let words): return ["retry_clean": words, "note": note]
-    case .seat, .make, .makeTeam: return ["note": note]
+    case .seat, .make: return ["note": note]
     }
   }
 
@@ -765,17 +784,13 @@ extension RelayToolHost {
     // person's own turn in the same chat starts a task of its own.
     let parent = handoffChat.flatMap { relay.handoffLedger.running(thread: $0) }
     let sender: RelayProfile
-    let readOutside: Bool
-    if let handoffChat {
+    if handoffChat != nil {
       guard let target = team.profiles.first(where: { $0.id == parent?.to }) else {
         throw SereinError.invalid("That hand-off is no longer open, so nothing was handed on.")
       }
       sender = target
-      // A seat run read outside text once any step ran, as `memoryTurn` reads it.
-      readOutside = relay.agent.hub.run(for: handoffChat)?.steps.isEmpty == false
     } else {
       sender = relay.profile(id: frame.profile)
-      readOutside = frame.readOutside
     }
     guard let task = (a["task"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !task.isEmpty else {
       throw SereinError.invalid("task is required: everything the assistant needs, since it does not see this chat.")
@@ -797,7 +812,7 @@ extension RelayToolHost {
       wanted = .teammate(id)
     }
     let chat = parent?.threadID ?? frame.thread
-    let staffed = relay.staff(wanted, sender: sender, parent: parent, chat: chat, readOutside: readOutside)
+    let staffed = relay.staff(wanted, sender: sender, parent: parent, chat: chat)
     let target: RelayProfile
     switch (staffed.verdict, wanted) {
     case (.seat, .teammate(let id)):
@@ -827,7 +842,7 @@ extension RelayToolHost {
   }
 
   /// `team_make {name, members, lead}`: saves a team of assistants already on the roster, with no
-  /// card, once per task (`Staffing.decide`). Its receipt carries Undo.
+  /// card and no count per task, in any turn. Its receipt carries Undo.
   func makeTeam(_ a: [String: Any]) async throws -> [String: Any] {
     let team = relay.team
     let name = (a["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -840,14 +855,10 @@ extension RelayToolHost {
     }
     let members = try (a["members"] as? [String] ?? []).map(id)
     let lead = try (a["lead"] as? String).flatMap { $0.isEmpty ? nil : try id($0) }
-    let sender = relay.profile(id: frame.profile)
-    let staffed = relay.staff(.team, sender: sender, parent: nil, chat: frame.thread, readOutside: frame.readOutside)
-    guard staffed.verdict == .makeTeam else { return Self.staffingRefusal(staffed.verdict) }
     let group = AssistantGroup(name: name, memberIDs: members, leadID: lead)
     guard relay.changeTeam(actor: "relay", "Created team \(name)", { $0.addingGroup(group) }) else {
-      throw SereinError.invalid("Nothing was saved: a team needs a new name of up to \(AssistantGroup.nameLimit) characters, 1 to \(AssistantGroup.maxMembers) different members, and a lead who is one of them.")
+      throw SereinError.invalid("Nothing was saved: a team needs a new name of up to \(AssistantGroup.nameLimit) characters, at least one member, no one twice, and a lead who is one of them.")
     }
-    relay.rooms.update(staffed.room) { $0.recordTeam() }
     let entry: String = relay.teamJournal.last?.id.uuidString ?? UUID().uuidString
     relay.desk.undoActions[entry] = .team
     let names = members.map(relay.profileName)

@@ -18,22 +18,26 @@ extension RelayOrchestrator {
 
   /// The person's plain message to this chat while its turn is busy: in the chat now, answered
   /// by a side seat of this chat's assistant, or, with every seat taken, a line saying it runs
-  /// when one frees.
-  func startSideSeat(_ text: String) {
-    let chat = threadID
-    let me = profile(id: team.activeID)
+  /// when one frees. A reply from a finish notice names its chat, assistant and model, and its
+  /// `task` carries what the seat answered before (FinishNoticePanel.swift).
+  @discardableResult
+  func startSideSeat(_ text: String, in chat: String? = nil, as assistant: String? = nil, route: AssistantRoute? = nil,
+                     task: String? = nil) -> AssistantHandoff {
+    let chat = chat ?? threadID
+    let me = profile(id: assistant ?? team.activeID)
     let bubble = AgentMessage(role: "you", text: text)
     deliverAnswer(bubble, into: chat)
     let record = sendHandoff(
-      from: me, to: me, task: String(text.prefix(HandoffLedger.taskLimit)), team: "", teamName: "All assistants", how: .auto,
-      mention: .byPerson(message: bubble.id), rootMessage: bubble.id, side: .busy, chat: chat)
-    guard record.state == .waiting, !handoffsStarting.contains(record.threadID) else { return }
+      from: me, to: me, task: String((task ?? text).prefix(HandoffLedger.taskLimit)), team: "", teamName: "All assistants",
+      how: .auto, mention: .byPerson(message: bubble.id), rootMessage: bubble.id, side: .busy, route: route, chat: chat)
+    guard record.state == .waiting, !handoffsStarting.contains(record.threadID) else { return record }
     var line = AgentMessage(role: "assistant", text: "", notice: true)
     line.id = "side-wait-" + record.id
     line.from = me.id
     line.re = bubble.id
     line.line = SideSeat.fullLine
     channelPost(line, into: chat)
+    return record
   }
 
   /// From the sweep: the person's own turn on screen past the limit moves to the background.

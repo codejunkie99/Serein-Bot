@@ -53,9 +53,9 @@ extension AssistantCoreChecks {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("serein-seat-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     let at = Date(timeIntervalSince1970: 1_800_000_000)
-    let root = Workroom.Root.person(thread: "chat", message: "m1")
+    let root = Workroom.Root.chat(thread: "chat", message: "m1")
     func lead() -> Workroom {
-      Workroom(root: root, lead: "serein", thread: "chat", reach: .person(AssistantScope(destinations: [.answer])), now: at)
+      Workroom(root: root, lead: "serein", thread: "chat", reach: .ofPerson(AssistantScope(destinations: [.answer])), now: at)
     }
     let rooms = Rooms(folder: folder)
     let id = rooms.open(root, make: lead)

@@ -22,7 +22,7 @@ extension RelayOrchestrator {
     var bubble = AgentMessage(role: "you", text: text)
     bubble.mentions = speakers
     deliverAnswer(bubble, into: threadID)
-    let refused = tag(speakers, task: text, from: profile(id: team.activeID), parent: nil, chat: threadID, readOutside: false,
+    let refused = tag(speakers, task: text, from: profile(id: team.activeID), parent: nil, chat: threadID,
                       mention: .byPerson(message: bubble.id), rootMessage: bubble.id).refused
     for (id, words) in refused {
       var line = AgentMessage(role: "assistant", text: "", notice: true)
@@ -37,10 +37,10 @@ extension RelayOrchestrator {
   /// Each assistant in `speakers` takes a turn on `task`, as a hand-off from `sender` that answers
   /// `mention`. Never `sender` itself, nor, for an assistant's tag, one already working on a tag
   /// from `sender` here (its reply naming who it asked again); anyone
-  /// `Staffing.decide` refuses (chain, depth, per-task and open caps) is returned with its words.
+  /// `Staffing.decide` refuses (a loop or the chain depth) is returned with its words.
   @discardableResult
   func tag(_ speakers: [String], task: String, from sender: RelayProfile, parent: AssistantHandoff?, chat: String,
-           readOutside: Bool, mention: AssistantHandoff.Mention, rootMessage: String? = nil)
+           mention: AssistantHandoff.Mention, rootMessage: String? = nil)
     -> (seated: [String], refused: [(id: String, words: String)])
   {
     var seated: [String] = []
@@ -51,15 +51,15 @@ extension RelayOrchestrator {
       guard byPerson || !handoffLedger.records.contains(where: {
         $0.isOpen && $0.mention != nil && $0.from == sender.id && $0.to == id && $0.parentID == parent?.id && $0.askedIn == asked
       }) else { continue }
-      let staffed = staff(.teammate(id), sender: sender, parent: parent, chat: chat, readOutside: readOutside, message: rootMessage)
+      let staffed = staff(.teammate(id), sender: sender, parent: parent, chat: chat, message: rootMessage)
       switch staffed.verdict {
       case .seat:
         _ = sendHandoff(from: sender, to: profile(id: id), task: String(task.prefix(HandoffLedger.taskLimit)), team: "",
                         teamName: "All assistants", parent: parent, room: staffed.room, how: .auto, mention: mention,
                         rootMessage: rootMessage)
         seated.append(id)
-      case .carryOn(let words), .retryClean(let words): refused.append((id, words))
-      case .make, .makeTeam: refused.append((id, "That assistant can't take a turn now."))
+      case .carryOn(let words): refused.append((id, words))
+      case .make: refused.append((id, "That assistant can't take a turn now."))
       }
     }
     return (seated, refused)
@@ -70,13 +70,13 @@ extension RelayOrchestrator {
   /// turns. `addressed`: words from a reply, where only a tag with words after it counts, and
   /// nothing posts unless someone was tagged (its report is its post).
   @discardableResult
-  func channelSay(_ text: String, from sender: RelayProfile, parent: AssistantHandoff?, chat: String, readOutside: Bool,
+  func channelSay(_ text: String, from sender: RelayProfile, parent: AssistantHandoff?, chat: String,
                   addressed: Bool = false) -> (post: String, seated: [String], refused: [(id: String, words: String)])
   {
     let speakers = GroupTurn.speakers(of: text, in: team, addressed: addressed)
     if addressed && speakers.isEmpty { return ("", [], []) }
     let id = "channel-say-" + UUID().uuidString
-    let turns = tag(speakers, task: text, from: sender, parent: parent, chat: chat, readOutside: readOutside, mention: .byBot(post: id))
+    let turns = tag(speakers, task: text, from: sender, parent: parent, chat: chat, mention: .byBot(post: id))
     if addressed && turns.seated.isEmpty { return ("", [], turns.refused) }
     let origin = parent.map(originChat) ?? chat
     var post = AgentMessage(role: "assistant", text: "", notice: true)
@@ -104,7 +104,7 @@ extension RelayOrchestrator {
     let sender = profile(id: team.activeID)
     let speakers = GroupTurn.speakers(of: reply.text, in: team, addressed: true)
     guard !speakers.isEmpty else { return }
-    let seated = tag(speakers, task: reply.text, from: sender, parent: nil, chat: run.spec.threadID, readOutside: false,
+    let seated = tag(speakers, task: reply.text, from: sender, parent: nil, chat: run.spec.threadID,
                      mention: .byBot(post: reply.id)).seated
     guard !seated.isEmpty else { return }
     agent.amendThread(run.spec.threadID) { messages in
@@ -121,21 +121,18 @@ extension RelayToolHost {
   func channelSay(_ a: [String: Any], handoffChat: String? = nil) async throws -> [String: Any] {
     let parent = handoffChat.flatMap { relay.handoffLedger.running(thread: $0) }
     let sender: RelayProfile
-    let readOutside: Bool
-    if let handoffChat {
+    if handoffChat != nil {
       guard let target = relay.team.profiles.first(where: { $0.id == parent?.to }) else {
         throw SereinError.invalid("That hand-off is no longer open, so nothing was posted.")
       }
       sender = target
-      readOutside = relay.agent.hub.run(for: handoffChat)?.steps.isEmpty == false
     } else {
       sender = relay.profile(id: frame.profile)
-      readOutside = frame.readOutside
     }
     guard let text = (a["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
       throw SereinError.invalid("text is required: the message to post.")
     }
-    let said = relay.channelSay(text, from: sender, parent: parent, chat: parent?.threadID ?? frame.thread, readOutside: readOutside)
+    let said = relay.channelSay(text, from: sender, parent: parent, chat: parent?.threadID ?? frame.thread)
     var out: [String: Any] = ["posted": said.post, "tagged": said.seated.map(relay.profileName)]
     if !said.refused.isEmpty {
       out["not_tagged"] = Dictionary(said.refused.map { (relay.profileName($0.id), $0.words) }, uniquingKeysWith: { a, _ in a })

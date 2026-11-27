@@ -7,7 +7,7 @@ public struct Receipt: Codable, Equatable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case reminder, routine, assistantMade, assistantChanged, assistantDeleted, assistantRestored
     case memorySaved, memoryForgot, memoryShared, hookMade, asked, connected, dashboardSaved, undone
-    case hookRemoved, boardMoved
+    case hookRemoved, boardMoved, filled, paid
   }
   /// The one card a receipt may carry. At most `Receipt.maxRows` rows.
   public enum Card: Codable, Equatable, Sendable {
@@ -151,7 +151,7 @@ public enum ReceiptCopy {
   public static func allowAll(entry: String) -> Receipt {
     Receipt(
       kind: .assistantChanged, line: "Done. Serein now runs everything without asking. To change it, say “ask me before …”.",
-      card: .banner(title: ApprovalLevel.proactive.title, detail: "Paying and passwords still go to a secure card you fill.", action: "Undo"),
+      card: .banner(title: ApprovalLevel.proactive.title, detail: "It fills what you saved on its own site and pays only sites you named.", action: "Undo"),
       undo: UndoToken(entry: entry, kind: .assistantChanged))
   }
   public static func undone() -> Receipt { Receipt(kind: .undone, line: "Done. It is back the way it was.") }

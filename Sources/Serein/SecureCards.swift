@@ -46,6 +46,8 @@ import WebKit
     let task: String
   }
   private(set) var steps: [Step] = []
+  /// Fills from saved data whose receipt's Undo can still clear them, by undo entry.
+  var filledFromSaved: [String: Card] = [:]
   /// Keys the person said no to, per task: asking again answers so (R16).
   private var declined: [String: Set<PersonStep.Key>] = [:]
 
@@ -192,8 +194,9 @@ extension BrowserModel {
     #endif
   }
 
-  /// `secure_card`, and `type` on a field the read marks secure: a card in the task's chat, then
-  /// the result and the page. The model's arguments name the field only.
+  /// `secure_card`, and `type` on a field the read marks secure. A value the person saved for this
+  /// exact origin fills with no card (`FillGuard`); with nothing saved, or a rule of theirs that
+  /// asks, a card in the task's chat. The model's arguments name the field only.
   func secureCard(_ tab: BrowserTab, task id: String, ref: String) async throws -> [String: Any] {
     if !tab.address.isEmpty { try await authorizeSite(tab.address, taskID: id) }
     if let check = await tab.verificationCheck(["ref": ref]) { throw check }
@@ -217,6 +220,15 @@ extension BrowserModel {
     let card = SecureCards.Card(
       kind: kind, parts: probe.parts, host: host, amount: amount, task: id, thread: threadID(forTask: id), tab: tab,
       ref: ref, document: probe.document, origin: probe.field.frameOrigin, pageVersion: tab.pageVersion)
+    guard let target = FillGuard.target(probe.field, loopback: Self.secureLoopback) else {
+      throw SereinError.invalid(ActionAdmission.pageChanged)
+    }
+    switch FillGuard.fill(target, saved: savedItems(), person: await personWords(task: id)) {
+    case .refused(let why): throw SereinError.invalid(why)
+    case .fill(let item):
+      if let filled = await fillFromSaved(card, item, parts: probe.parts) { return filled }
+    case .ask: break
+    }
     return PersonStep.fields(secureCards.raise(card))
   }
 
@@ -302,7 +314,8 @@ extension BrowserModel {
 
   /// `person_step`: a step only the person can take, as a card in the task's chat. It answers at
   /// once and the task goes on; the answer reaches it later (`ComposerFlow.deliver`). Every key is
-  /// read from the page or the call. hostKey and signIn are U3d's and U3a's.
+  /// read from the page or the call. At Allow all a pay to a site the person named presses now,
+  /// with a receipt and no card (`FillGuard.pay`); only a rule of theirs that asks raises one.
   func personStep(_ a: [String: Any], task id: String) async throws -> [String: Any] {
     guard let task = tasks[id], let relay = RelayOrchestrator.shared else {
       throw SereinError.invalid("The task ended during this operation")
@@ -325,6 +338,21 @@ extension BrowserModel {
       let pay = PersonStep.PayKey(
         host: tab.verificationHost, merchant: tab.verificationHost, item: read.target, amount: read.amount)
       let pass = SecureCard.Pass(tab: tab.id, pageVersion: tab.pageVersion, kind: .card, amount: read.amount, ref: ref)
+      // Below Allow all every pay asks, as before.
+      let payee = tab.web.url.map { Self.origin(scheme: $0.scheme, host: $0.host, port: $0.port) } ?? ""
+      let verdict = allowsAll(task: id) ? FillGuard.pay(payee: payee, person: await personWords(task: id)) : .ask
+      switch verdict {
+      case .refused(let why): throw SereinError.invalid(why)
+      case .pay:
+        let page = try await pressPay(pass, ref: ref, task: id)
+        if let thread = threadID(forTask: id) {
+          relay.deliver(receipt: FillGuard.paid(amount: read.amount, host: tab.verificationHost), into: thread)
+        }
+        var answer = page as? [String: Any] ?? [:]
+        answer.merge(FillGuard.paidFields(amount: read.amount, host: tab.verificationHost)) { $1 }
+        return answer
+      case .ask: break
+      }
       key = .pay(pay)
       press = (pass, ref)
     case "confirm":

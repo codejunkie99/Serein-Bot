@@ -606,7 +606,7 @@ struct TeamMenuItems: View {
       }
       Divider()
       Button("New Serein…") { NotificationCenter.default.post(name: AssistantSidebarState.newAssistant, object: nil) }
-    }.disabled(group.memberIDs.count >= AssistantGroup.maxMembers)
+    }
     Menu("Lead") {
       ForEach(group.memberIDs, id: \.self) { id in
         Toggle(relay.profileName(id), isOn: Binding(get: { group.leadID == id }, set: { if $0 { relay.setLead(id, of: group.id) } }))

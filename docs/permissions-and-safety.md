@@ -10,9 +10,11 @@
 | --- | --- |
 | Every step | Serein asks before each action on your Mac and before it starts a task. |
 | Only risky steps | Serein asks before it sends, posts, buys, deletes, signs out, or uses Terminal or System Settings. Routine steps go ahead. A new install starts here. |
-| Allow all | Serein and its tasks go ahead without asking. Paying and passwords go to a secure card you fill. |
+| Allow all | Serein and its tasks go ahead without asking. It fills what you saved on its own site and pays sites you named. |
 
-Paying always stays with you, at every level.
+Below Allow all, every payment asks you first. At Allow all, Serein pays only a site you named in your own message, never one a page, a file or another app's reply names. Type a rule like “ask me before you pay” and it asks again.
+
+A sign-in, code, key or card you saved fills only on the exact site it was saved for (`www.` aside; a subdomain or a lookalike name is another site). A card also needs a site you named. Each fill and payment leaves a line in the chat saying where and which saved item, never the value. When nothing is saved for the site, Serein asks you once.
 
 ## What a task can touch
 

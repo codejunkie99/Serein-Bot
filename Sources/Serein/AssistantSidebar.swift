@@ -61,11 +61,7 @@ import UniformTypeIdentifiers
   }
 
   func startNaming() {
-    guard let relay = SereinSurface.controller?.relay else { return }
-    guard relay.team.profiles.count < AssistantBoard.rosterLimit else {
-      ToastCenter.shared.show(AssistantBoard.fullRoster)
-      return
-    }
+    guard SereinSurface.controller?.relay != nil else { return }
     TeamSheets.shared.present(.newSerein)
   }
   func toggleFold(_ teamID: String) {
@@ -214,14 +210,12 @@ struct SwitchSegmentStyle: ButtonStyle {
   }
 }
 
-/// New Serein (⌃⌘N anywhere): a small outline icon and label. A click opens the New Serein dialog. With 16
-/// assistants it is drawn at 40% and says why.
+/// New Serein (⌃⌘N anywhere): a small outline icon and label. A click opens the New Serein dialog.
 struct NewAssistantRow: View {
   var selection: Namespace.ID
   @ObservedObject private var board = AssistantSidebarState.shared
   @State private var hovered = false
   @Environment(\.palette) var p
-  private var full: Bool { (SereinSurface.controller?.relay.team.profiles.count ?? 0) >= AssistantBoard.rosterLimit }
   var body: some View {
     Button { board.startNaming() } label: {
       HStack(spacing: AssistantMetrics.listRowGap) {
@@ -231,11 +225,9 @@ struct NewAssistantRow: View {
         Spacer(minLength: 4)
       }.padding(.horizontal, AssistantMetrics.listRowPaddingH)
     }.buttonStyle(AssistantListRowStyle(selected: false, hovered: hovered, selection: selection))
-      .opacity(full ? 0.4 : 1)
       .onHover { hovered = $0 }
-      .help(full ? AssistantBoard.fullRoster : "New Serein · ⌃⌘N")
+      .help("New Serein · ⌃⌘N")
       .accessibilityLabel("New Serein")
-      .accessibilityHint(full ? AssistantBoard.fullRoster : "")
   }
 }
 
@@ -412,7 +404,6 @@ struct AssistantRowFrameKey: PreferenceKey {
       let group = relay.team.group(String(key.dropFirst(5)))
     else { return nil }
     if group.memberIDs.contains(profileID) { return "Already in" }
-    if group.memberIDs.count >= AssistantGroup.maxMembers { return "Full (\(AssistantGroup.maxMembers))" }
     return nil
   }
 }

@@ -4,8 +4,8 @@ import Foundation
 /// and sent, in every order, with the room marked personal at any point and a relaunch building a
 /// packet again. The writer lands in commit 4, so the seal is modeled as a write-once map.
 struct PacketWorld: Encodable, Equatable {
-  var room = Workroom(id: "r1", root: .person(thread: "main-serein", message: "m1"), lead: "serein", thread: "main-serein",
-                      reach: Reach.person(AssistantScope(destinations: [.web, .mail])), now: PacketWorld.base)
+  var room = Workroom(id: "r1", root: .chat(thread: "main-serein", message: "m1"), lead: "serein", thread: "main-serein",
+                      reach: Reach.ofPerson(AssistantScope(destinations: [.web, .mail])), now: PacketWorld.base)
   /// Packet n is `packets[n - 1]`.
   var packets: [HandoffPacket] = []
   /// The room was marked when packet n was (last) built.

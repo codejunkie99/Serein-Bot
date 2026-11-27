@@ -203,7 +203,7 @@ final class LinkRates: @unchecked Sendable {
 extension RelayToolHost {
   /// `hook_make`: the person's words that name it ("when GitHub opens a pull request, tell
   /// Release") make it at once; other words in their turn ask on a card, or at Allow all make it
-  /// with the receipt's Undo; other turns are refused.
+  /// with the receipt's Undo. A turn the person did not start makes it with the receipt's Undo.
   func makeLink(_ a: [String: Any]) async throws -> [String: Any] {
     try requireReadableLinks()
     let actingID: String = frame.acting ?? relay.team.activeID
@@ -217,7 +217,7 @@ extension RelayToolHost {
     let owner = relay.profileName(spec.owner)
     let named = TypedConsent.names(.makeLink, in: frame.typedWords)
     let verdict = Admission.decide(.makeLink, turn: frame.admission, wordsNameIt: named)
-    switch Admission.atLevel(verdict, turn: frame.admission, level: relay.level) {
+    switch Admission.atLevel(verdict, level: relay.level) {
     case .refuse(let why):
       throw SereinError.invalid(why)
     case .apply:

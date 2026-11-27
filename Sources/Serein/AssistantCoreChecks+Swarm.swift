@@ -32,10 +32,9 @@ extension AssistantCoreChecks {
       "swarm: on one provider, the model that spent fewer tokens lately goes first")
     try check(Swarm.routes(ModelRegistry(rows: [key, row(claude, "opus", installed: false)]), need: tools, width: 3).isEmpty,
       "swarm: a route that bills each use or is not installed is never picked")
-    try check(Swarm.width(asked: 3, routes: 2, underRoot: 1) == 2 && Swarm.width(asked: 5, routes: 4, underRoot: 1) == 3
-        && Swarm.width(asked: 3, routes: 3, underRoot: HandoffLedger.maxPerRoot - 1) == 1
-        && Swarm.width(asked: 3, routes: 3, underRoot: HandoffLedger.maxPerRoot) == 0,
-      "swarm: the width is what was asked, at most three, one per route, under the per-root cap")
+    try check(Swarm.width(asked: 3, routes: 2) == 2 && Swarm.width(asked: 5, routes: 4) == 3
+        && Swarm.width(asked: 3, routes: 0) == 0,
+      "swarm: the width is what was asked, at most three, one per route, with no cap per task")
 
     var tally = UsageTally()
     let now = Date(timeIntervalSince1970: 1_800_000_000)

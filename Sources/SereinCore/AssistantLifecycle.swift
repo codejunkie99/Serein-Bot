@@ -160,7 +160,8 @@ public struct AssistantDraft: Equatable, Sendable {
     /// Another assistant has this name (in any case). It holds that assistant's name.
     case nameTaken(String)
     case jobTooLong
-    case rosterFull
+    /// The roster could not be saved.
+    case notSaved
 
     public var words: String {
       switch self {
@@ -169,7 +170,7 @@ public struct AssistantDraft: Equatable, Sendable {
       case .notOneLine: return "A name and a job are one line of plain text."
       case .nameTaken(let name): return "Another assistant is called \(name). Choose another name."
       case .jobTooLong: return "Say the job in one sentence of at most \(AssistantDraft.jobLimit) characters."
-      case .rosterFull: return AssistantBoard.fullRoster
+      case .notSaved: return "The assistants could not be saved, so nothing was made. Try again."
       }
     }
   }
@@ -276,13 +277,12 @@ public struct MakePlan: Equatable, Sendable {
 }
 
 extension RelayTeam {
-  /// The roster with one new assistant from `draft`. It checks the roster's size (archived
-  /// assistants count) and clips the places to `person` again. The new assistant gets the
-  /// next free tint and a face from its id; the active assistant does not change.
+  /// The roster with one new assistant from `draft`, however many it holds. It clips the places
+  /// to `person` again. The new assistant gets the next free tint and a face from its id; the
+  /// active assistant does not change.
   public func making(
     _ draft: AssistantDraft, person: Set<AssistantPlace>, id: String = UUID().uuidString, now: Date = Date()
   ) -> Result<MakePlan, AssistantDraft.Problem> {
-    guard profiles.count < Self.maxProfiles else { return .failure(.rosterFull) }
     let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
     if let problem = AssistantDraft.nameProblem(name, team: self) { return .failure(problem) }
     let places = draft.places.intersection(person).subtracting([.connectedApps])

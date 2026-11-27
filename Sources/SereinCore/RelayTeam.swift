@@ -199,8 +199,6 @@ public struct RelayTeam: Codable, Equatable, Sendable {
     self.groups = groups
   }
 
-  /// The roster; a team holds at most `AssistantGroup.maxMembers`.
-  public static let maxProfiles = 16
   /// The first profile's fixed id, which single-assistant setups migrate into.
   public static let mainID = "main"
   public static let mainName = "Serein"
@@ -259,10 +257,10 @@ public struct RelayTeam: Codable, Equatable, Sendable {
   }
 
   /// Adds a profile with a unique cleaned name, the next free colour and every place but
-  /// connected apps; nil when the name is empty or taken, or the roster is full.
+  /// connected apps; nil when the name is empty or taken.
   public func adding(_ name: String) -> RelayTeam? {
     let clean = RelayProfile.cleanName(name)
-    guard !clean.isEmpty, profiles.count < Self.maxProfiles else { return nil }
+    guard !clean.isEmpty else { return nil }
     guard !profiles.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else {
       return nil
     }
