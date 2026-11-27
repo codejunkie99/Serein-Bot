@@ -366,6 +366,8 @@ import UniformTypeIdentifiers
     voicePill.onClick = { [weak self] in self?.talkFromMenu() }
     voicePill.onMicFailed = { [weak self] in self?.micFailed() }
     voicePill.rest(global && !RunMode.automated && Self.pillOn)
+    // Checks and previews never touch the Mac's own Globe key setting.
+    if !RunMode.automated { GlobeKey.apply(fnCalls: global && Self.fnCallOn) }
     guard global || RelayOrchestrator.menuBar else {
       if let status { NSStatusBar.system.removeStatusItem(status) }
       status = nil

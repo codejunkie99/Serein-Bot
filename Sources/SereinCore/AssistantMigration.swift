@@ -15,7 +15,8 @@ extension RelayMemory {
 /// "Ask Serein from any app with ⌥Space" (`serein.relay.enabled`): the global shortcuts, and with
 /// them the menu bar item.
 public enum GlobalAccess {
-  public static let newInstallDefault = false
+  /// On: a new install can talk to Serein from any app with ⌥Space, Fn or the pill (owner 2026-11-26).
+  public static let newInstallDefault = true
 }
 
 /// The one-time move to "Serein is always on in its window". Before it, `serein.relay.enabled`
