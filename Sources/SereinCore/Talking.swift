@@ -83,6 +83,31 @@ public enum GlobeConflict {
     default: return "Pressing Globe also opens the emoji picker. " + fix
     }
   }
+
+  /// "Do Nothing", the Globe key's macOS action while Fn calls Serein.
+  public static let doNothing = 0
+  /// macOS's own unset default: the emoji picker.
+  public static let systemDefault = 2
+  /// Where Serein keeps the action it took over, to give it back.
+  public static let savedKey = "serein.relay.globeBefore"
+
+  public enum Takeover: Equatable, Sendable {
+    case keep
+    /// Set Globe to Do Nothing, keeping what it did.
+    case take(saving: Int)
+    /// Fn no longer calls Serein: Globe gets back what it did.
+    case giveBack(Int)
+    /// The person chose a Globe action themselves meanwhile: theirs stays, the saved one goes.
+    case forget
+  }
+  /// While Fn calls Serein, macOS's own Globe action (emoji, input source, Dictation) is off so a
+  /// press reaches Serein alone; when Fn stops calling Serein, the action it had comes back.
+  public static func takeover(fnCalls: Bool, current: Int?, saved: Int?) -> Takeover {
+    let now = current ?? systemDefault
+    if fnCalls { return now == doNothing ? .keep : .take(saving: now) }
+    guard let saved else { return .keep }
+    return now == doNothing ? .giveBack(saved) : .forget
+  }
 }
 
 // MARK: Target resolution

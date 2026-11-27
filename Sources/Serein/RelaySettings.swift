@@ -275,8 +275,9 @@ struct RelayAnyAppSettings: View {
     Toggle("Call Serein with the Fn key", isOn: Binding(get: { fnCall }, set: { on in
       fnCall = on
       RelayController.shared?.install()
+      globeUsage = GlobeConflict.current()
     }))
-    SettingsNote("Tap Fn to write. Hold it to talk and let go to send. Serein sees only that Fn is down, never what you type.")
+    SettingsNote("Tap Fn to write. Hold it to talk and let go to send. Serein turns off macOS's own Globe action meanwhile, and sees only that Fn is down, never what you type.")
     if fnCall, let warning = GlobeConflict.warning(for: .fn, usage: globeUsage) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         InterfaceIcon(systemName: "exclamationmark.triangle", size: 13).foregroundStyle(p.warning)
