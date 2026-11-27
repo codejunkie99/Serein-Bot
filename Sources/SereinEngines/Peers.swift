@@ -583,6 +583,8 @@ public actor Peers {
       {
         runs[id]!.jobs[index].reroutedFrom = cli
         runs[id]!.jobs[index].agent = backup
+        // The limited CLI's process is still shutting down on the old thread; the backup never starts over it.
+        runs[id]!.jobs[index].thread = ThreadKey("\(job.thread.id).\(backup.rawValue)")
         runs[id]!.jobs[index].limit = nil
         if case .until(let at, _)? = holds[cli], at > clockNow { scheduleWake(for: cli, at: at) }
         else if case .unclear(_, _, _, let next, _)? = holds[cli], next > clockNow { scheduleWake(for: cli, at: next) }

@@ -186,28 +186,38 @@ extension AssistantCoreChecks {
       _ = await peers.handle(.stop(run: nil), task: "top")
     }
 
-    // Second fast world: stale completion guard, maxUnclearProbes cap, faster 429 probes, and safe failover.
     var fast = Peers.Limits()
     fast.probeFirst = 0.6
     fast.rateProbeFirst = 0.12
     fast.probeMost = 0.6
     fast.maxUnclearProbes = 1
     fast.failoverThreshold = 1.5
-    try peerWorld(check, limits: fast) { world, notes in
+
+    // Stale completion guard, on a hold that outlasts the check so a slow machine never sees its probe start.
+    var steady = fast
+    steady.probeFirst = 30
+    steady.probeMost = 30
+    try peerWorld(check, limits: steady) { world, notes in
       let peers = world.peers
       await peers.register(task: "top", caller: top)
-      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
 
       // An older in-flight job finishing after an unnamed limit hits must NOT drop the hold.
       world.gate[.opencode] = .init(text: "Internal error: Workspace usage limit reached. Model use is paused until the limit resets.")
-      let burst = await peers.handle(.burst([
+      let burst = await waited(peers, peers.handle(.burst([
         PeerJob(agent: .opencode, prompt: "SLOW-INFLIGHT"),
         PeerJob(agent: .opencode, prompt: "limited-one"),
-      ]), task: "top")
+      ]), task: "top")) { $0.contains("opencode says: SLOW-INFLIGHT") }
       notes.check(burst.text.contains("opencode says: SLOW-INFLIGHT")
         && burst.text.contains("opencode: waiting for its limit to clear"),
         "Quota: an older in-flight job finishing after a limit hits does not drop the unclear hold")
       _ = await peers.handle(.stop(run: nil), task: "top")
+    }
+
+    // Second fast world: maxUnclearProbes cap and faster 429 probes.
+    try peerWorld(check, limits: fast) { world, notes in
+      let peers = world.peers
+      await peers.register(task: "top", caller: top)
+      @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
 
       // maxUnclearProbes stops infinite retries on an unnamed rate limit (and rateProbeFirst probes fast).
       world.gate[.claude] = .init(text: "Rate limit exceeded. Try again later.")
@@ -231,20 +241,25 @@ extension AssistantCoreChecks {
       let peers = world.peers
       await peers.register(task: "top", caller: top)
       @Sendable func started(_ cli: HarnessDriver) -> Int { world.host.callees.filter { $0.cli == cli }.count }
+      func settled(_ reply: PeerReply) async -> PeerReply { await waited(peers, reply) { $0.contains("): done.") } }
 
       // Safe failover: a long limit (> failoverThreshold) reroutes immediately to a backup CLI.
       world.host.setFallback { cli, excluded in
         cli == .claude && !excluded.contains(.codex) ? .codex : nil
       }
       world.gate[.claude] = .init(text: "You've hit your session limit", reset: Date().addingTimeInterval(10))
-      let failedOver = await peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top")
+      let failedOver = await settled(peers.handle(.ask(agents: [.claude], question: "urgent"), task: "top"))
       notes.check(failedOver.text.contains("codex (for claude, at limit): answered")
         && failedOver.text.contains("codex says: urgent"),
         "Quota: a long limit fails over immediately to a safe backup CLI and notes the handoff")
+      let limitedThread = world.host.callees.first { $0.cli == .claude }?.thread
+      let backupThread = world.host.callees.last { $0.cli == .codex }?.thread
+      notes.check(backupThread != nil && backupThread != limitedThread,
+        "Quota: the backup starts on its own thread, never over the limited CLI's stopping process")
 
       // A second ask while claude is already held fails over up front without calling claude again.
       let beforeUpfront = started(.claude)
-      let upfront = await peers.handle(.ask(agents: [.claude], question: "second"), task: "top")
+      let upfront = await settled(peers.handle(.ask(agents: [.claude], question: "second"), task: "top"))
       notes.check(started(.claude) == beforeUpfront
         && upfront.text.contains("codex (for claude, at limit): answered")
         && upfront.text.contains("codex says: second"),
@@ -350,6 +365,17 @@ extension AssistantCoreChecks {
     guard done.wait(timeout: .now() + 30) == .success else { throw SereinError.invalid("FAIL: team tool check timed out") }
     if let error = box.error { throw error }
     for (passed, label) in notes.all { try check(passed, label) }
+  }
+
+  /// The run's reply once `done` holds, read with peer_wait as OpenMausBot's hand-off is, not whatever
+  /// the 400 ms inline window caught. At most ten waits.
+  private static func waited(_ peers: Peers, _ reply: PeerReply, until done: (String) -> Bool) async -> PeerReply {
+    guard let id = reply.text.split(separator: " ", maxSplits: 2).dropFirst().first.map(String.init) else { return reply }
+    var reply = reply
+    for _ in 0..<10 where !done(reply.text) {
+      reply = await peers.handle(.wait(runs: [id], seconds: 1), task: "top")
+    }
+    return reply
   }
 
   private static func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
